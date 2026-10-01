@@ -12,7 +12,13 @@ from PIL import Image, ImageDraw
 
 from .detectie import Reguli, detecteaza
 from .pagina import (Zona, cuvinte_din_ocr, cuvinte_din_text, este_scanata, tesseract_disponibil,
-                     zone_de_acoperit, zone_semnaturi)
+                     text_stricat, zone_de_acoperit, zone_semnaturi)
+from .pagina import construieste
+from .vizual import Decupaj, este_document, pete_necunoscute, semnaturi_cu_cerneala
+
+# Pe hărți și fotografii OCR-ul „citește” hașuri și texturi ca cifre (de ex. „5909505059059”,
+# cu încredere 0-37%). Acolo păstrăm doar cuvintele citite sigur.
+INCREDERE_MIN_HARTI = 50
 
 DPI_SCAN = 200
 CALITATE_JPEG = 70
@@ -27,25 +33,48 @@ class RaportPagina:
     zone: list[Zona] = field(default_factory=list)
     semnaturi: list[fitz.Rect] = field(default_factory=list)
     atentionari: list[str] = field(default_factory=list)
+    pete: list[fitz.Rect] = field(default_factory=list)  # cerneală nerecunoscută (scanuri)
+    semnaturi_goale: int = 0  # zone de semnătură verificate și găsite fără cerneală
+
+    def de_verificat(self) -> list[Decupaj]:
+        """Tot ce trebuie privit de un om (sau de Claude) pe pagina asta."""
+        return ([Decupaj(self.numar, r, "semnătură? (cerneală găsită)") for r in self.semnaturi] +
+                [Decupaj(self.numar, r, "cerneală nerecunoscută") for r in self.pete] +
+                [Decupaj(self.numar, z.rect, f"casetă {z.categorie}") for z in self.zone])
 
 
 def analizeaza_pagina(page: fitz.Page, reguli: Reguli, ocr: bool = True) -> RaportPagina:
     rp = RaportPagina(page.number + 1, este_scanata(page))
     texte = []
     tp = cuvinte_din_text(page)
-    if len(tp.cuvinte) >= (MIN_CUVINTE_STRAT if rp.scanata else 1):
+    stricat = text_stricat(tp.text)
+    if stricat:
+        rp.atentionari.append("Strat de text cu codificare stricată: s-a folosit OCR.")
+    elif len(tp.cuvinte) >= (MIN_CUVINTE_STRAT if rp.scanata else 1):
         texte.append(tp)
     # Pe scanuri rulăm și OCR-ul nostru, chiar dacă există strat OCR vechi: unul îl
     # poate prinde pe ce ratează celălalt.
-    if rp.scanata or not texte:
+    if rp.scanata or stricat or not texte:
         if ocr and tesseract_disponibil():
-            texte.append(cuvinte_din_ocr(page))
+            t = cuvinte_din_ocr(page)
+            if not este_document(page):
+                t = construieste([c for c in t.cuvinte if c.incredere >= INCREDERE_MIN_HARTI],
+                                 "OCR (hartă/foto, doar cuvinte sigure)")
+            texte.append(t)
         else:
             rp.atentionari.append("Pagină scanată fără OCR disponibil: doar verificare vizuală.")
     for t in texte:
         rp.surse.append(t.sursa)
         rp.zone += zone_de_acoperit(t, reguli)
         rp.semnaturi += zone_semnaturi(t)
+    # Cuvintele sigure se scad din cerneală; cele îndoielnice pot fi chiar semnătura.
+    sigure = [c.rect for t in texte for c in t.cuvinte
+              if c.incredere >= 60 and sum(ch.isalnum() for ch in c.text) >= 2]
+    candidate = len(rp.semnaturi)
+    rp.semnaturi = semnaturi_cu_cerneala(page, rp.semnaturi, sigure)
+    rp.semnaturi_goale = candidate - len(rp.semnaturi)
+    if rp.scanata:
+        rp.pete = pete_necunoscute(page, sigure)
     return rp
 
 
@@ -150,7 +179,7 @@ def mascheaza(text: str) -> str:
 
 
 def raport_markdown(nume: str, rapoarte: list[RaportPagina], probleme: list[str],
-                    previz: list[Path]) -> str:
+                    previz: list[Path], foaie: Path | None = None) -> str:
     rand = [f"# Raport hasurare: {nume}", ""]
     total = sum(len(r.zone) for r in rapoarte)
     rand.append(f"Zone acoperite: **{total}** pe {len(rapoarte)} pagini.")
@@ -167,16 +196,19 @@ def raport_markdown(nume: str, rapoarte: list[RaportPagina], probleme: list[str]
         if not r.zone:
             rand.append("- nimic detectat automat")
         if r.semnaturi:
-            rand.append(f"- **De verificat vizual**: {len(r.semnaturi)} loc(uri) probabile de "
-                        f"semnătură (încadrate cu roșu în previzualizare).")
+            rand.append(f"- **De verificat vizual**: {len(r.semnaturi)} zonă(e) de semnătură cu cerneală.")
+        if r.pete:
+            rand.append(f"- **De verificat vizual**: {len(r.pete)} pată(e) de cerneală nerecunoscută.")
         for a in r.atentionari:
             rand.append(f"- **Atenție**: {a}")
         rand.append("")
     if probleme:
         rand += ["## Probleme la verificarea finală", ""] + [f"- {p}" for p in probleme] + [""]
+    rand += ["## Verificare vizuală", "",
+             f"Foaia cu decupaje: `{foaie}`." if foaie else
+             "Nimic de privit: nicio zonă de semnătură cu cerneală, nicio pată nerecunoscută.", ""]
     if previz:
         rand += ["## Previzualizări", "", f"În `{previz[0].parent}` (100 dpi; puncte PDF = "
                  "pixeli × 0,72)."]
-    rand += ["", "Semnăturile olografe NU se detectează automat. Privește fiecare pagină și "
-             "adaugă zonele lipsă într-un fișier de zone manuale (vezi README)."]
+    rand += ["", "Semnăturile găsite pe foaia de verificare se acoperă prin zone manuale (vezi README)."]
     return "\n".join(rand) + "\n"

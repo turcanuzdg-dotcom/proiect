@@ -18,6 +18,7 @@ class Cuvant:
     text: str
     linie: tuple  # cheie de grupare pe rânduri
     bloc: int
+    incredere: float = 100.0  # la OCR: cât de sigur e Tesseract (0-100)
 
 
 @dataclass
@@ -67,10 +68,29 @@ def _limbi_ocr() -> str:
     return "+".join(alese) or "eng"
 
 
-def cuvinte_din_ocr(page: fitz.Page, dpi: int = DPI_OCR) -> TextPagina:
+def dpi_ocr(page: fitz.Page, maxim: int = DPI_OCR, pixeli: int = 3600) -> int:
+    """300 dpi pentru A4; mai puțin pe formate mari (A3, planșe), ca OCR-ul să nu
+    lucreze pe imagini uriașe fără câștig de precizie."""
+    latura = max(page.rect.width, page.rect.height) / 72
+    return max(150, min(maxim, int(pixeli / latura)))
+
+
+def text_stricat(text: str) -> bool:
+    """Strat de text cu codificare greșită (frecvent la PDF-uri din AutoCAD:
+    „%ăFLRL” în loc de „Băcioi”). Pe el regex-urile nu găsesc nimic, deci se
+    folosește OCR-ul."""
+    if not text.strip():
+        return False
+    rau = sum(1 for c in text if (ord(c) < 32 and c not in "\n\t")
+              or 0x0700 <= ord(c) <= 0x08FF or c == "\ufffd")
+    return rau / len(text) > 0.005
+
+
+def cuvinte_din_ocr(page: fitz.Page, dpi: int | None = None) -> TextPagina:
     import pytesseract
     from PIL import Image
 
+    dpi = dpi or dpi_ocr(page)
     pix = page.get_pixmap(dpi=dpi)
     img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
     d = pytesseract.image_to_data(img, lang=_limbi_ocr(), output_type=pytesseract.Output.DICT)
@@ -84,7 +104,7 @@ def cuvinte_din_ocr(page: fitz.Page, dpi: int = DPI_OCR) -> TextPagina:
         rect = fitz.Rect(ox + x * k, oy + y * k, ox + (x + w) * k, oy + (y + h) * k)
         cuvinte.append(Cuvant(rect, txt.strip(),
                               (d["block_num"][i], d["par_num"][i], d["line_num"][i]),
-                              d["block_num"][i]))
+                              d["block_num"][i], float(d["conf"][i])))
     return construieste(cuvinte, "OCR")
 
 
@@ -131,8 +151,12 @@ def zone_semnaturi(tp: TextPagina) -> list[fitz.Rect]:
     """Rândurile unde probabil se semnează, extinse spre dreapta/jos: de privit vizual."""
     zone = []
     for s, e in semnaturi_probabile(tp.text):
+        este_coloana = tp.text[s:e].strip().lower().startswith("semn")
         for r in dreptunghiuri(tp, s, e, margine=0):
-            zone.append(fitz.Rect(r.x0, r.y0 - 25, r.x1 + 250, r.y1 + 35))
+            if este_coloana:  # antet de tabel (cartuș): semnăturile sunt doar dedesubt
+                zone.append(fitz.Rect(r.x0 - 8, r.y1 + 2, r.x1 + 8, r.y1 + 120))
+            else:
+                zone.append(fitz.Rect(r.x0, r.y0 - 25, r.x1 + 250, r.y1 + 35))
     return zone
 
 
@@ -144,4 +168,5 @@ def este_scanata(page: fitz.Page) -> bool:
 
 
 __all__ = ["Gasire", "TextPagina", "Zona", "cuvinte_din_text", "cuvinte_din_ocr", "dreptunghiuri",
-           "zone_de_acoperit", "zone_semnaturi", "este_scanata", "tesseract_disponibil"]
+           "zone_de_acoperit", "zone_semnaturi", "este_scanata", "tesseract_disponibil",
+           "text_stricat", "dpi_ocr"]

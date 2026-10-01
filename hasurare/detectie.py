@@ -267,5 +267,5 @@ def semnaturi_probabile(text: str) -> list[tuple[int, int]]:
     """Locuri unde probabil e o semnătură olografă. Nu se acoperă automat:
     semnăturile se confirmă doar vizual (vezi CLAUDE.md)."""
     tipar = re.compile(r"semn[ăa]tur|\bL\.?\s?[ȘS]\.|(?:^|\n)\s*(?:Primar(?:ul)?|Secretar(?:ul|a)?|"
-                       r"Pre[șs]edinte(?:le)?|Consilier|Solicitant|Beneficiar)\b", re.IGNORECASE)
+                       r"Pre[șs]edinte(?:le)?|Consilier|Solicitant)\b", re.IGNORECASE)
     return [(m.start(), m.end()) for m in tipar.finditer(normalizeaza(text))]

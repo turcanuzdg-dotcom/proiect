@@ -14,6 +14,7 @@ from pathlib import Path
 
 from . import cunostinte
 from .proces import hasureaza, previzualizari, raport_markdown, verifica, analizeaza_pagina
+from .vizual import foaie_de_verificare
 
 RADACINA = cunostinte.RADACINA
 IESIRI = RADACINA / "iesiri"
@@ -25,13 +26,18 @@ def _cmd_hasureaza(a: argparse.Namespace) -> int:
     iesire = Path(a.iesire) if a.iesire else IESIRI / f"{intrare.stem}-hasurat.pdf"
     rapoarte = hasureaza(intrare, iesire, reguli, Path(a.zone) if a.zone else None, ocr=not a.fara_ocr)
     probleme = verifica(iesire, reguli, ocr=not a.fara_ocr)
-    semnaturi = {r.numar: r.semnaturi for r in rapoarte}
-    previz = previzualizari(iesire, iesire.parent / f"{iesire.stem}-previzualizare", semnaturi)
+    foaie = foaie_de_verificare(iesire, [d for r in rapoarte for d in r.de_verificat()],
+                                iesire.parent / f"{iesire.stem}-de-verificat.png")
+    previz = []
+    if a.previzualizari:
+        semnaturi = {r.numar: r.semnaturi for r in rapoarte}
+        previz = previzualizari(iesire, iesire.parent / f"{iesire.stem}-previzualizare", semnaturi)
     raport = iesire.parent / f"{iesire.stem}-raport.md"
-    raport.write_text(raport_markdown(intrare.name, rapoarte, probleme, previz), encoding="utf-8")
+    raport.write_text(raport_markdown(intrare.name, rapoarte, probleme, previz, foaie), encoding="utf-8")
     print(f"Fișier hasurat: {iesire}")
     print(f"Raport:         {raport}")
     print(f"Zone acoperite: {sum(len(r.zone) for r in rapoarte)}")
+    print(f"De privit:      {foaie or 'nimic (nicio semnătură sau pată de cerneală găsită)'}")
     if probleme:
         print("ATENȚIE, verificarea finală a găsit probleme:")
         for p in probleme:
@@ -45,19 +51,29 @@ def _cmd_verifica(a: argparse.Namespace) -> int:
     import pymupdf as fitz
     reguli = cunostinte.incarca_reguli()
     doc = fitz.open(a.fisier)
-    total = 0
+    total, decupaje, stricate, goale = 0, [], [], 0
     for page in doc:
         rp = analizeaza_pagina(page, reguli, ocr=not a.fara_ocr)
+        decupaje += rp.de_verificat()
+        goale += rp.semnaturi_goale
+        if any("stricat" in at for at in rp.atentionari):
+            stricate.append(rp.numar)
+        if not (rp.zone or rp.semnaturi or rp.pete):
+            continue  # pagina curată nu se mai afișează (economie)
         tip = "scanată" if rp.scanata else "text"
-        print(f"Pagina {rp.numar} ({tip}): {len(rp.zone)} zone, "
-              f"{len(rp.semnaturi)} locuri probabile de semnătură")
+        print(f"Pagina {rp.numar} ({tip}): {len(rp.zone)} zone, {len(rp.semnaturi)} semnături "
+              f"cu cerneală, {len(rp.pete)} pete de cerneală nerecunoscută")
         for z in rp.zone:
             print(f"  [{z.categorie}] {z.motiv}: „{' '.join(z.text.split())}”")
-        for at in rp.atentionari:
-            print("  Atenție:", at)
         total += len(rp.zone)
-    print(f"Total: {total} zone de acoperit.")
-    return 1 if total else 0
+    if stricate:
+        print(f"Text cu codificare stricată (citit cu OCR): paginile {stricate}")
+    nume = Path(a.fisier).stem
+    foaie = foaie_de_verificare(Path(a.fisier), decupaje, IESIRI / f"{nume}-de-verificat.png")
+    print(f"Zone de semnătură verificate și găsite goale: {goale}")
+    print(f"Pagini: {doc.page_count}. Date de acoperit: {total}. "
+          f"De privit: {foaie or 'nimic'}" + (f" ({len(decupaje)} decupaje)" if foaie else ""))
+    return 1 if total or foaie else 0
 
 
 def _arata_rezultat_cazuri() -> int:
@@ -108,6 +124,8 @@ def main(argv: list[str] | None = None) -> int:
     h.add_argument("-o", "--iesire", help="fișierul rezultat (implicit iesiri/<nume>-hasurat.pdf)")
     h.add_argument("--zone", help="JSON cu zone manuale (semnături etc.)")
     h.add_argument("--fara-ocr", action="store_true")
+    h.add_argument("--previzualizari", action="store_true",
+                   help="PNG pentru fiecare pagină (de obicei nu e nevoie: vezi foaia de verificare)")
     h.set_defaults(f=_cmd_hasureaza)
 
     v = sub.add_parser("verifica", help="raportează fără să modifice")

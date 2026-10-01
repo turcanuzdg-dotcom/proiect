@@ -16,13 +16,17 @@ pe bacioi.md (Legea nr. 133/2011). Regulile vin din skill-ul `hasurare-pdf-bacio
 
 ## Fluxul pentru fiecare document
 
-1. Pune PDF-ul în `intrari/` (ignorat de git; documentele reale nu se urcă niciodată).
+1. Descarcă PDF-ul cu `curl -sSL -o intrari/X.pdf <link>` (nu WebFetch). `intrari/` e ignorat
+   de git; documentele reale nu se urcă niciodată.
 2. `python -m hasurare hasureaza intrari/X.pdf` produce în `iesiri/` fișierul `-hasurat.pdf`,
-   raportul `-raport.md` și previzualizările PNG.
-3. **Privește fiecare PNG cu Read.** Semnăturile nu se detectează automat. Locurile probabile
-   sunt încadrate cu roșu. Caută și cifre sau margini rămase la vedere.
-4. Pentru ce lipsește, scrie `iesiri/X-zone.json` (`[{"pagina": 1, "rect": [x0,y0,x1,y1],
-   "motiv": "semnătură"}]`, în puncte PDF = pixeli PNG × 0,72) și rulează din nou cu `--zone`.
+   raportul `-raport.md` și, doar dacă e ceva de privit, `-de-verificat.png`.
+3. **Economie de tokeni:** citește doar ieșirea text. Deschide cu Read numai
+   `-de-verificat.png` (decupaje: semnături cu cerneală, pete nerecunoscute, marginile casetelor).
+   NU deschide pagini întregi. Excepție: dacă „Zone de semnătură verificate” e mai mic decât
+   numărul de locuri de semnătură așteptate (de ex. cartușe pe fiecare planșă), privește doar
+   decupaje mici ale acelor locuri, mai multe pe o singură imagine.
+4. Pentru o semnătură găsită, scrie `iesiri/X-zone.json` (`[{"pagina": 1, "rect": [x0,y0,x1,y1],
+   "motiv": "semnătură"}]`, în puncte PDF) și rulează din nou cu `--zone`.
 5. Raportul trebuie să spună „curat”. Livrează fișierul cu lista, pe pagini, a zonelor acoperite.
 6. Dacă utilizatorul trimite un PDF „de verificat”, rulează doar `verifica` și raportează.
 
@@ -55,6 +59,7 @@ Proiectul se îmbunătățește doar dacă fiecare greșeală devine regulă și
 
 - `hasurare/detectie.py` regulile de bază (regex) pe text simplu
 - `hasurare/pagina.py` cuvinte cu coordonate (strat de text sau OCR Tesseract ron+rus)
+- `hasurare/vizual.py` cerneală în zonele de semnătură, pete nerecunoscute, foaia de verificare
 - `hasurare/proces.py` hasurarea (pagini text: ștergere reală; scanuri: refacere din imagine),
   verificarea finală, previzualizările, raportul
 - `hasurare/cunostinte.py` + `cunostinte/` ce s-a învățat

@@ -57,3 +57,41 @@ def test_pdf_scanat(tmp_path):
     doc = fitz.open(iesire)
     assert doc[0].get_text().strip() == ""  # pagina e doar imagine
     assert verifica(iesire, REGULI) == []
+
+
+def _pdf_semnat(cale, cu_semnatura):
+    """Document scanat cu „Primar ... Ion Popa” în josul paginii, cu sau fără semnătură."""
+    from PIL import Image, ImageDraw
+    import io
+    doc = fitz.open()
+    page = doc.new_page()
+    page.insert_text((60, 80), "DISPOZITIA nr. 12 din 03.03.2025", fontsize=12)
+    page.insert_text((60, 600), "Primar                                   Ion Popa", fontsize=12)
+    pix = page.get_pixmap(dpi=200)
+    img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+    if cu_semnatura:
+        k = 200 / 72
+        puncte = [((180 + i * 3) * k, (595 + 12 * ((-1) ** i)) * k) for i in range(25)]
+        ImageDraw.Draw(img).line(puncte, fill="black", width=5)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    scan = fitz.open()
+    scan.new_page().insert_image(fitz.Rect(0, 0, 595, 842), stream=buf.getvalue())
+    scan.save(cale)
+
+
+@pytest.mark.skipif(not tesseract_disponibil(), reason="tesseract lipsește")
+@pytest.mark.parametrize("cu_semnatura", [True, False])
+def test_semnatura_gasita_doar_cand_exista(tmp_path, cu_semnatura):
+    from hasurare.proces import analizeaza_pagina
+    cale = tmp_path / "semnat.pdf"
+    _pdf_semnat(cale, cu_semnatura)
+    rp = analizeaza_pagina(fitz.open(cale)[0], REGULI)
+    gasit = bool(rp.semnaturi or rp.pete)
+    assert gasit == cu_semnatura
+
+
+def test_text_stricat():
+    from hasurare.pagina import text_stricat
+    assert text_stricat("Limita administrativă\x03FRP.\x03%ăFLRL\nAeroport Interna܊ional")
+    assert not text_stricat("Limita administrativă com. Băcioi")
