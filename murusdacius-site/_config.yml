@@ -1,0 +1,52 @@
+# ─────────────────────────────────────────────────────────────
+#  Datele firmei. Modifică aici; se schimbă pe tot site-ul.
+#  Câmpurile goale ("") nu apar pe site.
+# ─────────────────────────────────────────────────────────────
+title: "MURUS DACIUS"
+forma: "SRL"
+slogan: "Comunicare, media și proiecte pentru comunități"
+description: >-
+  MURUS DACIUS SRL — comunicare publică, producție media și proiecte
+  comunitare. Portofoliul lucrărilor realizate.
+
+firma:
+  denumire: "MURUS DACIUS SRL"
+  idno: ""            # ex. "1023600012345"
+  sediu: ""           # ex. "s. Băcioi, mun. Chișinău, Republica Moldova"
+  email: ""           # ex. "contact@murusdacius.md"
+  telefon: ""         # ex. "+373 60 000 000"
+  facebook: ""        # link complet
+  linkedin: ""        # link complet
+
+# Textul de prezentare de pe prima pagină
+despre: >-
+  Construim comunicare solidă, piatră cu piatră. MURUS DACIUS SRL
+  realizează materiale de comunicare publică, conținut media și proiecte
+  pentru autorități locale, organizații și comunități — de la idee și
+  documentare până la publicare și raportare.
+
+servicii:
+  - titlu: "Comunicare publică"
+    text: "Comunicate, anunțuri, discursuri și strategii de comunicare pentru instituții și organizații."
+  - titlu: "Producție media"
+    text: "Articole, reportaje, interviuri, fotografie și materiale pentru presă, web și rețele sociale."
+  - titlu: "Proiecte și granturi"
+    text: "Scrierea, implementarea și raportarea proiectelor finanțate, cu accent pe impact local."
+  - titlu: "Editare și publicații"
+    text: "Ziare locale, broșuri, rapoarte și publicații tipărite sau digitale, de la machetă la tipar."
+
+# ─── Setări tehnice (de obicei nu se modifică) ───────────────
+lang: ro
+permalink: pretty
+collections:
+  proiecte:
+    output: true
+    permalink: /lucrari/:name/
+defaults:
+  - scope: { path: "", type: proiecte }
+    values: { layout: proiect }
+exclude:
+  - CUM-PUBLIC.md
+  - README.md
+  - Gemfile
+  - Gemfile.lock

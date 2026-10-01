@@ -1,0 +1,14 @@
+{% assign p = include.p %}
+<article class="card" data-categorie="{{ p.categorie | slugify }}">
+  <a href="{{ p.url | relative_url }}" class="card-link">
+    <div class="card-img">
+      {% if p.imagine %}<img src="{{ p.imagine | relative_url }}" alt="" loading="lazy">
+      {% else %}<div class="card-zid" aria-hidden="true"></div>{% endif %}
+    </div>
+    <div class="card-text">
+      <p class="eticheta">{{ p.categorie }}{% if p.data %} · {{ p.data | date: "%Y" }}{% endif %}</p>
+      <h3>{{ p.title }}</h3>
+      {% if p.rezumat %}<p>{{ p.rezumat }}</p>{% endif %}
+    </div>
+  </a>
+</article>

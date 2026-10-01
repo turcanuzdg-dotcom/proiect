@@ -1,0 +1,9 @@
+{% assign f = site.firma %}
+{% if f.email == "" and f.telefon == "" and f.facebook == "" and f.linkedin == "" %}<p class="mic">Datele de contact vor fi publicate în curând.</p>{% else %}
+<ul class="contacte">
+  {% if f.email != "" %}<li><span>Email</span><a href="mailto:{{ f.email }}">{{ f.email }}</a></li>{% endif %}
+  {% if f.telefon != "" %}<li><span>Telefon</span><a href="tel:{{ f.telefon | remove: ' ' }}">{{ f.telefon }}</a></li>{% endif %}
+  {% if f.facebook != "" %}<li><span>Facebook</span><a href="{{ f.facebook }}" rel="noopener">{{ f.facebook | remove: "https://" | remove: "www." }}</a></li>{% endif %}
+  {% if f.linkedin != "" %}<li><span>LinkedIn</span><a href="{{ f.linkedin }}" rel="noopener">{{ f.linkedin | remove: "https://" | remove: "www." }}</a></li>{% endif %}
+</ul>
+{% endif %}

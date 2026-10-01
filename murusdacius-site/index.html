@@ -1,0 +1,56 @@
+---
+layout: default
+---
+{% assign lucrari = site.proiecte | sort: "data", "last" | reverse %}
+<section class="erou">
+  <div class="cadru erou-in">
+    <p class="eticheta">{{ site.firma.denumire }}</p>
+    <h1>{{ site.slogan }}</h1>
+    <p class="erou-text">{{ site.despre }}</p>
+    <div class="butoane">
+      <a class="buton" href="{{ '/lucrari/' | relative_url }}">Vezi lucrările</a>
+      <a class="buton buton-gol" href="#contact">Contactează-ne</a>
+    </div>
+  </div>
+  <div class="zid" aria-hidden="true"></div>
+</section>
+
+<section id="despre" class="sectiune">
+  <div class="cadru">
+    <h2>Ce facem</h2>
+    <div class="servicii">
+      {% for s in site.servicii %}
+      <div class="serviciu">
+        <span class="nr">{{ forloop.index | prepend: "0" }}</span>
+        <h3>{{ s.titlu }}</h3>
+        <p>{{ s.text }}</p>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</section>
+
+<section class="sectiune sectiune-alt">
+  <div class="cadru">
+    <div class="titlu-rand">
+      <h2>Lucrări recente</h2>
+      <a href="{{ '/lucrari/' | relative_url }}">Toate lucrările ({{ lucrari.size }}) →</a>
+    </div>
+    <div class="grila">
+      {% for p in lucrari limit: 6 %}{% include card.html p=p %}{% endfor %}
+    </div>
+  </div>
+</section>
+
+<section id="contact" class="sectiune">
+  <div class="cadru contact">
+    <div>
+      <h2>Contact</h2>
+      <p>Aveți un proiect, o campanie sau o publicație în pregătire? Scrieți-ne și discutăm cum vă putem ajuta.</p>
+    </div>
+    <div>
+      {% include contacte.html %}
+      {% if site.firma.sediu != "" %}<p class="mic">{{ site.firma.sediu }}</p>{% endif %}
+    </div>
+  </div>
+</section>

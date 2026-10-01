@@ -1,0 +1,26 @@
+---
+layout: default
+---
+<article class="sectiune">
+  <div class="cadru ingust">
+    <a class="inapoi" href="{{ '/lucrari/' | relative_url }}">← Toate lucrările</a>
+    <p class="eticheta">{{ page.categorie }}{% if page.data %} · {{ page.data | date: "%d.%m.%Y" }}{% endif %}</p>
+    <h1>{{ page.title }}</h1>
+    {% if page.rezumat %}<p class="intro">{{ page.rezumat }}</p>{% endif %}
+    {% if page.beneficiar or page.finantator or page.rol %}
+    <dl class="fisa">
+      {% if page.beneficiar %}<div><dt>Beneficiar</dt><dd>{{ page.beneficiar }}</dd></div>{% endif %}
+      {% if page.finantator %}<div><dt>Finanțator</dt><dd>{{ page.finantator }}</dd></div>{% endif %}
+      {% if page.rol %}<div><dt>Rolul nostru</dt><dd>{{ page.rol }}</dd></div>{% endif %}
+    </dl>
+    {% endif %}
+    {% if page.imagine %}<img class="coperta" src="{{ page.imagine | relative_url }}" alt="{{ page.title }}">{% endif %}
+    <div class="corp">{{ content }}</div>
+    {% if page.galerie %}
+    <div class="galerie">
+      {% for img in page.galerie %}<a href="{{ img | relative_url }}"><img src="{{ img | relative_url }}" alt="" loading="lazy"></a>{% endfor %}
+    </div>
+    {% endif %}
+    {% if page.link %}<p><a class="buton" href="{{ page.link }}" rel="noopener">Vezi materialul publicat →</a></p>{% endif %}
+  </div>
+</article>

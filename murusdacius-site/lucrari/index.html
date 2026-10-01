@@ -1,0 +1,32 @@
+---
+layout: default
+title: Lucrări
+---
+{% assign lucrari = site.proiecte | sort: "data", "last" | reverse %}
+{% assign categorii = site.proiecte | map: "categorie" | compact | uniq | sort %}
+<section class="sectiune">
+  <div class="cadru">
+    <h1>Lucrări și proiecte</h1>
+    <p class="intro">Portofoliul {{ site.firma.denumire }}: proiecte implementate, materiale publicate și colaborări.</p>
+    {% if categorii.size > 1 %}
+    <div class="filtre" role="group" aria-label="Filtrează după categorie">
+      <button class="activ" data-filtru="">Toate</button>
+      {% for c in categorii %}<button data-filtru="{{ c | slugify }}">{{ c }}</button>{% endfor %}
+    </div>
+    {% endif %}
+    <div class="grila" id="grila">
+      {% for p in lucrari %}{% include card.html p=p %}{% endfor %}
+    </div>
+  </div>
+</section>
+<script>
+document.querySelectorAll('[data-filtru]').forEach(function (b) {
+  b.addEventListener('click', function () {
+    var f = b.getAttribute('data-filtru');
+    document.querySelectorAll('[data-filtru]').forEach(function (x) { x.classList.toggle('activ', x === b); });
+    document.querySelectorAll('#grila .card').forEach(function (c) {
+      c.hidden = f !== '' && c.getAttribute('data-categorie') !== f;
+    });
+  });
+});
+</script>
