@@ -1,0 +1,4 @@
+pymupdf>=1.24
+pillow>=10
+pytesseract>=0.3.10
+pytest>=8

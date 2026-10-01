@@ -1,0 +1,27 @@
+{
+  "declansatori": {
+    "domiciliu": [
+      "(?:cu\\s+)?viza\\s+de\\s+re[șs]edin[țt][ăa]"
+    ]
+  },
+  "tipare": [],
+  "exceptii": [],
+  "domenii_institutionale": [
+    "bacioi.md",
+    "gov.md",
+    "cancelaria.gov.md",
+    "asp.gov.md"
+  ],
+  "context_profesional": [
+    "arhitect",
+    "proiectant",
+    "inginer",
+    "certificat(?:ul)? de atestare",
+    "S\\.?R\\.?L\\.?",
+    "S\\.A\\.",
+    "[ÎI]\\.\\s?I\\.",
+    "IDNO",
+    "de serviciu",
+    "fax"
+  ]
+}

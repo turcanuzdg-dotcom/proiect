@@ -1,0 +1,10 @@
+# Documentele reale NU intră niciodată în git.
+intrari/*
+iesiri/*
+!intrari/.gitkeep
+!iesiri/.gitkeep
+*.pdf
+!tests/**/*.pdf
+__pycache__/
+.pytest_cache/
+*.pyc
