@@ -16,7 +16,7 @@ import {
   type ReminderGroupKey,
 } from "@/lib/reminders/schedule";
 import { isEmailConfigured } from "@/lib/server-config";
-import { formatRoDateTime, shiftISODate, todayInTimeZone } from "@/lib/utils/dates";
+import { formatRoDate, formatRoDateTime, shiftISODate, todayInTimeZone } from "@/lib/utils/dates";
 import type { ReminderChannel, ReminderStatus } from "@/types/domain";
 
 export const metadata: Metadata = { title: "Remindere" };
@@ -49,6 +49,7 @@ export default async function RemindersPage() {
       overdue: isReminderDue(reminder, now),
       documentId: reminder.document_id,
       documentTitle: reminder.documents?.title ?? null,
+      deadline: reminder.documents?.expiry_date ? formatRoDate(reminder.documents.expiry_date) : null,
     };
   };
 
@@ -56,7 +57,7 @@ export default async function RemindersPage() {
     <>
       <PageHeader
         title="Remindere"
-        description="Ce trebuie verificat și când. Bifează ce ai rezolvat sau amână pentru mai târziu."
+        description="Ce trebuie verificat și când. Marchează ce ai rezolvat sau amână pe altă zi."
         actions={<ManualReminderDialog today={today} emailConfigured={emailConfigured} />}
       />
 
@@ -123,7 +124,7 @@ export default async function RemindersPage() {
       {completed.length > 0 ? (
         <section aria-labelledby="grup-finalizate" className="mt-10">
           <h2 id="grup-finalizate" className="text-muted-foreground mb-3 text-sm font-semibold tracking-wide uppercase">
-            Finalizate recent
+            Rezolvate recent
           </h2>
           <ul className="flex flex-col gap-3">
             {completed.map((reminder) => (

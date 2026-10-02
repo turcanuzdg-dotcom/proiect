@@ -8,19 +8,25 @@ interface SectionCardProps {
   count?: number;
   href?: string;
   linkLabel?: string;
+  description?: string;
   children: ReactNode;
 }
 
-export function SectionCard({ title, count, href, linkLabel = "Vezi toate", children }: SectionCardProps) {
+export function SectionCard({ title, count, href, linkLabel = "Vezi toate", description, children }: SectionCardProps) {
   return (
     <Card>
-      <CardHeader className="flex-row items-center justify-between">
-        <CardTitle className="flex items-center gap-2">
-          {title}
-          {typeof count === "number" ? (
-            <span className="bg-muted text-muted-foreground rounded-full px-2 py-0.5 text-xs font-medium">{count}</span>
-          ) : null}
-        </CardTitle>
+      <CardHeader className="flex-row items-start justify-between gap-3">
+        <div className="min-w-0">
+          <CardTitle className="flex items-center gap-2">
+            {title}
+            {typeof count === "number" ? (
+              <span className="bg-muted text-muted-foreground rounded-full px-2 py-0.5 text-xs font-medium">
+                {count}
+              </span>
+            ) : null}
+          </CardTitle>
+          {description ? <p className="text-muted-foreground mt-1 text-[13px]">{description}</p> : null}
+        </div>
         {href ? (
           <Link href={href} className="text-primary rounded text-sm font-medium hover:underline">
             {linkLabel}

@@ -83,14 +83,14 @@ export async function listFamilyMembers(supabase: ServerSupabaseClient): Promise
 }
 
 export type ReminderWithDocument = ReminderRow & {
-  documents: { id: string; title: string; category: string } | null;
+  documents: { id: string; title: string; category: string; expiry_date: string | null } | null;
 };
 
 export async function listReminders(
   supabase: ServerSupabaseClient,
   options: { status: "active" | "completed"; limit?: number },
 ): Promise<ReminderWithDocument[]> {
-  let query = supabase.from("reminders").select("*, documents(id, title, category)");
+  let query = supabase.from("reminders").select("*, documents(id, title, category, expiry_date)");
   if (options.status === "active") {
     query = query.in("status", ["pending", "snoozed"]).order("remind_at", { ascending: true });
   } else {
@@ -115,7 +115,7 @@ export async function listDueNotifications(
   const [items, unread] = await Promise.all([
     supabase
       .from("reminders")
-      .select("*, documents(id, title, category)")
+      .select("*, documents(id, title, category, expiry_date)")
       .or(dueFilter(nowIso))
       .order("remind_at", { ascending: false })
       .limit(8),

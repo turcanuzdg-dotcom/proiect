@@ -8,7 +8,8 @@ export const NOT_AUTHENTICATED: ActionResult<never> = {
   error: "Sesiunea a expirat. Autentifică-te din nou.",
 };
 
-export const GENERIC_ERROR = "Ceva n-a mers bine. Încearcă din nou peste câteva momente.";
+export const GENERIC_ERROR =
+  "Acțiunea nu a reușit. Probabil conexiunea s-a întrerupt. Verifică internetul și încearcă din nou.";
 
 /** Sesiunea pentru o acțiune de server sau null (acțiunea întoarce atunci NOT_AUTHENTICATED). */
 export async function getActionSession(): Promise<SessionContext | null> {
@@ -26,7 +27,8 @@ export function mapDatabaseError(error: { code?: string; message?: string } | nu
     return "Documentul nu a fost găsit sau nu îți aparține.";
   }
   if (error.code === "42501") return "Nu ai acces la această înregistrare.";
-  if (error.code === "23514") return "Unele date nu respectă regulile (de ex. data emiterii după data expirării).";
-  if (error.code === "23503") return "O legătură nu mai există (de ex. persoana a fost ștearsă). Reîncarcă pagina.";
+  if (error.code === "23514")
+    return "Unele date nu se potrivesc, de exemplu data emiterii este după data expirării. Corectează și salvează din nou.";
+  if (error.code === "23503") return "Persoana sau documentul ales nu mai există. Reîncarcă pagina și alege din nou.";
   return GENERIC_ERROR;
 }

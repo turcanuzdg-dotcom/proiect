@@ -72,7 +72,7 @@ export function RenewDialog({ documentId, title, currentExpiryDate, suggestedExp
         toast.error(result.error);
         return;
       }
-      toast.success(result.message ?? "Documentul a fost marcat ca reînnoit.");
+      toast.success(result.message ?? "Reînnoire salvată.");
       setFile(null);
       setOpen(false);
       router.refresh();

@@ -50,6 +50,8 @@ export interface ReminderItemData {
   overdue: boolean;
   documentId: string | null;
   documentTitle: string | null;
+  /** Termenul documentului, deja formatat (ex. „6 ianuarie 2027”). */
+  deadline: string | null;
 }
 
 export function ReminderItem({ reminder, minSnoozeDate }: { reminder: ReminderItemData; minSnoozeDate: string }) {
@@ -58,6 +60,32 @@ export function ReminderItem({ reminder, minSnoozeDate }: { reminder: ReminderIt
   const [dateDialog, setDateDialog] = useState(false);
   const [customDate, setCustomDate] = useState(minSnoozeDate);
   const completed = reminder.status === "completed";
+
+  /** „Marchează rezolvat” fără confirmare, dar cu „Anulează” în mesaj (undo în loc de „Ești sigur?”). */
+  function complete() {
+    startTransition(async () => {
+      const result = await completeReminder(reminder.id);
+      if (!result.ok) {
+        toast.error(result.error);
+        return;
+      }
+      router.refresh();
+      toast.success("Reminder rezolvat.", {
+        action: {
+          label: "Anulează",
+          onClick: async () => {
+            const undo = await reopenReminder(reminder.id);
+            if (undo.ok) {
+              toast.success("Reminderul este din nou activ.");
+              router.refresh();
+            } else {
+              toast.error(undo.error);
+            }
+          },
+        },
+      });
+    });
+  }
 
   function run(action: () => Promise<ActionResult<unknown>>, after?: () => void) {
     startTransition(async () => {
@@ -89,7 +117,9 @@ export function ReminderItem({ reminder, minSnoozeDate }: { reminder: ReminderIt
         >
           {reminder.title}
         </p>
-        {reminder.body ? (
+        {reminder.documentId && reminder.deadline ? (
+          <p className="text-muted-foreground mt-0.5 text-[13px]">Termen: {reminder.deadline}</p>
+        ) : reminder.body ? (
           <p className="text-muted-foreground mt-0.5 text-[13px] leading-relaxed">{reminder.body}</p>
         ) : null}
         <p className="text-muted-foreground mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[13px]">
@@ -139,14 +169,15 @@ export function ReminderItem({ reminder, minSnoozeDate }: { reminder: ReminderIt
               variant="secondary"
               size="sm"
               disabled={pending}
-              onClick={() => run(() => completeReminder(reminder.id))}
+              onClick={complete}
+              aria-label={`Marchează rezolvat: ${reminder.title}`}
             >
               {pending ? <LoaderCircle className="animate-spin" aria-hidden /> : <Check aria-hidden />}
-              Finalizat
+              Marchează rezolvat
             </Button>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="outline" size="sm" disabled={pending}>
+                <Button variant="outline" size="sm" disabled={pending} aria-label={`Amână: ${reminder.title}`}>
                   <AlarmClock aria-hidden />
                   Amână
                   <ChevronDown aria-hidden />

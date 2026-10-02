@@ -45,7 +45,12 @@ export function DocumentCard({ document }: { document: DocumentView }) {
               {document.memberName}
             </span>
           ) : null}
-          {document.file_path ? <Paperclip className="size-3" aria-label="Are fișier atașat" /> : null}
+          {document.file_path ? (
+            <span className="inline-flex items-center">
+              <Paperclip className="size-3" aria-hidden />
+              <span className="sr-only">Are fișier atașat</span>
+            </span>
+          ) : null}
         </p>
       </div>
     </Link>

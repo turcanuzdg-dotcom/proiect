@@ -177,7 +177,7 @@ export function DocumentForm({
         toast.error(result.error);
         return;
       }
-      toast.success(result.message ?? "Documentul a fost salvat.");
+      toast.success(result.message ?? "Document salvat.");
       router.push(`/documents/${result.data.id}`);
       router.refresh();
     });

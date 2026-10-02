@@ -46,7 +46,7 @@ function PersonSection({
           <Button asChild variant="outline" size="sm">
             <Link href={addHref}>
               <Plus aria-hidden />
-              Document
+              Adaugă document
             </Link>
           </Button>
         </div>

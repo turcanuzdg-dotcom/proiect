@@ -55,7 +55,7 @@ export async function updateProfileSettings(values: ProfileSettingsValues): Prom
   if (error) return fail(mapDatabaseError(error));
 
   revalidatePath("/", "layout");
-  return { ok: true, data: undefined, message: "Preferințele au fost salvate." };
+  return { ok: true, data: undefined, message: "Preferințe salvate." };
 }
 
 export async function updateNotificationSettings(values: {
@@ -85,7 +85,7 @@ export async function updateNotificationSettings(values: {
   return {
     ok: true,
     data: undefined,
-    message: "Setările de notificare au fost salvate. Se aplică reminderelor create de acum înainte.",
+    message: "Notificări salvate. Se aplică reminderelor create de acum înainte.",
   };
 }
 
@@ -127,7 +127,7 @@ export async function seedDemoData(): Promise<ActionResult> {
   if (result.error) return fail(result.error);
 
   revalidatePath("/", "layout");
-  return { ok: true, data: undefined, message: "Datele demonstrative au fost adăugate. Toate sunt fictive." };
+  return { ok: true, data: undefined, message: "Date demonstrative adăugate. Toate sunt fictive." };
 }
 
 export async function removeDemoData(): Promise<ActionResult> {
@@ -138,7 +138,7 @@ export async function removeDemoData(): Promise<ActionResult> {
   if (error) return fail(mapDatabaseError(error));
 
   revalidatePath("/", "layout");
-  return { ok: true, data: undefined, message: "Datele demonstrative au fost șterse." };
+  return { ok: true, data: undefined, message: "Date demonstrative șterse. Datele tale au rămas neatinse." };
 }
 
 /** Șterge toate fișierele din dosarul utilizatorului, pagină cu pagină. */

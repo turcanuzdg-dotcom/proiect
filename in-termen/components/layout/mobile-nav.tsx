@@ -46,16 +46,19 @@ export function MobileNav() {
         {LEFT.map((item) => (
           <NavLink key={item.href} {...item} pathname={pathname} />
         ))}
-        <div className="flex flex-1 justify-center">
-          <Link
-            href="/documents/new"
-            aria-label="Adaugă un document"
-            aria-current={addActive ? "page" : undefined}
-            className="bg-primary text-primary-foreground shadow-raised ring-background hover:bg-primary-hover -mt-7 flex size-14 items-center justify-center rounded-2xl ring-4 transition-transform active:scale-95"
+        <Link
+          href="/documents/new"
+          aria-current={addActive ? "page" : undefined}
+          className="group text-primary -mt-6 flex flex-1 flex-col items-center gap-1 text-[11px] font-semibold"
+        >
+          <span
+            aria-hidden
+            className="bg-primary text-primary-foreground shadow-raised ring-background group-hover:bg-primary-hover flex size-12 items-center justify-center rounded-2xl ring-4 transition-transform group-active:scale-95"
           >
-            <Plus className="size-7" strokeWidth={2.25} aria-hidden />
-          </Link>
-        </div>
+            <Plus className="size-6" strokeWidth={2.25} />
+          </span>
+          Adaugă
+        </Link>
         {RIGHT.map((item) => (
           <NavLink key={item.href} {...item} pathname={pathname} />
         ))}

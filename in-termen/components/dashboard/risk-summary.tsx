@@ -51,7 +51,7 @@ export function RiskSummary({ summary }: { summary: StatusSummary }) {
                   <span
                     className={cn(
                       "text-3xl font-semibold tracking-tight tabular-nums",
-                      active ? style.text : "text-foreground/40",
+                      active ? style.text : "text-muted-foreground",
                     )}
                   >
                     {count}

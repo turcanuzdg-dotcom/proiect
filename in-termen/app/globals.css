@@ -16,6 +16,9 @@
   --color-subtle: #f8f9fb;
   --color-border: #e1e6ed;
   --color-input: #c9d1dc;
+  /* Conturul controalelor de formular: >= 3:1 față de fundal (WCAG 1.4.11). */
+  --color-control: #808c9e;
+  --color-control-hover: #5f6b7d;
   --color-ring: #2b6cb0;
 
   --color-primary: #1b3358;
@@ -75,6 +78,7 @@
 
 @layer base {
   html {
+    scroll-padding-top: 5rem;
     -webkit-text-size-adjust: 100%;
     text-rendering: optimizeLegibility;
   }

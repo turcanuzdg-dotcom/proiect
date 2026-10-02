@@ -44,19 +44,19 @@ export async function saveFamilyMember(
   return {
     ok: true,
     data: { id: data.id },
-    message: parsed.data.memberId ? "Modificările au fost salvate." : "Persoana a fost adăugată.",
+    message: parsed.data.memberId ? "Modificări salvate." : "Persoană adăugată.",
   };
 }
 
 export async function deleteFamilyMember(memberId: string): Promise<ActionResult> {
   const session = await getActionSession();
   if (!session) return NOT_AUTHENTICATED;
-  if (!uuidSchema.safeParse(memberId).success) return fail("Persoană invalidă.");
+  if (!uuidSchema.safeParse(memberId).success) return fail("Persoana nu a fost găsită. Reîncarcă pagina.");
 
   // Documentele persoanei rămân în cont, fără persoană asociată (on delete set null).
   const { error } = await session.supabase.from("family_members").delete().eq("id", memberId);
   if (error) return fail(mapDatabaseError(error));
 
   revalidateFamilyPages();
-  return { ok: true, data: undefined, message: "Persoana a fost ștearsă. Documentele ei au rămas în cont." };
+  return { ok: true, data: undefined, message: "Persoană ștearsă. Documentele ei au rămas în cont." };
 }

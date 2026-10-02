@@ -65,16 +65,16 @@ export const CATEGORY_META: Record<DocumentCategory, { label: string; descriptio
 
 export const STATUS_META: Record<DocumentStatus, { label: string; description: string; filterLabel: string }> = {
   expired: { label: "Expirat", description: "Termenul a trecut", filterLabel: "Expirat" },
-  urgent: { label: "Urgent", description: "Expiră în cel mult 7 zile", filterLabel: "Urgent" },
-  upcoming: { label: "Urmează", description: "Expiră în 8–30 de zile", filterLabel: "Urmează" },
-  safe: { label: "În regulă", description: "Mai mult de 30 de zile", filterLabel: "În regulă" },
+  urgent: { label: "Urgent", description: "Expiră în cel mult 7 zile", filterLabel: "Urgent (0–7 zile)" },
+  upcoming: { label: "Urmează", description: "Expiră în 8–30 de zile", filterLabel: "Urmează (8–30 de zile)" },
+  safe: { label: "În regulă", description: "Mai mult de 30 de zile", filterLabel: "În regulă (peste 30 de zile)" },
   no_expiry: { label: "Fără termen", description: "Nu are dată de expirare", filterLabel: "Fără termen" },
 };
 
 export const REMINDER_STATUS_LABELS: Record<ReminderStatus, string> = {
   pending: "Programat",
   snoozed: "Amânat",
-  completed: "Finalizat",
+  completed: "Rezolvat",
   dismissed: "Închis",
 };
 
@@ -103,7 +103,7 @@ export const ACTIVITY_LABELS: Record<ActivityAction, string> = {
   renewed: "Marcat ca reînnoit",
   file_uploaded: "Fișier atașat",
   file_removed: "Fișier eliminat",
-  reminder_completed: "Reminder finalizat",
+  reminder_completed: "Reminder rezolvat",
   reminder_snoozed: "Reminder amânat",
   reminder_created: "Reminder adăugat",
 };

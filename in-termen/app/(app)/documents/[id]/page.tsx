@@ -245,7 +245,13 @@ export default async function DocumentDetailPage({ params }: PageProps<"/documen
                 <ul className="flex flex-col gap-3">
                   {upcomingReminders.map((reminder) => (
                     <li key={reminder.id} className="border-border rounded-xl border p-3">
-                      <p className="text-sm leading-snug font-medium">{reminder.title}</p>
+                      <p className="text-sm leading-snug font-medium">
+                        {reminder.days_before === null
+                          ? reminder.title
+                          : reminder.days_before === 1
+                            ? "Cu o zi înainte"
+                            : `Cu ${formatDayCount(reminder.days_before)} înainte`}
+                      </p>
                       <p className="text-muted-foreground mt-1 flex flex-wrap items-center gap-x-2 text-[13px]">
                         <time dateTime={effectiveReminderAt(reminder)}>
                           {formatRoDateTime(effectiveReminderAt(reminder), profile.timezone)}

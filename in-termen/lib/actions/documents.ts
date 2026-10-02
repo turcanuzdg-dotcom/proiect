@@ -106,7 +106,7 @@ export async function requestUploadUrl(request: UploadRequest): Promise<ActionRe
 export async function discardUpload(path: string): Promise<ActionResult> {
   const session = await getActionSession();
   if (!session) return NOT_AUTHENTICATED;
-  if (!isOwnStoragePath(path, session.user.id)) return fail("Fișier invalid.");
+  if (!isOwnStoragePath(path, session.user.id)) return fail("Fișierul nu a fost găsit. Încarcă-l din nou.");
 
   // Nu ștergem un fișier care aparține deja unui document salvat sau istoricului de reînnoiri.
   const [inDocuments, inRenewals] = await Promise.all([
@@ -175,14 +175,14 @@ export async function saveDocument(input: SaveDocumentInput): Promise<ActionResu
   return {
     ok: true,
     data: { id: savedId },
-    message: documentId ? "Modificările au fost salvate." : "Documentul a fost adăugat.",
+    message: documentId ? "Modificări salvate." : "Document adăugat. Reminderele sunt programate.",
   };
 }
 
 export async function deleteDocument(documentId: string): Promise<ActionResult> {
   const session = await getActionSession();
   if (!session) return NOT_AUTHENTICATED;
-  if (!uuidSchema.safeParse(documentId).success) return fail("Document invalid.");
+  if (!uuidSchema.safeParse(documentId).success) return fail("Documentul nu a fost găsit. Reîncarcă pagina.");
 
   const { supabase } = session;
   const [{ data: doc }, { data: renewals }] = await Promise.all([
@@ -201,7 +201,7 @@ export async function deleteDocument(documentId: string): Promise<ActionResult> 
   if (files.length > 0) await supabase.storage.from(STORAGE_BUCKET).remove(files);
 
   revalidateDocumentPages();
-  return { ok: true, data: undefined, message: "Documentul a fost șters." };
+  return { ok: true, data: undefined, message: "Document șters." };
 }
 
 // ---------------------------------------------------------------------------
@@ -263,7 +263,7 @@ export async function renewDocument(input: RenewDocumentInput): Promise<ActionRe
   if (error || !renewalId) return fail(mapDatabaseError(error));
 
   revalidateDocumentPages(documentId);
-  return { ok: true, data: { renewalId }, message: "Documentul a fost marcat ca reînnoit." };
+  return { ok: true, data: { renewalId }, message: "Reînnoire salvată. Reminderele au fost recalculate." };
 }
 
 // ---------------------------------------------------------------------------
@@ -274,7 +274,7 @@ export async function renewDocument(input: RenewDocumentInput): Promise<ActionRe
 export async function getSignedFileUrl(path: string): Promise<ActionResult<{ url: string }>> {
   const session = await getActionSession();
   if (!session) return NOT_AUTHENTICATED;
-  if (!isOwnStoragePath(path, session.user.id)) return fail("Fișier invalid.");
+  if (!isOwnStoragePath(path, session.user.id)) return fail("Fișierul nu a fost găsit. Încarcă-l din nou.");
 
   const { data, error } = await session.supabase.storage.from(STORAGE_BUCKET).createSignedUrl(path, 300);
   if (error || !data) return fail("Fișierul nu poate fi deschis acum.");

@@ -61,13 +61,6 @@ export default async function DashboardPage({ searchParams }: PageProps<"/dashbo
         <>
           <RiskSummary summary={summary} />
 
-          <Button asChild size="lg" className="w-full sm:hidden">
-            <Link href="/documents/new">
-              <Plus aria-hidden />
-              Adaugă un document
-            </Link>
-          </Button>
-
           <div className="grid gap-6 lg:grid-cols-5">
             <div className="flex flex-col gap-6 lg:col-span-3">
               <SectionCard
@@ -97,6 +90,11 @@ export default async function DashboardPage({ searchParams }: PageProps<"/dashbo
               <SectionCard
                 title="În regulă"
                 count={safe.length}
+                description={
+                  summary.no_expiry > 0
+                    ? `${summary.safe} cu termen peste 30 de zile · ${summary.no_expiry} fără termen`
+                    : undefined
+                }
                 href={safe.length > 4 ? "/documents?status=safe" : undefined}
               >
                 {safe.length === 0 ? (

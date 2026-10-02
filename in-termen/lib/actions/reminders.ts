@@ -24,7 +24,7 @@ function revalidateReminderPages(documentId?: string | null) {
 export async function completeReminder(reminderId: string): Promise<ActionResult> {
   const session = await getActionSession();
   if (!session) return NOT_AUTHENTICATED;
-  if (!uuidSchema.safeParse(reminderId).success) return fail("Reminder invalid.");
+  if (!uuidSchema.safeParse(reminderId).success) return fail("Reminderul nu a fost găsit. Reîncarcă pagina.");
 
   const now = new Date().toISOString();
   const { data, error } = await session.supabase
@@ -43,13 +43,13 @@ export async function completeReminder(reminderId: string): Promise<ActionResult
   }
 
   revalidateReminderPages(data.document_id);
-  return { ok: true, data: undefined, message: "Reminder marcat ca finalizat." };
+  return { ok: true, data: undefined, message: "Reminder rezolvat." };
 }
 
 export async function reopenReminder(reminderId: string): Promise<ActionResult> {
   const session = await getActionSession();
   if (!session) return NOT_AUTHENTICATED;
-  if (!uuidSchema.safeParse(reminderId).success) return fail("Reminder invalid.");
+  if (!uuidSchema.safeParse(reminderId).success) return fail("Reminderul nu a fost găsit. Reîncarcă pagina.");
 
   const { data, error } = await session.supabase
     .from("reminders")
@@ -124,13 +124,13 @@ export async function createManualReminder(values: ManualReminderValues): Promis
   if (error) return fail(mapDatabaseError(error));
 
   revalidateReminderPages();
-  return { ok: true, data: undefined, message: "Reminderul a fost adăugat." };
+  return { ok: true, data: undefined, message: "Reminder adăugat." };
 }
 
 export async function deleteReminder(reminderId: string): Promise<ActionResult> {
   const session = await getActionSession();
   if (!session) return NOT_AUTHENTICATED;
-  if (!uuidSchema.safeParse(reminderId).success) return fail("Reminder invalid.");
+  if (!uuidSchema.safeParse(reminderId).success) return fail("Reminderul nu a fost găsit. Reîncarcă pagina.");
 
   const { data, error } = await session.supabase
     .from("reminders")
@@ -141,7 +141,7 @@ export async function deleteReminder(reminderId: string): Promise<ActionResult> 
   if (error) return fail(mapDatabaseError(error));
 
   revalidateReminderPages(data?.document_id);
-  return { ok: true, data: undefined, message: "Reminderul a fost șters." };
+  return { ok: true, data: undefined, message: "Reminder șters." };
 }
 
 /** Marchează notificările scadente ca citite (la deschiderea clopoțelului). */

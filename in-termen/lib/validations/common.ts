@@ -34,5 +34,5 @@ export function fieldErrorsFrom(error: z.ZodError): Record<string, string[]> {
 }
 
 export function firstErrorMessage(error: z.ZodError): string {
-  return error.issues[0]?.message ?? "Datele trimise nu sunt valide.";
+  return error.issues[0]?.message ?? "Verifică câmpurile marcate și încearcă din nou.";
 }
