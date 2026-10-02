@@ -48,3 +48,8 @@ Reguli învățate: `cunostinte/reguli.json`. Istoric: `cunostinte/jurnal.md`.
 Instrucțiunile pentru Claude: `CLAUDE.md`.
 
 Documentele reale (`intrari/`, `iesiri/`, orice `.pdf`) nu intră în git.
+
+## Alte proiecte din depozit
+
+- [`in-termen/`](in-termen/README.md) — **În Termen**, aplicație web (Next.js + Supabase) pentru urmărirea
+  termenelor de expirare ale documentelor personale. Independentă de instrumentul de hasurare.
