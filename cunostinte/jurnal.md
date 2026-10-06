@@ -54,3 +54,10 @@ aici, într-un rând, împreună cu ce s-a schimbat în reguli. Comanda
     acum excepțiile păstrează cifrele reale.
   - Semnăturile primarului trec peste ștampilă și au „cozi” lungi: caseta inițială a lăsat capete
     vizibile; s-au adăugat casete mici după verificarea vizuală mărită.
+- 2026-10-06: caz nou (ratat): numărul cadastral se acoperă (cerința Primăriei, 06.10.2026)
+- 2026-10-06: caz nou (ratat): nr. cadastral deformat de OCR (spații, l în loc de 1)
+- 2026-10-06: REGULĂ SCHIMBATĂ de utilizator: numărul cadastral se acoperă peste tot (acte, planșe,
+  extrase, antetul „Registrul bunurilor imobile 55111080 99”), inclusiv sectorul cadastral („sectorul 5511107”).
+  Detector nou `_nr_cadastral` (tolerant la OCR: spații, l/I/O în loc de cifre). Pe scanuri OCR-ul a ratat
+  numerele rupte la capăt de rând, sectoarele și antetul subliniat din e-Cadastru: acoperite manual, după
+  verificare cu OCR pe fișierul final + privire pe pagini. Semnături: ajunge o bună parte acoperită.

@@ -2,7 +2,7 @@
 
 Acoperă datele cu caracter personal din PDF-urile care se publică pe bacioi.md:
 IDNP, data nașterii, domiciliul, actul de identitate, telefonul și emailul personal.
-Numele solicitantului, adresa terenului, nr. cadastral și datele firmelor rămân vizibile.
+Numele solicitantului, adresa terenului și datele firmelor rămân vizibile. Numărul cadastral se acoperă.
 
 Hasurarea e **reală**: pe paginile cu text, textul de sub casete e șters din fișier;
 paginile scanate sunt refăcute din imagine, deci nu rămâne niciun strat de text ascuns.

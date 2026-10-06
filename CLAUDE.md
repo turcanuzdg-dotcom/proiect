@@ -8,9 +8,11 @@ pe bacioi.md (Legea nr. 133/2011). Regulile vin din skill-ul `hasurare-pdf-bacio
 
 - **Se acoperă:** IDNP/cod personal, data nașterii, domiciliul persoanei fizice, seria și
   numărul actului de identitate (și data eliberării), telefonul și emailul personal,
-  **toate semnăturile olografe** (inclusiv ale primarului și secretarului).
+  **toate semnăturile olografe** (inclusiv ale primarului și secretarului; ajunge o bună parte
+  din semnătură, nu trebuie acoperită până la ultima trăsătură), **numărul cadastral**
+  (cerința Primăriei din 06.10.2026, oriunde apare: acte, planșe, extrase).
 - **Rămâne:** numele solicitantului, funcționarii în exercițiu, profesioniștii atestați cu
-  contactele de serviciu, nr. cadastral, adresa și suprafața **terenului**, persoanele
+  contactele de serviciu, adresa și suprafața **terenului**, persoanele
   juridice (IDNO, sediu, contacte), numerele și datele actelor, ștampilele.
 - Domiciliul persoanei se acoperă, adresa terenului rămâne. Când ai dubii, întreabă.
 

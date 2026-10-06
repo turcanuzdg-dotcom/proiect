@@ -75,6 +75,12 @@ _ABREVIERI = {"str", "nr", "ap", "bd", "bl", "et", "s", "or", "com", "mun", "r",
 
 # „Domiciliul / Sediul” din extrasele e-Cadastru, adesea cu rubrica goală.
 _ETICHETA_SEDIU = re.compile(r"/[ \t]*S[eco]diu(?:l|t)?[ \t]*:?", re.IGNORECASE)
+# Număr cadastral (7 cifre, punct, 3 cifre). Pe scanuri OCR-ul strică cifrele și pune
+# spații („55 1 1 108.099”, „551l108.4о0”), deci se acceptă și confuziile uzuale.
+_CIFRA_OCR = r"[\dlIO|оО]"
+_NR_CADASTRAL = re.compile(
+    r"(?<![\w.])(?P<v>\d(?:[ ]?" + _CIFRA_OCR + r"){6}[ ]?[.,][ ]?" + _CIFRA_OCR + r"(?:[ ]?" + _CIFRA_OCR +
+    r"){2})(?![\w])")
 _EMAIL = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
 # Un număr de telefon stă pe un singur rând: fără „\n”, altfel cifrele de pe rânduri
 # diferite (cote pe planșe, ora din antet + nr. cadastral) se lipesc într-un „telefon”.
@@ -229,6 +235,15 @@ def _telefon(text: str, reguli: Reguli) -> list[Gasire]:
     return rez
 
 
+def _nr_cadastral(text: str, reguli: Reguli) -> list[Gasire]:
+    """Regula Primăriei (confirmată 06.10.2026): numărul cadastral se acoperă."""
+    rez = []
+    for m in _NR_CADASTRAL.finditer(text):
+        if sum(c.isdigit() for c in m.group("v")) >= 7:
+            rez.append(Gasire(m.start("v"), m.end("v"), "nr_cadastral", "număr cadastral"))
+    return rez
+
+
 def _email(text: str, reguli: Reguli) -> list[Gasire]:
     rez = []
     domenii = [d.casefold() for d in reguli.domenii_institutionale]
@@ -253,7 +268,8 @@ def _tipare_invatate(text: str, reguli: Reguli) -> list[Gasire]:
     return rez
 
 
-DETECTORI = [_idnp, _data_nasterii, _domiciliu, _act_identitate, _telefon, _email, _tipare_invatate]
+DETECTORI = [_idnp, _data_nasterii, _domiciliu, _act_identitate, _telefon, _email, _nr_cadastral,
+             _tipare_invatate]
 
 
 def detecteaza(text: str, reguli: Reguli | None = None) -> list[Gasire]:

@@ -12,8 +12,8 @@ RANDURI = [
     "c/p 0912345678901, domiciliat in s. Bacioi, str. Pacii 12;",
     "tel. 069123456. Terenul cu nr. cadastral 5501101.123.",
 ]
-SECRETE = ["09.06.1964", "0912345678901", "Pacii 12", "069123456"]
-PUBLICE = ["Bivol Ion", "5501101.123", "DISPOZITIA"]
+SECRETE = ["09.06.1964", "0912345678901", "Pacii 12", "069123456", "5501101.123"]
+PUBLICE = ["Bivol Ion", "DISPOZITIA"]
 
 
 def _pdf_text(cale):
