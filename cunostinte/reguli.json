@@ -2,10 +2,16 @@
   "declansatori": {
     "domiciliu": [
       "(?:cu\\s+)?viza\\s+de\\s+re[șs]edin[țt][ăa]"
+    ],
+    "data_nasterii": [
+      "a\\.\\s?n(?![\\w.])"
     ]
   },
   "tipare": [],
-  "exceptii": [],
+  "exceptii": [
+    "022 383-525",
+    "022 381-846"
+  ],
   "domenii_institutionale": [
     "bacioi.md",
     "gov.md",
@@ -22,6 +28,7 @@
     "[ÎI]\\.\\s?I\\.",
     "IDNO",
     "de serviciu",
-    "fax"
+    "fax",
+    "primaria\\W{1,3}bacioi"
   ]
 }

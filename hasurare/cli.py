@@ -90,9 +90,10 @@ def _cmd_invata(a: argparse.Namespace) -> int:
     if a.tip in ("ratat", "exces"):
         de_hasurat = a.fragment if a.tip == "ratat" else []
         ramane = a.fragment if a.tip == "exces" else []
-        caz = cunostinte.adauga_caz(a.context, de_hasurat, ramane, a.nota)
+        public = getattr(a, "exceptie", False)
+        caz = cunostinte.adauga_caz(a.context, de_hasurat, ramane, a.nota, public=public)
         cunostinte.noteaza(f"caz nou ({a.tip}): {a.nota}")
-        print("Caz salvat (cifre fictive):", caz["context"])
+        print("Caz salvat" + ("" if public else " (cifre fictive)") + ":", caz["context"])
         if getattr(a, "exceptie", False):
             for f in caz["ramane"]:
                 cunostinte.adauga_in_lista("exceptii", f)

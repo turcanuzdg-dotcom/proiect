@@ -73,8 +73,13 @@ _ABREVIERI = {"str", "nr", "ap", "bd", "bl", "et", "s", "or", "com", "mun", "r",
               "sat", "sc", "of", "sect", "cart", "d", "dl", "dna", "dnei", "dlui", "cet", "jud",
               "loc", "șos", "sos", "pr", "prosp", "c", "fl", "f"}
 
+# „Domiciliul / Sediul” din extrasele e-Cadastru, adesea cu rubrica goală.
+_ETICHETA_SEDIU = re.compile(r"/[ \t]*S[eco]diu(?:l|t)?[ \t]*:?", re.IGNORECASE)
 _EMAIL = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
-_TELEFON = re.compile(r"(?<![\w])(?:\+\s?373|00\s?373|0)[\d\s\-()]{6,14}\d")
+# Un număr de telefon stă pe un singur rând: fără „\n”, altfel cifrele de pe rânduri
+# diferite (cote pe planșe, ora din antet + nr. cadastral) se lipesc într-un „telefon”.
+# Nici după „19:” sau „06.” (oră, dată) și nici urmat de „.099” (nr. cadastral).
+_TELEFON = re.compile(r"(?<![\w])(?<!\d[:.])(?:\+[ \t]?373|00[ \t]?373|0)[\d \t\-()]{6,14}\d(?![.,]\d)")
 _IDNP_SIMPLU = re.compile(r"(?<!\d)\d{13}(?!\d)")
 _ACT_MD = re.compile(r"(?<![\w])[ABC]\s?\d{8}(?!\d)")
 _SERIA = re.compile(
@@ -175,6 +180,17 @@ def _domiciliu(text: str, reguli: Reguli) -> list[Gasire]:
     for m in tipar.finditer(text):
         inainte = text[max(0, m.start() - 30):m.start()]
         if re.search(CONTEXT_TEREN, inainte, re.IGNORECASE):
+            continue
+        eticheta = _ETICHETA_SEDIU.match(text, m.end())
+        if eticheta:
+            # Rubrică de formular (extras e-Cadastru): valoarea e doar pe același rând.
+            sf = text.find("\n", eticheta.end())
+            sf = len(text) if sf < 0 else sf
+            valoare = text[eticheta.end():sf]
+            if len(valoare.strip()) >= 3 and re.search(r"\w", valoare):
+                rez.append(Gasire(eticheta.end() + len(valoare) - len(valoare.lstrip()),
+                                  sf - (len(valoare) - len(valoare.rstrip())),
+                                  "domiciliu", "adresă în rubrica „Domiciliul / Sediul”"))
             continue
         sf = _sfarsit_adresa(text, m.end())
         valoare = text[m.end():sf]

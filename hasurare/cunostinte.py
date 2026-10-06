@@ -74,8 +74,12 @@ def fictionalizeaza(*texte: str) -> list[str]:
     return [re.sub(r"\d+", inlocuieste, t) for t in texte]
 
 
-def adauga_caz(context: str, de_hasurat: list[str], ramane: list[str], nota: str) -> dict:
-    toate = fictionalizeaza(context, *de_hasurat, *ramane)
+def adauga_caz(context: str, de_hasurat: list[str], ramane: list[str], nota: str,
+               public: bool = False) -> dict:
+    """`public`: fragmentul e o dată publică fixă (excepție), deci cifrele rămân reale,
+    altfel excepția învățată n-ar mai corespunde documentelor."""
+    texte = [context, *de_hasurat, *ramane]
+    toate = texte if public else fictionalizeaza(*texte)
     caz = {
         "context": toate[0],
         "de_hasurat": toate[1:1 + len(de_hasurat)],
