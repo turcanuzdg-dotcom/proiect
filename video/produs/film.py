@@ -28,6 +28,8 @@ Scenariul (JSON), cu toate valorile opționale în afară de `imagine`:
      "centru": [0.5, 0.5],          // punctul de interes din fotografie (fracțiuni)
      "pivot": null,                 // adâncimea care stă pe loc (implicit: produsul, percentila 80)
      "reflexie": false,             // un reflex de lumină care trece peste produs
+     "reflexie_adancime": null,     // adâncimea produsului (implicit: cea din jurul lui `centru`)
+     "reflexie_zona": null,         // opțional [x0,y0,x1,y1]: reflexia doar în această zonă a fotografiei
      "tranzitie": {"tip": "whip", "durata": 0.5, "directie": 1}}  // spre planul următor
   ]
 }
@@ -83,6 +85,7 @@ class Plan:
     cfg: dict
     pivot: float
     siguranta: float = 1.0  # zoom suplimentar constant, ca camera să nu iasă din fotografie
+    adancime_produs: float = 0.5  # unde cade reflexia: adâncimea produsului
 
     @staticmethod
     def incarca(cfg: dict, dir_img: Path, dir_ad: Path) -> "Plan":
@@ -97,7 +100,13 @@ class Plan:
         pivot = cfg.get("pivot")
         if pivot is None:
             pivot = float(np.percentile(ad, 80))
-        return Plan(img.astype(np.float32) / 255.0, ad, float(cfg.get("durata", 3.0)), cfg, pivot)
+        # adâncimea produsului (pentru reflexie): implicit cea din jurul punctului de interes
+        Hs, Ws = ad.shape
+        cx, cy = cfg.get("centru", [0.5, 0.5])
+        fer = ad[int(cy * Hs) - Hs // 20 : int(cy * Hs) + Hs // 20, int(cx * Ws) - Ws // 20 : int(cx * Ws) + Ws // 20]
+        produs = float(cfg.get("reflexie_adancime", np.median(fer)))
+        return Plan(img.astype(np.float32) / 255.0, ad, float(cfg.get("durata", 3.0)), cfg, pivot,
+                    adancime_produs=produs)
 
     def parametri(self, tau: float) -> dict:
         """Parametrii camerei la timpul local tau (secunde); liniari, deci se prelungesc firesc."""
@@ -182,7 +191,15 @@ class Randator:
             pozitie = lin(-1.1, 1.1, p["t"]) * (W / 2 + self.H / 2)
             banda = (self.X * math.cos(unghi) + self.Y * math.sin(unghi)) - pozitie
             lumina = np.exp(-(banda**2) / (2 * (0.07 * W) ** 2))
-            masca = np.clip((d - (dp - 0.12)) / 0.12, 0, 1)
+            # doar pe produs: o bandă de adâncime în jurul lui și, opțional, o zonă din fotografie
+            dr = plan.adancime_produs
+            masca = np.clip((d - (dr - 0.14)) / 0.06, 0, 1) * np.clip(((dr + 0.14) - d) / 0.06, 0, 1)
+            zona = cfg.get("reflexie_zona")  # [x0, y0, x1, y1], fracțiuni din fotografie
+            if zona:
+                Hs, Ws = plan.adancime.shape
+                ux, vy = qx / Ws, qy / Hs
+                masca = masca * np.clip(np.minimum(ux - zona[0], zona[2] - ux) / 0.015, 0, 1)
+                masca = masca * np.clip(np.minimum(vy - zona[1], zona[3] - vy) / 0.015, 0, 1)
             k = (0.16 * lumina * masca)[..., None]
             img = img + k * (1.0 - img)
         return np.clip(img, 0, 1)
@@ -228,13 +245,21 @@ def blur_radial(img: np.ndarray, putere: float) -> np.ndarray:
     if putere < 0.004:
         return img
     H, W = img.shape[:2]
-    acc = img.copy()
-    pasi = 6
+    # la jumătate de rezoluție (blurul nu are nevoie de detaliu), cu copii la cel mult ~3 px una de alta
+    mic = cv2.resize(img, (W // 2, H // 2), interpolation=cv2.INTER_AREA)
+    h, w = mic.shape[:2]
+    pasi = max(6, min(32, int(math.ceil(putere * math.hypot(w, h) / 2 / 1.5))))
+    acc = mic.copy()
     for i in range(1, pasi + 1):
         s = 1.0 + putere * i / pasi
-        M = cv2.getRotationMatrix2D((W / 2, H / 2), 0, s)
-        acc += cv2.warpAffine(img, M, (W, H), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT101)
-    return acc / (pasi + 1)
+        M = cv2.getRotationMatrix2D((w / 2, h / 2), 0, s)
+        acc += cv2.warpAffine(mic, M, (w, h), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT101)
+    blur = cv2.resize(acc / (pasi + 1), (W, H), interpolation=cv2.INTER_LINEAR)
+    # centrul rămâne clar (acolo blurul de zoom e oricum zero)
+    yy, xx = np.ogrid[:H, :W]
+    r = np.sqrt(((xx - W / 2) / (W / 2)) ** 2 + ((yy - H / 2) / (H / 2)) ** 2)[..., None].astype(np.float32)
+    k = np.clip(r / 0.5, 0, 1)
+    return img * (1 - k) + blur * k
 
 
 # ---------------------------------------------------------------- tranziții
@@ -253,10 +278,14 @@ def tranzitie(rand: Randator, A: Plan, B: Plan, tA: float, tB: float, u: float, 
         dur = float(tz.get("durata", 0.5))
         vertical = tz.get("axa") == "y"
         cheie, unghi = ("pan_y", 90.0) if vertical else ("pan_x", 0.0)
-        amp = 1.2 * (rand.H / W if vertical else 1.0)  # deplasarea la capăt, din lățime (un sfert la mijloc)
-        a = rand.cadru(A, tA, {cheie: -sens * amp * u**2})
-        b = rand.cadru(B, tB, {cheie: sens * amp * (1 - u) ** 2})
-        pe_cadru = amp * W / (dur * fps)  # pixeli pe cadru la viteza maximă / 2
+        # Deplasarea reală rămâne mică și e compensată cu zoom, ca să nu iasă din
+        # fotografie (altfel apar copii în oglindă); viteza o dă blurul de mișcare.
+        asp = rand.H / W if vertical else 1.0
+        amp = 0.3 * asp
+        da, db = amp * u**2, amp * (1 - u) ** 2
+        a = rand.cadru(A, tA, {cheie: -sens * da, "zoom": 1 + 2 * da / asp})
+        b = rand.cadru(B, tB, {cheie: sens * db, "zoom": 1 + 2 * db / asp})
+        pe_cadru = 1.2 * asp * W / (dur * fps)  # viteza aparentă a unei panoramări „adevărate”
         lim = 0.12 * (rand.H if vertical else W)
         a = blur_directional(a, min(lim, 2 * u * pe_cadru), unghi)
         b = blur_directional(b, min(lim, 2 * (1 - u) * pe_cadru), unghi)
@@ -271,15 +300,15 @@ def tranzitie(rand: Randator, A: Plan, B: Plan, tA: float, tB: float, u: float, 
         m = lisa_intre(0.45, 0.55, u)
         return a * (1 - m) + b * m
     if tip == "lumina":
-        # Un val de lumină caldă care supraexpune cadrul; schimbul se face la vârf.
+        # Un val de lumină caldă care arde cadrul spre crem; schimbul se face în vârful lui.
         a = rand.cadru(A, tA)
         b = rand.cadru(B, tB)
-        m = lisa_intre(0.4, 0.6, u)
+        m = lisa_intre(0.46, 0.54, u)
         out = a * (1 - m) + b * m
-        g = math.exp(-((u - 0.5) ** 2) / (2 * 0.13**2))
+        g = math.exp(-((u - 0.5) ** 2) / (2 * 0.11**2))
         cald = np.array([0.62, 0.84, 1.0], np.float32)  # BGR: piersică
         stralucire = cv2.GaussianBlur(out, (0, 0), 0.02 * W) * cald
-        return np.clip(out + g * (0.7 * stralucire + 0.2 * cald) * (1 - out), 0, 1)
+        return np.clip(out + g * (0.85 * cald + 0.6 * stralucire) * (1 - out), 0, 1)
     a = rand.cadru(A, tA)
     b = rand.cadru(B, tB)
     m = lisa(u)

@@ -64,7 +64,25 @@ care au dat rezultate bune:
   - `lumina`: un accent cald, cel mult de două ori.
   - `taietura`: între două planuri statice înrudite.
   - `dizolvare`: lentă, doar la bucla de la final. Mai multe dizolvări la rând fac din film un slideshow.
-- `centru` mută punctul de interes când zoom-ul ar tăia produsul.
+- `centru` mută punctul de interes când zoom-ul ar tăia produsul. Ține-l aproape de
+  0,5: fiecare abatere consumă rezerva de imagine și forțează zoom de siguranță.
+- **`pivot`** (adâncimea care stă pe loc) e implicit percentila 80, de obicei masa din
+  față. Dacă produsul e la altă adâncime, pune pivotul pe produs, altfel apropierea
+  (dolly) îl micșorează exact cât îl mărește zoom-ul și planul pare plat. Două cazuri:
+  o carte sprijinită de perete are adâncimea peretelui (~0,05), iar o pagină dublă
+  care stă pe masă, ~0,58. Citește adâncimea din hartă, în punctul produsului.
+- **Zoom de siguranță:** `film.py` calculează singur, pentru fiecare plan, cât trebuie
+  mărit ca să nu iasă din fotografie (altfel la margini apare conținut oglindit) și îl
+  afișează („planul 5: zoom +21%”). Dacă trece de ~10%, micșorează `orbita`, `dolly`,
+  `perspectiva` sau abaterea lui `centru`: fundalul îndepărtat consumă cel mai mult.
+- **Reflexia** cade doar pe produs, într-o bandă de adâncime din jurul lui. Banda se
+  calculează implicit din `centru`; altfel o dai cu `reflexie_adancime`, iar
+  `reflexie_zona` [x0,y0,x1,y1] o restrânge când produsul are aceeași adâncime ca
+  fundalul (cartea lipită de perete).
+- **Logica trecerilor:** un `zoom` intră într-un detaliu care se vede în planul de
+  dinainte (pagina dublă → prim-planul aceleiași pagini). Nu pune la rând două planuri
+  cu aceeași compoziție (două evantaie de coperte). La bucla de final, între un plan
+  luminos și unul întunecat, o `taietura` e mai curată decât o dizolvare.
 
 ## 4. Verificare (fără să deschizi videoul)
 
@@ -78,6 +96,13 @@ $F --previzualizare --cadre=tranzitii --coloane=5 --foaie=video/out/f-tr.jpg
 Micșorează foile cu `convert -resize 2000x` înainte să le deschizi. Mișcările mari se
 verifică la rezoluție completă, pe un decupaj din jurul marginilor produsului
 (`--cadre=15,95 --foaie=...`, fără `--previzualizare`). Acolo s-ar vedea întinderile.
+Tot la rezoluție completă se verifică vârful fiecărui whip pan. Pentru bucla de final,
+compară ultimul cadru cu primul: diferența trebuie să fie cât între două cadre vecine.
+
+Merită și o critică independentă, cu doi agenți: unul pe regie (ordinea și logica
+planurilor, cât se vede efectul 3D, repetiții) și unul pe artefacte (margini oglindite,
+întinderi, reflexii, imagini fantomă). La primul film, criticii au găsit probleme pe
+care foile de verificare nu le arătau.
 
 ## 5. Randare și livrare pentru web
 
