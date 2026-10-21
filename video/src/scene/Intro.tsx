@@ -1,8 +1,7 @@
-import { Fragment } from "react";
 import { AbsoluteFill, Easing, interpolate, useCurrentFrame, useVideoConfig } from "remotion";
 import { Fundal } from "../componente/Fundal";
 import { ImagineMiscare } from "../componente/ImagineMiscare";
-import { incapePeRand, potrivesteTitlu } from "../componente/masuraText";
+import { incapePeRand, latimeEchilibrata, potrivesteTitlu } from "../componente/masuraText";
 import { TextAnimat } from "../componente/TextAnimat";
 import type { ScenaIntro } from "../date/tipuri";
 import {
@@ -10,6 +9,7 @@ import {
   EASE_INTRARE_IESIRE,
   FONT_TEXT,
   FONT_TITLU,
+  inaltimeRandTitlu,
   transparenta,
   useCulori,
   useFormat,
@@ -85,8 +85,8 @@ const Contururi: React.FC<{
               r={r}
               fill="none"
               stroke={accent ? c.accent : c.text}
-              strokeOpacity={accent ? 0.24 : 0.1 - i * 0.005}
-              strokeWidth={Math.max(1, 1.5 * f.u)}
+              strokeOpacity={accent ? 0.34 : 0.16 - i * 0.008}
+              strokeWidth={Math.max(1, 2 * f.u)}
               strokeDasharray={lungime}
               strokeDashoffset={lungime * (1 - p)}
               transform={`rotate(${70 + i * 6} ${x} ${y})`}
@@ -100,8 +100,8 @@ const Contururi: React.FC<{
 
 /**
  * Deschiderea filmului: fotografie (sau fundalul viu) care se limpezește din
- * întuneric, colțuri fine de cadru, eticheta introdusă de o linie de accent,
- * titlul mare care urcă din mască și subtitlul.
+ * întuneric, eticheta introdusă de o linie de accent, titlul mare care urcă din
+ * mască și subtitlul.
  */
 export const Intro: React.FC<{ scena: ScenaIntro }> = ({ scena }) => {
   const frame = useCurrentFrame();
@@ -141,6 +141,15 @@ export const Intro: React.FC<{ scena: ScenaIntro }> = ({ scena }) => {
     preferaRanduri: true,
     prag: 0.88,
   });
+  const inaltimeRand = inaltimeRandTitlu(scena.titlu);
+  // rânduri echilibrate: coloana cea mai îngustă cu același număr de rânduri
+  const latimeTitlu = latimeEchilibrata({
+    text: scena.titlu,
+    font: "titlu",
+    marime: titlu.marime,
+    latime: latimeText,
+    spatiere: -0.02,
+  });
 
   // Eticheta: pe un rând dacă se poate; altfel se rupe doar la separatorii „·”,
   // ca segmentele („Primăria comunei ...”, „2026”) să rămână întregi.
@@ -151,26 +160,48 @@ export const Intro: React.FC<{ scena: ScenaIntro }> = ({ scena }) => {
         const p = potrivesteEticheta({
           text: textEticheta,
           latime: latimeEticheta,
-          marime: 32 * u,
-          marimeMinima: 28 * u,
+          marime: 36 * u,
+          marimeMinima: 32 * u,
           spatiere: 0.3,
           spatiereMinima: 0.18,
         });
         if (p.incape) {
           // cât se pot strânge literele la intrare fără ca rândul să iasă din zona sigură
           const strangere = incapeEticheta(textEticheta, p.marime, p.spatiere + 0.16, latimeText) ? 0.16 : 0.05;
-          return { ...p, strangere, segmente: [textEticheta] };
+          return { ...p, strangere, linii: [textEticheta] };
         }
-        const marime = 30 * u;
-        const spatiere = 0.22;
+        // Rândurile se compun aici, din segmente întregi („Primăria comunei ...”, „2026”),
+        // cu separatorul „·” doar între segmentele de pe același rând: niciun rând nu
+        // începe sau nu se termină cu un separator atârnat.
+        const marime = 32 * u;
+        const spatiere = 0.2;
         const segmente = textEticheta.split(/\s*[·|•]\s*/).filter(Boolean);
-        const intregi = segmente.every((x) => incapeEticheta(`${x} ·`, marime, spatiere, latimeEticheta));
-        return { marime, spatiere, incape: false, strangere: 0, segmente: intregi ? segmente : [textEticheta] };
+        const intregi = segmente.every((x) => incapeEticheta(x, marime, spatiere, latimeEticheta));
+        if (!intregi) return { marime, spatiere, incape: false, strangere: 0, linii: [textEticheta] };
+        const linii: string[] = [];
+        for (const seg of segmente) {
+          const ultim = linii[linii.length - 1];
+          if (ultim !== undefined && incapeEticheta(`${ultim} · ${seg}`, marime, spatiere, latimeEticheta)) {
+            linii[linii.length - 1] = `${ultim} · ${seg}`;
+          } else {
+            linii.push(seg);
+          }
+        }
+        return { marime, spatiere, incape: false, strangere: 0, linii };
       })()
     : null;
 
   const subtitlu = scena.subtitlu?.trim() || null;
   const marimeSubtitlu = (subtitlu && subtitlu.length > 90 ? 40 : 46) * u;
+  // subtitlul pe rânduri echilibrate (fără un cuvânt singur pe ultimul rând)
+  const latimeSubtitlu = subtitlu
+    ? latimeEchilibrata({
+        text: subtitlu,
+        font: "text",
+        marime: marimeSubtitlu,
+        latime: (vertical ? latimeText : Math.min(latimeText, 1080 * u)) * 0.98,
+      })
+    : 0;
 
   // ——— Calendarul intrării (secunde la ritmul de bază) ———
   const nrCuvinte = scena.titlu.split(/\s+/).filter(Boolean).length;
@@ -184,18 +215,6 @@ export const Intro: React.FC<{ scena: ScenaIntro }> = ({ scena }) => {
   const lumina = progres(0, 1.6, EASE_LUMINA);
   const linie = progres(0.3, 1.0);
   const intrareEticheta = progres(0.45, 1.35);
-
-  // ——— Colțurile cadrului ———
-  const insetX = (vertical ? 44 : 64) * u;
-  const insetY = (vertical ? 72 : 48) * u;
-  const brat = (vertical ? 40 : 36) * u;
-  const grosime = Math.max(1, 2 * u);
-  const colturi = [
-    { top: insetY, left: insetX, sx: 1, sy: 1 },
-    { top: insetY, right: insetX, sx: -1, sy: 1 },
-    { bottom: insetY, right: insetX, sx: -1, sy: -1 },
-    { bottom: insetY, left: insetX, sx: 1, sy: -1 },
-  ];
 
   return (
     <AbsoluteFill style={{ backgroundColor: c.fundal, overflow: "hidden" }}>
@@ -283,42 +302,13 @@ export const Intro: React.FC<{ scena: ScenaIntro }> = ({ scena }) => {
       {/* Ieșirea din întuneric la începutul filmului */}
       <AbsoluteFill style={{ backgroundColor: c.fundal, opacity: 1 - lumina }} />
 
-      {/* Colțurile fine ale cadrului */}
-      {colturi.map(({ sx, sy, ...pozitie }, i) => {
-        const p = progres(0.25 + i * 0.08, 1.25 + i * 0.08);
-        const culoare = transparenta(c.text, 55);
-        return (
-          <div key={i} style={{ position: "absolute", width: brat, height: brat, ...pozitie, opacity: p }}>
-            <div
-              style={{
-                position: "absolute",
-                [sy > 0 ? "top" : "bottom"]: 0,
-                [sx > 0 ? "left" : "right"]: 0,
-                width: brat * p,
-                height: grosime,
-                backgroundColor: culoare,
-              }}
-            />
-            <div
-              style={{
-                position: "absolute",
-                [sy > 0 ? "top" : "bottom"]: 0,
-                [sx > 0 ? "left" : "right"]: 0,
-                width: grosime,
-                height: brat * p,
-                backgroundColor: culoare,
-              }}
-            />
-          </div>
-        );
-      })}
-
       {/* Blocul de text */}
       <div
         style={{
           position: "absolute",
           left: f.margineX,
-          bottom: vertical ? f.margineY * 1.7 : f.margineY * 1.5,
+          // în 9:16 deasupra zonei acoperite de legenda și butoanele aplicațiilor
+          bottom: vertical ? f.margineJos + 20 * u : f.margineY * 1.5,
           width: latimeText,
           display: "flex",
           flexDirection: "column",
@@ -376,14 +366,10 @@ export const Intro: React.FC<{ scena: ScenaIntro }> = ({ scena }) => {
                 translate: `${-14 * u * (1 - intrareEticheta)}px 0`,
               }}
             >
-              {eticheta.segmente.map((segment, i) => (
-                <Fragment key={i}>
-                  <span style={{ whiteSpace: eticheta.segmente.length > 1 ? "nowrap" : undefined }}>
-                    {segment}
-                    {i < eticheta.segmente.length - 1 ? "\u00a0·" : null}
-                  </span>
-                  {i < eticheta.segmente.length - 1 ? " " : null}
-                </Fragment>
+              {eticheta.linii.map((rand, i) => (
+                <div key={i} style={{ whiteSpace: eticheta.linii.length > 1 ? "nowrap" : undefined }}>
+                  {rand}
+                </div>
               ))}
             </div>
           </div>
@@ -398,10 +384,10 @@ export const Intro: React.FC<{ scena: ScenaIntro }> = ({ scena }) => {
             fontFamily: FONT_TITLU,
             fontWeight: 800,
             fontSize: titlu.marime,
-            lineHeight: 1.05,
+            lineHeight: inaltimeRand,
             letterSpacing: "-0.02em",
             color: c.text,
-            maxWidth: latimeText,
+            maxWidth: latimeTitlu,
           }}
         />
 
@@ -418,7 +404,7 @@ export const Intro: React.FC<{ scena: ScenaIntro }> = ({ scena }) => {
               fontSize: marimeSubtitlu,
               lineHeight: 1.3,
               color: c.textSecundar,
-              maxWidth: vertical ? latimeText : Math.min(latimeText, 1080 * u),
+              maxWidth: latimeSubtitlu,
             }}
           />
         ) : null}

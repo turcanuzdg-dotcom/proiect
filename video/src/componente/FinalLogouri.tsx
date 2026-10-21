@@ -1,9 +1,7 @@
 import { getImageDimensions } from "@remotion/media-utils";
 import { useEffect, useRef, useState } from "react";
-import { Img, interpolate, staticFile, useCurrentFrame, useDelayRender, useVideoConfig } from "remotion";
-import { EASE_IESIRE, useFormat } from "../tema";
-
-const sursa = (src: string) => (src.startsWith("http") ? src : staticFile(src));
+import { Img, interpolate, useCurrentFrame, useDelayRender, useVideoConfig } from "remotion";
+import { EASE_IESIRE, sursa, useCulori, useFormat } from "../tema";
 
 /**
  * Raportul lățime/înălțime al fiecărui logo, citit înainte de primul cadru
@@ -64,10 +62,10 @@ export type AsezareLogouri = {
  * „grele”). Spațiile dintre logouri sunt egale. Dacă rândul nu încape în
  * `latimeMax`, logourile se împart pe două (sau trei) rânduri, apoi se micșorează.
  */
-const aseaza = (rapoarte: number[], inaltimeMax: number, latimeMax: number, u: number): AsezareLogouri => {
+export const aseazaLogouri = (rapoarte: number[], inaltimeMax: number, latimeMax: number, u: number): AsezareLogouri => {
   const n = rapoarte.length;
   const padX = 56 * u;
-  const padY = 32 * u;
+  const padY = 24 * u;
   let rezerva: { varianta: AsezareLogouri; marime: number } | null = null;
 
   for (let r = 1; r <= Math.min(3, n); r++) {
@@ -100,7 +98,7 @@ const aseaza = (rapoarte: number[], inaltimeMax: number, latimeMax: number, u: n
       padY,
       spatiu,
       spatiuRanduri,
-      raza: 28 * u,
+      raza: 20 * u,
     };
     // prima variantă care nu micșorează prea mult; altfel cea cu logourile cele mai mari
     if (scara >= 0.82) return varianta;
@@ -110,15 +108,14 @@ const aseaza = (rapoarte: number[], inaltimeMax: number, latimeMax: number, u: n
 };
 
 /**
- * Așezarea plăcii de logouri (sau null dacă nu sunt logouri), ca scena să poată
- * centra restul conținutului deasupra ei.
+ * Logourile de afișat și rapoartele lor (sau null dacă nu sunt logouri). Scena
+ * le așază apoi cu `aseazaLogouri`, la înălțimea care lasă titlului loc destul.
  */
-export const useAsezareLogouri = (logouri: string[] | undefined, inaltimeMax: number, latimeMax: number) => {
-  const { u } = useFormat();
+export const useLogouri = (logouri: string[] | undefined) => {
   const lista = (logouri ?? []).filter((l) => l.trim().length > 0);
   const rapoarte = useRapoarte(lista);
   if (lista.length === 0 || !rapoarte) return null;
-  return { lista, asezare: aseaza(rapoarte, inaltimeMax, latimeMax, u) };
+  return { lista, rapoarte };
 };
 
 /**
@@ -136,6 +133,7 @@ export const FinalLogouri: React.FC<{
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const { u } = useFormat();
+  const c = useCulori();
   const progres = (de: number, la: number) =>
     interpolate(frame, [de * fps, la * fps], [0, 1], {
       extrapolateLeft: "clamp",
@@ -153,8 +151,10 @@ export const FinalLogouri: React.FC<{
         height: a.inaltime,
         borderRadius: a.raza,
         overflow: "hidden",
-        backgroundColor: "rgba(255, 255, 255, 0.96)",
-        boxShadow: `0 ${24 * u}px ${64 * u}px rgba(0, 0, 0, 0.35)`,
+        // un alb ușor stins (≈ #E2E3E5): logourile cu text închis rămân lizibile, dar placa
+        // nu mai e cea mai luminoasă pată a cadrului final; titlul rămâne mesajul
+        backgroundColor: `color-mix(in srgb, #FFFFFF 88%, ${c.fundal})`,
+        boxShadow: `0 ${10 * u}px ${30 * u}px rgba(0, 0, 0, 0.22)`,
         opacity: Math.min(1, placa * 4),
       }}
     >

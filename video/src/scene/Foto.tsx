@@ -3,7 +3,6 @@ import { useEffect, useState } from "react";
 import {
   AbsoluteFill,
   interpolate,
-  staticFile,
   useCurrentFrame,
   useDelayRender,
   useVideoConfig,
@@ -12,7 +11,7 @@ import { type Directie, ImagineMiscare } from "../componente/ImagineMiscare";
 import { latimeEchilibrata, randuriText } from "../componente/masuraText";
 import { TextAnimat } from "../componente/TextAnimat";
 import type { ScenaFoto } from "../date/tipuri";
-import { EASE_IESIRE, FONT_TEXT, FONT_TITLU, useCulori, useFormat } from "../tema";
+import { EASE_IESIRE, FONT_TEXT, FONT_TITLU, inaltimeRandTitlu, sursa, useCulori, useFormat } from "../tema";
 
 /* ------------------------------------------------------------------ */
 /* Mișcarea camerei                                                    */
@@ -43,7 +42,7 @@ const useRaportImagine = (src: string) => {
 
   useEffect(() => {
     let activ = true;
-    getImageDimensions(src.startsWith("http") ? src : staticFile(src))
+    getImageDimensions(sursa(src))
       .then(({ width, height }) => {
         if (activ) setRaport(width > 0 && height > 0 ? width / height : RAPORT_IMPLICIT);
       })
@@ -169,9 +168,10 @@ const Legenda: React.FC<{ titlu?: string; text?: string; k: number }> = ({ titlu
   // 2% rezervă pentru erorile de măsurare
   const titluAsezat = titlu
     ? f.vertical
-      ? asezareTitlu(titlu, latimeColoana * 0.98, 84 * u, [
-          [68 * u, 3],
-          [56 * u, 4],
+      ? asezareTitlu(titlu, latimeColoana * 0.98, 88 * u, [
+          [76 * u, 3],
+          [68 * u, 4],
+          [60 * u, 5],
           [48 * u, 6],
         ])
       : asezareTitlu(titlu, latimeColoana * 0.98, 88 * u, [
@@ -181,6 +181,7 @@ const Legenda: React.FC<{ titlu?: string; text?: string; k: number }> = ({ titlu
         ])
     : null;
   const marime = titluAsezat?.marime ?? 0;
+  const inaltimeRand = titlu ? inaltimeRandTitlu(titlu) : 1.2;
   const marimeDescriere = (titlu ? (text && text.length > 110 ? 40 : 42) : 54) * u;
   // descrierea: cel mult cât titlul sau o măsură comodă de citit, cu rânduri echilibrate
   const masuraDescriere = (titlu ? (f.vertical ? 15 : 26) : f.vertical ? 15 : 20) * marimeDescriere;
@@ -232,7 +233,8 @@ const Legenda: React.FC<{ titlu?: string; text?: string; k: number }> = ({ titlu
       style={{
         position: "absolute",
         left: f.margineX,
-        bottom: f.vertical ? f.margineY + 90 * u : f.margineY,
+        // în 9:16 deasupra zonei acoperite de legenda și butoanele aplicațiilor
+        bottom: f.margineJos,
         maxWidth: latimePanou,
         translate: `0 ${(1 - intrare) * 46 * u + deriva}px`,
         opacity: interpolate(intrare, [0, 0.35], [0, 1], { extrapolateRight: "clamp" }),
@@ -262,7 +264,8 @@ const Legenda: React.FC<{ titlu?: string; text?: string; k: number }> = ({ titlu
             backgroundColor: c.accent,
             scale: `1 ${bara}`,
             transformOrigin: "50% 0%",
-            marginTop: titlu ? 0.14 * marime : 0.2 * marimeDescriere,
+            // aliniată cu vârful majusculelor din primul rând, oricare ar fi înălțimea rândului
+            marginTop: titlu ? ((inaltimeRand - 1.24) / 2 + 0.22) * marime : 0.2 * marimeDescriere,
             marginBottom: text ? 0.2 * marimeDescriere : 0.1 * marime,
           }}
         />
@@ -278,10 +281,9 @@ const Legenda: React.FC<{ titlu?: string; text?: string; k: number }> = ({ titlu
                 fontFamily: FONT_TITLU,
                 fontWeight: 700,
                 fontSize: marime,
-                lineHeight: 1.08,
+                lineHeight: inaltimeRand,
                 letterSpacing: "-0.02em",
                 color: c.text,
-                rowGap: 0.04 * marime,
               }}
             />
           ) : null}
@@ -331,7 +333,7 @@ export const Foto: React.FC<{ scena: ScenaFoto }> = ({ scena }) => {
 
   const secunde = durationInFrames / fps;
   // ritmul intrării se comprimă pentru scenele scurte, dar nu se lungește
-  const k = Math.min(1, Math.max(0.6, secunde / 4.5));
+  const k = Math.min(1, Math.max(0.45, secunde / 4.5));
   const miscare = alegeMiscare(scena.imagine, raport, width, height, secunde, f.u);
   const p = interpolate(frame, [0, durationInFrames], [0, 1], {
     extrapolateLeft: "clamp",

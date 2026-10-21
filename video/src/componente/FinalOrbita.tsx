@@ -23,7 +23,12 @@ export const FinalOrbita: React.FC<{
   /** 0–1, liniar pe toată scena: inelul se apropie puțin mai repede decât textul (paralaxă). */
   deriva?: number;
   opacitate?: number;
-}> = ({ cx, cy, raza, desen, secunde, deriva = 0, opacitate = 1 }) => {
+  /**
+   * Mască CSS pentru inel, cadran și cometă (nu și pentru lumina difuză): scena o
+   * folosește ca linia fină să se stingă acolo unde ar trece prin litere.
+   */
+  masca?: string;
+}> = ({ cx, cy, raza, desen, secunde, deriva = 0, opacitate = 1, masca }) => {
   const c = useCulori();
   const f = useFormat();
   const { u } = f;
@@ -54,7 +59,21 @@ export const FinalOrbita: React.FC<{
         transformOrigin: `${cx}px ${cy}px`,
       }}
     >
-      <svg width={f.latime} height={f.inaltime} style={{ position: "absolute", inset: 0, overflow: "visible" }}>
+      {/* lumină difuză în centrul inelului, ca textul să aibă un „ecran” */}
+      <svg width={f.latime} height={f.inaltime} style={{ position: "absolute", inset: 0 }}>
+        <defs>
+          <radialGradient id="final-lumina">
+            <stop offset="0" stopColor={c.principala} stopOpacity={0.16} />
+            <stop offset="1" stopColor={c.principala} stopOpacity={0} />
+          </radialGradient>
+        </defs>
+        <circle cx={cx} cy={cy} r={raza * 1.1} fill="url(#final-lumina)" opacity={desen} />
+      </svg>
+      <svg
+        width={f.latime}
+        height={f.inaltime}
+        style={{ position: "absolute", inset: 0, overflow: "visible", maskImage: masca, WebkitMaskImage: masca }}
+      >
         <defs>
           <linearGradient id="final-coada" gradientUnits="userSpaceOnUse" x1={start.x} y1={start.y} x2={cap.x} y2={cap.y}>
             <stop offset="0" stopColor={c.accent} stopOpacity={0} />
@@ -66,14 +85,7 @@ export const FinalOrbita: React.FC<{
             <stop offset="0.35" stopColor={c.accent} stopOpacity={0.16} />
             <stop offset="1" stopColor={c.accent} stopOpacity={0} />
           </radialGradient>
-          <radialGradient id="final-lumina">
-            <stop offset="0" stopColor={c.principala} stopOpacity={0.16} />
-            <stop offset="1" stopColor={c.principala} stopOpacity={0} />
-          </radialGradient>
         </defs>
-
-        {/* lumină difuză în centrul inelului, ca textul să aibă un „ecran” */}
-        <circle cx={cx} cy={cy} r={raza * 1.1} fill="url(#final-lumina)" opacity={desen} />
 
         {/* cadranul de gradații */}
         <circle

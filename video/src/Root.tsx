@@ -1,19 +1,24 @@
 import { type CalculateMetadataFunction, Composition } from "remotion";
 import { PROIECT_EXEMPLU } from "./date/exemplu";
 import type { Proiect, Scena } from "./date/tipuri";
+import { pregatesteProiect } from "./date/verificare";
 import { Prezentare, ScenaSingura } from "./Prezentare";
 import { cadreScena, durataTotala } from "./tranzitii";
 
 const FPS = 30;
 
-const calculeazaDurata: CalculateMetadataFunction<Proiect> = ({ props }) => ({
-  durationInFrames: durataTotala(props, FPS),
-});
+// Înainte de randare: datele sunt verificate (mesaj clar la o greșeală), fișierele
+// găsite (și cu nume NFC/NFD), iar durata muzicii citită.
+const calculeazaDurata: CalculateMetadataFunction<Proiect> = async ({ props }) => {
+  const proiect = await pregatesteProiect(props);
+  return { durationInFrames: durataTotala(proiect, FPS), props: proiect };
+};
 
 type PropsScena = { scena: Scena; culori?: Proiect["culori"] };
-const calculeazaDurataScena: CalculateMetadataFunction<PropsScena> = ({ props }) => ({
-  durationInFrames: cadreScena(props.scena, FPS),
-});
+const calculeazaDurataScena: CalculateMetadataFunction<PropsScena> = async ({ props }) => {
+  const { scene } = await pregatesteProiect({ scene: [props.scena] });
+  return { durationInFrames: cadreScena(scene[0], FPS), props: { ...props, scena: scene[0] } };
+};
 
 export const RemotionRoot: React.FC = () => {
   return (

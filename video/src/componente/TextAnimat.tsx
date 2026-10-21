@@ -42,17 +42,20 @@ export const TextAnimat: React.FC<{
             style={{
               display: "inline-block",
               overflow: "hidden",
-              // spațiu în mască pentru accentele de sus (Ă, Î, Â) și diacriticele de jos (ș, ț)
-              paddingTop: "0.14em",
-              marginTop: "-0.14em",
-              paddingBottom: "0.12em",
-              marginBottom: "-0.12em",
+              // spațiu în mască pentru accentele de sus (Ă, Î, Â) și virgula de sub ș, ț,
+              // care în Unbounded coboară 0,33 em sub linia de bază (la înălțimea de rând
+              // 1,05 rândul se termină la 0,15 em, deci masca trebuie să mai aibă ~0,2 em);
+              // marginile negative păstrează exact aceeași așezare a rândurilor
+              paddingTop: "0.16em",
+              marginTop: "-0.16em",
+              paddingBottom: "0.24em",
+              marginBottom: "-0.24em",
             }}
           >
             <span
               style={{
                 display: "inline-block",
-                translate: `0 ${(1 - p) * 110}%`,
+                translate: `0 ${(1 - p) * 125}%`, // pornește complet sub mască, chiar și cu accente
                 opacity: interpolate(p, [0, 0.4], [0, 1], {
                   extrapolateRight: "clamp",
                 }),

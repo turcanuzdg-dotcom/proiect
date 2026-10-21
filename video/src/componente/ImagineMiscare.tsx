@@ -1,5 +1,6 @@
 import type { CSSProperties } from "react";
-import { Img, interpolate, staticFile, useCurrentFrame, useVideoConfig } from "remotion";
+import { Img, interpolate, useCurrentFrame, useVideoConfig } from "remotion";
+import { sursa } from "../tema";
 
 export type Directie = "stanga" | "dreapta" | "sus" | "jos" | "centru";
 
@@ -32,7 +33,7 @@ export const ImagineMiscare: React.FC<{
 
   return (
     <Img
-      src={src.startsWith("http") ? src : staticFile(src)}
+      src={sursa(src)}
       style={{
         position: "absolute",
         inset: 0,

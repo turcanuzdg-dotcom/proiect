@@ -45,6 +45,18 @@ export type Culori = typeof CULORI_IMPLICITE;
 export const CuloriContext = createContext<Culori>(CULORI_IMPLICITE);
 export const useCulori = () => useContext(CuloriContext);
 
+/** Calea unui fișier: URL-urile http(s) rămân așa, restul sunt căi în public/. */
+export const sursa = (cale: string) => (/^https?:\/\//i.test(cale) ? cale : staticFile(cale));
+
+/**
+ * Înălțimea rândului pentru titlurile în Unbounded. Virgula de sub ș/ț coboară
+ * 0,33 em sub linia de bază, iar accentul lui Î/Ă/Â urcă la 0,98 em: la 1,05 ele
+ * se ating între rânduri („DÍN”, „grădinițéi”). 1,2 lasă aer între virgulă și
+ * rândul următor; titlurile scrise numai cu majuscule primesc puțin mai mult.
+ */
+export const inaltimeRandTitlu = (text: string) =>
+  /\p{Lu}/u.test(text) && text === text.toLocaleUpperCase("ro-RO") ? 1.25 : 1.2;
+
 /** O culoare a temei la o anumită opacitate (0–100), indiferent de formatul în care e scrisă. */
 export const transparenta = (culoare: string, procent: number) =>
   `color-mix(in srgb, ${culoare} ${procent}%, transparent)`;
@@ -56,17 +68,27 @@ export const EASE_INTRARE_IESIRE = Easing.bezier(0.65, 0, 0.35, 1);
 /**
  * Dimensiuni relative la format. `u` = 1px pe un cadru lat de 1920 (orizontal)
  * sau de 1080 (vertical), ca textul să aibă aceeași greutate vizuală în ambele.
+ *
+ * `margineSus` / `margineJos`: zona sigură pentru textul important. În 9:16,
+ * Reels/TikTok/Shorts își desenează sus antetul, iar jos legenda, numele contului
+ * și butoanele, deci acolo marginile sunt mult mai mari decât `margineY`.
+ * `margineDreaptaVerticala`: în 9:16, coloana de butoane din dreapta acoperă
+ * ultimii ~120 px din jumătatea de jos; acolo nu punem numere sau titluri late.
  */
 export const useFormat = () => {
   const { width, height } = useVideoConfig();
   const vertical = height > width;
   const u = vertical ? width / 1080 : width / 1920;
+  const margineY = (vertical ? 140 : 100) * u;
   return {
     vertical,
     u,
     latime: width,
     inaltime: height,
     margineX: (vertical ? 80 : 140) * u,
-    margineY: (vertical ? 140 : 100) * u,
+    margineY,
+    margineSus: vertical ? 210 * u : margineY,
+    margineJos: vertical ? 320 * u : margineY,
+    margineDreaptaVerticala: 120 * u,
   };
 };

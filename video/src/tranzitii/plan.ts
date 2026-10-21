@@ -7,7 +7,7 @@ import { durataScena, type Proiect, type Scena } from "../date/tipuri";
  * Prezentare (TransitionSeries), și calculul duratei compoziției, ca lungimea
  * filmului să fie mereu exact cea randată.
  *
- * - `estompare`: dizolvare prin întuneric, cu o ușoară apropiere și estompare optică.
+ * - `estompare`: dizolvare optică, cu o ușoară apropiere și estompare (fără „clipire” prin negru).
  * - `cortina`: ștergere direcțională cu o muchie fină în culoarea de accent.
  * - `glisare`: scena nouă alunecă peste cea veche, care se retrage mai lent (paralaxă).
  * - `lumina`: dizolvare printr-o lumină caldă de film (light leak), cel mult de două ori.
@@ -63,8 +63,11 @@ const alternativa = (tip: TipTranzitie, lumini: number): TipTranzitie => {
 export const cadreScena = (s: Scena, fps: number) => Math.max(1, Math.round(durataScena(s) * fps));
 
 /**
- * Tranzițiile dintre scene (n - 1 pentru n scene). O tranziție nu poate fi mai
- * lungă decât scenele dintre care trece (regula TransitionSeries).
+ * Tranzițiile dintre scene (n - 1 pentru n scene). O tranziție ocupă cel mult
+ * 40% din fiecare scenă vecină: așa tranziția de intrare și cea de ieșire a unei
+ * scene scurte nu se suprapun, fiecare scenă rămâne măcar 20% singură pe ecran și
+ * nu se amestecă niciodată mai mult de două scene (și regula TransitionSeries,
+ * tranziția nu e mai lungă decât scenele, e respectată).
  */
 export const planTranzitii = (scene: Scena[], fps: number): Tranzitie[] => {
   const rezultat: Tranzitie[] = [];
@@ -78,7 +81,10 @@ export const planTranzitii = (scene: Scena[], fps: number): Tranzitie[] => {
     // cortinele alternează sensul, ca două ștergeri să nu vină din aceeași parte
     if (tip === "cortina") sensCortina = sensCortina === 1 ? -1 : 1;
     const dorita = Math.round(DURATA_TRANZITIE[tip] * fps);
-    const durataCadre = Math.max(1, Math.min(dorita, cadreScena(scene[i - 1], fps), cadreScena(scene[i], fps)));
+    const durataCadre = Math.max(
+      1,
+      Math.min(dorita, Math.floor(0.4 * cadreScena(scene[i - 1], fps)), Math.floor(0.4 * cadreScena(scene[i], fps))),
+    );
     rezultat.push({ tip, sens: tip === "cortina" ? sensCortina : 1, durataCadre });
     precedenta = tip;
   }

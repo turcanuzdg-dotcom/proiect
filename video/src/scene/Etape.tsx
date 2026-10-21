@@ -9,12 +9,60 @@ import {
 import { latimeEm, potrivesteTitlu, randuriText } from "../componente/masuraText";
 import { Fundal } from "../componente/Fundal";
 import { TextAnimat } from "../componente/TextAnimat";
-import type { ScenaEtape } from "../date/tipuri";
-import { EASE_IESIRE, EASE_INTRARE_IESIRE, FONT_TEXT, FONT_TITLU, transparenta, useCulori, useFormat } from "../tema";
+import { type ScenaEtape, sfarsitUtil } from "../date/tipuri";
+import {
+  EASE_IESIRE,
+  EASE_INTRARE_IESIRE,
+  FONT_TEXT,
+  FONT_TITLU,
+  inaltimeRandTitlu,
+  transparenta,
+  useCulori,
+  useFormat,
+} from "../tema";
 
 const INALTIME_RAND_TEXT = 1.3;
 const INALTIME_RAND_DATA = 1.25;
 const SPATIERE_DATA = 0.12; // em, majuscule
+const SPATIERE_DATA_MINIMA = 0.04;
+const SPATIU_INTER_600 = 0.252; // em, spațiul obișnuit din Inter 600
+
+/**
+ * Bucățile în care se poate rupe o dată: la spații și după o linie, cratimă sau bară
+ * („IANUARIE–” / „FEBRUARIE 2025”). `spatiu` = bucata e precedată de un spațiu.
+ */
+const bucatiData = (d: string) =>
+  d
+    .split(/\s+/)
+    .filter(Boolean)
+    .flatMap((cuvant) =>
+      cuvant
+        .split(/(?<=[–—\-/])/)
+        .filter(Boolean)
+        .map((text, j) => ({ text, spatiu: j === 0 })),
+    );
+
+/** Câte rânduri ocupă data la corpul `marime` (px) într-o lățime dată, cu încadrare lacomă. */
+const randuriData = (d: string, marime: number, spatiere: number, latime: number) => {
+  const bucati = bucatiData(d).map((b) => ({
+    w: latimeEm(b.text, "textSemibold", { spatiere }) * marime,
+    spatiu: b.spatiu,
+  }));
+  let randuri = bucati.length ? 1 : 0;
+  let curent = 0;
+  let celMaiLat = 0;
+  bucati.forEach((b, i) => {
+    const adaos = (i > 0 && b.spatiu ? (SPATIU_INTER_600 + spatiere) * marime : 0) + b.w;
+    if (i > 0 && curent + adaos > latime) {
+      randuri++;
+      curent = b.w;
+    } else {
+      curent += adaos;
+    }
+    celMaiLat = Math.max(celMaiLat, b.w);
+  });
+  return { randuri, celMaiLat };
+};
 
 /**
  * Etapele proiectului: o linie care se desenează pas cu pas; când ajunge la o
@@ -53,22 +101,31 @@ export const Etape: React.FC<{ scena: ScenaEtape }> = ({ scena }) => {
   const auDate = dateText.some(Boolean);
 
   // ——— Dimensiuni ———
+  // Deriva lentă din timpul menținerii e scăzută din zona sigură, ca nimic să nu iasă
+  // din ea: 16:9 alunecă 10u spre stânga (rândul pornește cu 10u mai la dreapta),
+  // 9:16 plutește ±6u pe verticală.
+  const DERIVA_X = vertical ? 0 : 10 * u;
+  const DERIVA_Y = vertical ? 6 * u : 0;
   const latimeContinut = f.latime - 2 * f.margineX;
-  const inaltimeContinut = f.inaltime - 2 * f.margineY;
+  const latimeRand = latimeContinut - DERIVA_X;
+  const inaltimeContinut = f.inaltime - f.margineSus - f.margineJos - 2 * DERIVA_Y;
 
-  const titlu = textTitlu
+  const inaltimeRand = textTitlu ? inaltimeRandTitlu(textTitlu) : 1.2;
+  const minimExtremTitlu = (vertical ? 60 : 54) * u;
+  const titluInitial = textTitlu
     ? potrivesteTitlu({
         text: textTitlu,
         latime: latimeContinut,
-        maxim: (vertical ? 92 : 96) * u,
-        minim: (vertical ? 72 : 76) * u,
-        minimExtrem: (vertical ? 60 : 54) * u,
-        maxRanduri: vertical ? 3 : 2,
+        maxim: 96 * u,
+        minim: 76 * u,
+        minimExtrem: minimExtremTitlu,
+        // în 9:16, cu puține etape, e loc pentru un titlu lung la corp mare
+        maxRanduri: vertical ? (n <= 3 ? 5 : 3) : 2,
       })
     : null;
-  const inaltimeTitlu = titlu ? titlu.randuri * titlu.marime * 1.05 : 0;
-  const spatiuTitlu = titlu ? (vertical ? 96 : 104) * u : 0;
-  const inaltimeDisponibila = inaltimeContinut - inaltimeTitlu - spatiuTitlu;
+  const spatiuTitlu = textTitlu ? (vertical ? (n >= 4 ? 72 : 96) : 104) * u : 0;
+  const disponibilSub = (t: { marime: number; randuri: number } | null) =>
+    inaltimeContinut - (t ? t.randuri * t.marime * inaltimeRand : 0) - spatiuTitlu;
 
   const marimeNod = (vertical ? 36 : 34) * u;
   const razaNod = marimeNod / 2;
@@ -76,54 +133,81 @@ export const Etape: React.FC<{ scena: ScenaEtape }> = ({ scena }) => {
   const spatiuColoane = (n >= 5 ? 44 : n === 4 ? 56 : 80) * u;
   const latimeColoana = vertical
     ? 0
-    : (latimeContinut - spatiuColoane * (n - 1)) / Math.max(1, n);
+    : (latimeRand - spatiuColoane * (n - 1)) / Math.max(1, n);
   // 16:9: numărul mare al etapei, deasupra liniei
   const marimeNumar = vertical ? 0 : Math.min(150 * u, latimeColoana * 0.42);
   const spatiuSubNumar = 22 * u;
   const spatiuSubLinie = 40 * u;
   // 9:16: panourile de sticlă din dreapta liniei
   const indentPanou = marimeNod + 36 * u;
-  const paddingPanou = (n >= 5 ? 28 : n === 4 ? 36 : 42) * u;
+  // cu cinci etape pe vertical, panourile se strâng, ca textele să rămână de ~40u
+  const paddingPanou = (n >= 5 ? (vertical ? 22 : 28) : n === 4 ? 36 : 42) * u;
   const latimeText = vertical
     ? latimeContinut - indentPanou - 2 * paddingPanou
     : latimeColoana - 8 * u;
-  const spatiuData = (vertical ? 12 : 16) * u;
+  const spatiuData = (vertical ? (n >= 5 ? 8 : 12) : 16) * u;
 
-  // Data: pe un singur rând, cât încape (majuscule, Inter 600).
-  const latimeDataEm = Math.max(
-    0,
-    ...dateText.map((d) =>
-      latimeEm(d, "textSemibold", { spatiere: SPATIERE_DATA }),
-    ),
-  );
-  const marimeData = Math.max(
-    20 * u,
-    Math.min(
-      (vertical ? 32 : 30) * u,
-      latimeDataEm > 0 ? latimeText / latimeDataEm : Infinity,
-    ),
-  );
+  // 9:16: numărul mare al etapei stă în colțul din dreapta-sus al panoului. Data (scurtă)
+  // îl ocolește; o etapă fără dată își rezervă lățimea lui, ca textul să nu treacă pe sub el.
+  const marimeNumarVertical = (n >= 5 ? 76 : 96) * u;
+  const rezervaNumar = vertical ? 1.56 * marimeNumarVertical - 0.3 * paddingPanou + 16 * u : 0;
+  const latimeTextEtapa = (i: number) => (vertical && !dateText[i] ? latimeText - rezervaNumar : latimeText);
+  const latimeData = vertical ? latimeText - rezervaNumar : latimeText;
+
+  // Data (majuscule, Inter 600): pe un rând, cât mai mare (34–36u). Dacă nu încape,
+  // se strânge spațierea literelor, apoi scade corpul până la 26u, apoi trece pe două
+  // rânduri (la spații sau după „–”). Niciodată tăiată pe orizontală.
+  const asezareData = (() => {
+    const date = dateText.filter(Boolean);
+    const maxim = (vertical ? (n >= 5 ? 30 : 36) : 34) * u;
+    const minim = 26 * u;
+    const lat = (sp: number) => Math.max(0, ...date.map((d) => latimeEm(d, "textSemibold", { spatiere: sp })));
+    if (date.length === 0) return { marime: maxim, spatiere: SPATIERE_DATA };
+    for (let sp = SPATIERE_DATA; sp >= SPATIERE_DATA_MINIMA - 1e-6; sp -= 0.02) {
+      if (lat(sp) * maxim <= latimeData) return { marime: maxim, spatiere: sp };
+    }
+    const m = latimeData / lat(SPATIERE_DATA_MINIMA);
+    if (m >= minim) return { marime: Math.min(maxim, m), spatiere: SPATIERE_DATA_MINIMA };
+    for (let mm = maxim; mm >= minim; mm -= u) {
+      const ok = date.every((d) => {
+        const r = randuriData(d, mm, SPATIERE_DATA_MINIMA, latimeData);
+        return r.randuri <= 2 && r.celMaiLat <= latimeData;
+      });
+      if (ok) return { marime: mm, spatiere: SPATIERE_DATA_MINIMA };
+    }
+    // o bucată prea lată chiar și la 26u: corpul scade cât s-o cuprindă
+    const celMaiLat = Math.max(
+      ...date.map((d) => randuriData(d, 1, SPATIERE_DATA_MINIMA, Infinity).celMaiLat),
+    );
+    return { marime: Math.min(minim, latimeData / celMaiLat), spatiere: SPATIERE_DATA_MINIMA };
+  })();
+  const marimeData = asezareData.marime;
+  const spatiereData = asezareData.spatiere;
+  const randuriDate = dateText.map((d) => (d ? randuriData(d, marimeData, spatiereData, latimeData).randuri : 0));
+  // 16:9: toate coloanele rezervă același număr de rânduri pentru dată, ca textele să se alinieze
+  const randuriDataMax = Math.max(1, ...randuriDate);
   const inaltimeRandData = marimeData * INALTIME_RAND_DATA;
+  const inaltimeData = (i: number) => (vertical ? randuriDate[i] : randuriDataMax) * inaltimeRandData;
 
   // Textul: cel mai mare corp la care încape fiecare cuvânt și tot blocul.
   const masoaraText = (marime: number) =>
-    etape.map((e) =>
-      randuriText({ text: e.text, font: "text", marime, latime: latimeText }),
+    etape.map((e, i) =>
+      randuriText({ text: e.text, font: "text", marime, latime: latimeTextEtapa(i) }),
     );
   const inaltimeEtapa = (marime: number, randuri: number, i: number) => {
     const text = randuri * marime * INALTIME_RAND_TEXT;
     if (vertical)
       return (
         2 * paddingPanou +
-        (dateText[i] ? inaltimeRandData + spatiuData : 0) +
+        (dateText[i] ? inaltimeData(i) + spatiuData : 0) +
         text
       );
-    return (auDate ? inaltimeRandData + spatiuData : 0) + text;
+    return (auDate ? inaltimeData(i) + spatiuData : 0) + text;
   };
   const spatiuMinimVertical = (n >= 5 ? 20 : 28) * u;
-  const incapeText = (marime: number) => {
+  const incapeText = (marime: number, inaltimeDisponibila: number) => {
     const m = masoaraText(marime);
-    if (m.some((r) => r.celMaiLung > latimeText)) return false;
+    if (m.some((r, i) => r.celMaiLung > latimeTextEtapa(i))) return false;
     if (vertical) {
       const total =
         m.reduce((s, r, i) => s + inaltimeEtapa(marime, r.randuri, i), 0) +
@@ -145,8 +229,23 @@ export const Etape: React.FC<{ scena: ScenaEtape }> = ({ scena }) => {
   };
   // corpul de pornire, după numărul de etape (1–5)
   const corpText = vertical ? [54, 54, 50, 48, 44] : [52, 52, 48, 44, 40];
+  // Textele etapelor rămân lizibile (≥ 40u) înaintea titlului: sub acest prag scade
+  // întâi titlul (până la minimul lui), abia apoi textele, cel mult până la 30u.
+  let titlu = titluInitial;
   let marimeText = corpText[Math.min(4, Math.max(0, n - 1))] * u;
-  while (!incapeText(marimeText) && marimeText > 30 * u) marimeText -= 1 * u;
+  while (!incapeText(marimeText, disponibilSub(titlu)) && marimeText > 30 * u) {
+    if (titlu && textTitlu && marimeText < 40 * u && titlu.marime > minimExtremTitlu) {
+      const m = titlu.marime - 2 * u;
+      titlu = {
+        marime: m,
+        randuri: randuriText({ text: textTitlu, font: "titlu", marime: m, latime: latimeContinut, spatiere: -0.02 })
+          .randuri,
+      };
+    } else {
+      marimeText -= 1 * u;
+    }
+  }
+  const inaltimeDisponibila = disponibilSub(titlu);
   const masuri = masoaraText(marimeText);
 
   // Vertical: panourile stau aproape unele de altele; ce rămâne se împarte sus și jos.
@@ -170,16 +269,23 @@ export const Etape: React.FC<{ scena: ScenaEtape }> = ({ scena }) => {
 
   // ——— Calendarul (secunde) ———
   const startPrimul = (textTitlu ? 0.7 : 0.35) * k;
-  const sfarsitDezvaluire = 0.65 * durata;
-  const ultimul = sfarsitDezvaluire - 1.0 * Math.max(k, 0.7);
+  // cât durează intrarea unei etape: textul pornește la +0,14 s, cascada ≤ 0,4 s
+  const intrareEtapa = 0.14 + 0.4 + 0.8 * Math.max(k, 0.75);
+  // ultima etapă e complet scrisă înainte de tranziția de ieșire, oricât de scurtă e scena
+  const limita = sfarsitUtil(durata);
+  const ultimul = Math.min(0.65 * durata - 1.0 * Math.max(k, 0.7), limita - intrareEtapa);
   const pas =
     n > 1
-      ? Math.min(1.8, Math.max(0.28, (ultimul - startPrimul) / (n - 1)))
+      ? Math.min(1.8, Math.max(0.12, (ultimul - startPrimul) / (n - 1)))
       : 0;
   const tEtapa = (i: number) => startPrimul + i * pas;
   const tFinal = tEtapa(n - 1);
-  // după ultima etapă, toate revin la lumină plină
-  const revenire = progres(tFinal + 0.6, tFinal + 1.3, EASE_INTRARE_IESIRE);
+  // după ultima etapă, toate revin la lumină plină (tot înainte de tranziția de ieșire)
+  const revenire = progres(
+    Math.min(tFinal + 0.6, limita - 0.6),
+    Math.min(tFinal + 1.3, limita),
+    EASE_INTRARE_IESIRE,
+  );
   const traseu = progres(0.05, 0.9 * Math.max(k, 0.7));
   const nrCuvinteTitlu = textTitlu ? textTitlu.split(/\s+/).length : 0;
   const pasTitlu =
@@ -390,25 +496,29 @@ export const Etape: React.FC<{ scena: ScenaEtape }> = ({ scena }) => {
         {data || (auDate && !vertical) ? (
           <div
             style={{
-              overflow: "hidden",
-              height: inaltimeRandData,
+              height: inaltimeData(i),
               marginBottom: spatiuData,
+              // masca dezvăluirii taie doar pe verticală (dedesubt); pe orizontală nimic
+              // nu se taie, iar sus rămâne loc pentru accentele majusculelor
+              clipPath: "inset(-0.4em -50% 0 -50%)",
+              fontSize: marimeData,
             }}
           >
             <div
               style={{
                 fontFamily: FONT_TEXT,
                 fontWeight: 600,
-                fontSize: marimeData,
                 lineHeight: INALTIME_RAND_DATA,
-                letterSpacing: `${SPATIERE_DATA}em`,
-                whiteSpace: "nowrap",
+                letterSpacing: `${spatiereData}em`,
+                whiteSpace: randuriDate[i] > 1 ? "normal" : "nowrap",
+                maxWidth: latimeData,
                 color: c.accent,
                 translate: `0 ${(1 - intrareData) * 100}%`,
                 opacity: intrareData,
               }}
             >
-              {data}
+              {/* rupere permisă după „–”, „-” sau „/” */}
+              {data.replace(/([–—\-/])/g, "$1\u200B")}
             </div>
           </div>
         ) : null}
@@ -423,7 +533,7 @@ export const Etape: React.FC<{ scena: ScenaEtape }> = ({ scena }) => {
             fontSize: marimeText,
             lineHeight: INALTIME_RAND_TEXT,
             color: c.text,
-            maxWidth: latimeText,
+            maxWidth: latimeTextEtapa(i),
           }}
         />
       </>
@@ -436,7 +546,7 @@ export const Etape: React.FC<{ scena: ScenaEtape }> = ({ scena }) => {
 
       <AbsoluteFill
         style={{
-          padding: `${f.margineY}px ${f.margineX}px`,
+          padding: `${f.margineSus}px ${f.margineX}px ${f.margineJos}px`,
           display: "flex",
           flexDirection: "column",
           justifyContent: "center",
@@ -450,8 +560,8 @@ export const Etape: React.FC<{ scena: ScenaEtape }> = ({ scena }) => {
             alignItems: "flex-start",
             width: latimeContinut,
             translate: vertical
-              ? `0 ${-12 * u * deriva}px`
-              : `${-10 * u * deriva}px 0`,
+              ? `0 ${DERIVA_Y - 2 * DERIVA_Y * deriva}px`
+              : `${DERIVA_X * (1 - deriva)}px 0`,
           }}
         >
           {titlu && textTitlu ? (
@@ -465,7 +575,7 @@ export const Etape: React.FC<{ scena: ScenaEtape }> = ({ scena }) => {
                 fontFamily: FONT_TITLU,
                 fontWeight: 800,
                 fontSize: titlu.marime,
-                lineHeight: 1.05,
+                lineHeight: inaltimeRand,
                 letterSpacing: "-0.02em",
                 color: c.text,
                 maxWidth: latimeContinut,
@@ -528,7 +638,7 @@ export const Etape: React.FC<{ scena: ScenaEtape }> = ({ scena }) => {
                           translate: `0 ${(1 - intrarePanou) * 30}%`,
                         }}
                       >
-                        {numar(i, (n >= 5 ? 76 : 96) * u, 13)}
+                        {numar(i, marimeNumarVertical, 20)}
                       </div>
                       <div style={{ position: "relative" }}>{continut(i)}</div>
                     </div>
@@ -542,7 +652,7 @@ export const Etape: React.FC<{ scena: ScenaEtape }> = ({ scena }) => {
                 display: "grid",
                 gridTemplateColumns: `repeat(${n}, ${latimeColoana}px)`,
                 columnGap: spatiuColoane,
-                width: latimeContinut,
+                width: latimeRand,
               }}
             >
               {etape.map((_, i) => {

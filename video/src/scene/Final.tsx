@@ -1,11 +1,26 @@
 import { AbsoluteFill, interpolate, useCurrentFrame, useVideoConfig } from "remotion";
 import { Fundal } from "../componente/Fundal";
-import { FinalLogouri, useAsezareLogouri } from "../componente/FinalLogouri";
-import { imparteEchilibrat, potrivesteRand, potrivesteTitlu, randuriText as masoaraRanduri } from "../componente/masuraText";
+import { aseazaLogouri, FinalLogouri, useLogouri } from "../componente/FinalLogouri";
+import {
+  evitaCuvantSingur,
+  imparteEchilibrat,
+  latimeEm,
+  potrivesteTitlu,
+  randuriText as masoaraRanduri,
+} from "../componente/masuraText";
 import { FinalOrbita } from "../componente/FinalOrbita";
 import { TextAnimat } from "../componente/TextAnimat";
 import type { ScenaFinal } from "../date/tipuri";
-import { EASE_IESIRE, EASE_INTRARE_IESIRE, FONT_TEXT, FONT_TITLU, transparenta, useCulori, useFormat } from "../tema";
+import {
+  EASE_IESIRE,
+  EASE_INTRARE_IESIRE,
+  FONT_TEXT,
+  FONT_TITLU,
+  inaltimeRandTitlu,
+  transparenta,
+  useCulori,
+  useFormat,
+} from "../tema";
 
 type TipContact = "web" | "email" | "telefon";
 
@@ -14,6 +29,39 @@ const tipContact = (s: string): TipContact =>
 
 /** Adresa așa cum se citește: fără „https://” și fără bara de la sfârșit. */
 const curataContact = (s: string) => s.trim().replace(/^https?:\/\//i, "").replace(/\/$/, "");
+
+const SPATIERE_CONTACT = 0.01;
+const latimeContactEm = (t: string) => latimeEm(t, "textSemibold", { spatiere: SPATIERE_CONTACT });
+
+/**
+ * Contactul în capsulă, cât mai mare (până la `maxim`), fără să iasă din `latime`:
+ * - pe un rând, dacă încape la cel puțin `minim`;
+ * - o adresă web prea lungă se arată doar ca domeniu (calea nu se poate citi și
+ *   tasta dintr-un video, iar domeniul duce oricum pe site);
+ * - un e-mail sau un telefon lung trece pe două rânduri, rupt după „@”, „.”, „/”, „-”.
+ */
+const potrivesteContact = (text: string, tip: TipContact, latime: number, maxim: number, minim: number) => {
+  const peUnRand = (t: string) => Math.min(maxim, latime / Math.max(0.001, latimeContactEm(t)));
+  const m = peUnRand(text);
+  if (m >= minim) return { linii: [text], marime: m };
+  if (tip === "web") {
+    const domeniu = text.split("/")[0];
+    const md = peUnRand(domeniu);
+    if (md >= minim * 0.875 || !domeniu.includes(".")) return { linii: [domeniu], marime: md };
+    text = domeniu;
+  }
+  // cea mai echilibrată rupere în două rânduri
+  let cea: { linii: string[]; lat: number } | null = null;
+  for (let i = 1; i < text.length; i++) {
+    if (!/[@./\-_\s]/.test(text[i - 1]) && text[i] !== "@") continue;
+    const linii = [text.slice(0, i).trim(), text.slice(i).trim()];
+    if (!linii[0] || !linii[1]) continue;
+    const lat = Math.max(...linii.map(latimeContactEm));
+    if (!cea || lat < cea.lat) cea = { linii, lat };
+  }
+  if (!cea) return { linii: [text], marime: m };
+  return { linii: cea.linii, marime: Math.min(maxim, latime / cea.lat) };
+};
 
 /** Pictograme liniare simple, în culoarea de accent. */
 const Pictograma: React.FC<{ tip: TipContact; marime: number; culoare: string }> = ({ tip, marime, culoare }) => (
@@ -80,87 +128,143 @@ export const Final: React.FC<{ scena: ScenaFinal }> = ({ scena }) => {
   const contact = scena.contact?.trim() ? curataContact(scena.contact) : null;
   const latimeUtila = f.latime - 2 * f.margineX;
 
-  // ——— Logourile: placa stă jos; restul se centrează în spațiul de deasupra ———
-  const logouri = useAsezareLogouri(
-    scena.logouri,
-    (vertical ? 110 : 96) * u,
-    vertical ? latimeUtila : Math.min(1500 * u, latimeUtila),
-  );
-  // pe vertical, mult peste marginea minimă: jos stau legendele și butoanele aplicațiilor
-  const josLogouri = vertical ? 320 * u : f.margineY;
-  const sus = f.margineY;
-  const jos = logouri ? josLogouri + logouri.asezare.inaltime + (vertical ? 120 : 76) * u : f.margineY;
-  const inaltimeZona = f.inaltime - sus - jos;
+  // ——— Contactul, în capsulă ———
+  const tip = contact ? tipContact(contact) : "web";
+  const padXCapsula = 40 * u;
+  const padYCapsula = 20 * u;
+  const marimePictograma = (vertical ? 40 : 38) * u;
+  const spatiuPictograma = 18 * u;
+  const asezareContact = contact
+    ? potrivesteContact(
+        contact,
+        tip,
+        (latimeUtila - 2 * padXCapsula - marimePictograma - spatiuPictograma) * 0.98,
+        (vertical ? 42 : 40) * u,
+        32 * u,
+      )
+    : null;
+  const marimeContact = asezareContact?.marime ?? 0;
+  const liniiContact = asezareContact?.linii ?? [];
+  const inaltimeCapsula = liniiContact.length * marimeContact * 1.25 + 2 * padYCapsula;
+
+  // ——— Așezarea: placa de logouri jos, restul centrat în spațiul de deasupra ———
+  // Titlul trebuie să rămână de cel puțin 84u: dacă nu încape, scad întâi logourile,
+  // apoi textul de mulțumire, și abia la urmă titlul.
+  const datelogouri = useLogouri(scena.logouri);
+  const latimeLogouri = vertical ? latimeUtila : Math.min(1500 * u, latimeUtila);
+  // pe vertical, jos stau legendele și butoanele aplicațiilor (zona sigură comună)
+  const josLogouri = f.margineJos;
+  const sus = f.margineSus;
+  const latimeText = vertical ? latimeUtila : Math.min(1180 * u, latimeUtila);
+  const INALTIME_RAND_TEXT = 1.36;
+  const latimeTitlu = vertical ? latimeUtila : Math.min(1440 * u, latimeUtila);
+  const inaltimeRand = inaltimeRandTitlu(titluText);
+
+  // ——— Spațieri verticale (de bază; `strans` < 1 le strânge când titlul n-ar avea loc) ———
+  const grosimeLinie = Math.max(2, 3 * u);
+  const spatieri = (strans: number) => ({
+    linie: (vertical ? 48 : 40) * u * strans, // titlu → linia de accent
+    text: (vertical ? 40 : 34) * u * strans, // linia → text
+    contact: (text ? 56 : 72) * u * strans,
+    logouri: (vertical ? 120 : 76) * u * strans, // conținut → placa de logouri
+  });
+
+  const calculeaza = (inaltimeLogo: number, marimeText: number, strans: number) => {
+    const sp = spatieri(strans);
+    const spatiuLinie = sp.linie;
+    const spatiuText = sp.text;
+    const spatiuContact = sp.contact;
+    const logouri = datelogouri
+      ? { lista: datelogouri.lista, asezare: aseazaLogouri(datelogouri.rapoarte, inaltimeLogo, latimeLogouri, u) }
+      : null;
+    const jos = logouri ? josLogouri + logouri.asezare.inaltime + sp.logouri : f.margineJos;
+    const inaltimeZona = f.inaltime - sus - jos;
+    const randuriTextul = text
+      ? masoaraRanduri({ text, font: "text", marime: marimeText, latime: latimeText }).randuri
+      : 0;
+    const inaltimeExtra =
+      (text ? spatiuLinie + grosimeLinie + spatiuText + randuriTextul * marimeText * INALTIME_RAND_TEXT : 0) +
+      (contact ? spatiuContact + inaltimeCapsula : 0);
+
+    // Titlul: cât mai mare, pe rânduri echilibrate, fără să depășească zona
+    const inaltimeMaxTitlu = inaltimeZona - inaltimeExtra - 24 * u;
+    const potriveste = (maxim: number) =>
+      potrivesteTitlu({
+        text: titluText,
+        latime: latimeTitlu,
+        maxim,
+        minim: Math.min(84 * u, maxim),
+        minimExtrem: Math.min(60 * u, maxim),
+        maxRanduri: vertical ? 6 : 4,
+        preferaRanduri: true,
+      });
+    // un titlu scurt („Mulțumim!”) poate fi mai mare; pe vertical îl limitează oricum lățimea
+    let maximTitlu =
+      (vertical
+        ? 116
+        : interpolate(titluText.length, [12, 30], [168, 128], { extrapolateLeft: "clamp", extrapolateRight: "clamp" })) *
+      u;
+    let titlu = potriveste(maximTitlu);
+    while (titlu.randuri * titlu.marime * inaltimeRand > inaltimeMaxTitlu && maximTitlu > 56 * u) {
+      maximTitlu -= 4 * u;
+      titlu = potriveste(maximTitlu);
+    }
+    return { logouri, jos, inaltimeZona, marimeText, randuriTextul, inaltimeExtra, titlu, sp };
+  };
+
+  const marimeTextImplicita = (text && text.length > 110 ? 40 : vertical ? 46 : 44) * u;
+  const variante: [number, number, number][] = [
+    [(vertical ? 90 : 76) * u, marimeTextImplicita, 1],
+    [(vertical ? 78 : 66) * u, marimeTextImplicita, 1],
+    [(vertical ? 66 : 56) * u, Math.min(marimeTextImplicita, 40 * u), 1],
+    [(vertical ? 66 : 56) * u, Math.min(marimeTextImplicita, 40 * u), 0.65],
+  ];
+  let asezare = calculeaza(...variante[0]);
+  for (const v of variante.slice(1)) {
+    if (asezare.titlu.marime >= 84 * u - 0.5) break;
+    const alta = calculeaza(...v);
+    if (alta.titlu.marime > asezare.titlu.marime) asezare = alta;
+  }
+  const { logouri, inaltimeZona, marimeText, randuriTextul, inaltimeExtra, titlu, sp } = asezare;
+  const spatiuLinie = sp.linie;
+  const spatiuText = sp.text;
+  const spatiuContact = sp.contact;
   const cx = f.latime / 2;
   const cy = sus + inaltimeZona / 2;
 
-  // ——— Textul și capsula de contact ———
-  const latimeText = vertical ? latimeUtila : Math.min(1180 * u, latimeUtila);
-  const marimeText = (text && text.length > 110 ? 40 : vertical ? 46 : 44) * u;
-  const INALTIME_RAND_TEXT = 1.36;
-  const randuriTextul = text
-    ? masoaraRanduri({ text, font: "text", marime: marimeText, latime: latimeText }).randuri
-    : 0;
   const liniiText = text
-    ? imparteEchilibrat({ text, font: "text", marime: marimeText, linii: randuriTextul })
-    : [];
-
-  const tip = contact ? tipContact(contact) : "web";
-  const padXCapsula = 40 * u;
-  const marimePictograma = (vertical ? 40 : 38) * u;
-  const spatiuPictograma = 18 * u;
-  const marimeContact = contact
-    ? potrivesteRand({
-        text: contact,
-        font: "textSemibold",
-        latime: latimeUtila - 2 * padXCapsula - marimePictograma - spatiuPictograma,
-        maxim: (vertical ? 42 : 40) * u,
-        minim: 28 * u,
-        spatiere: 0.01,
+    ? evitaCuvantSingur({
+        linii: imparteEchilibrat({ text, font: "text", marime: marimeText, linii: randuriTextul }),
+        font: "text",
+        marime: marimeText,
+        latime: latimeText,
       })
-    : 0;
-  const inaltimeCapsula = marimeContact * 1.25 + 2 * 20 * u;
-
-  // ——— Spațieri verticale ———
-  const spatiuLinie = (vertical ? 48 : 40) * u; // titlu → linia de accent
-  const grosimeLinie = Math.max(2, 3 * u);
-  const spatiuText = (vertical ? 40 : 34) * u; // linia → text
-  const spatiuContact = (text ? 56 : 72) * u;
-  const inaltimeExtra =
-    (text ? spatiuLinie + grosimeLinie + spatiuText + randuriTextul * marimeText * INALTIME_RAND_TEXT : 0) +
-    (contact ? spatiuContact + inaltimeCapsula : 0);
-
-  // ——— Titlul: cât mai mare, pe rânduri echilibrate, fără să depășească zona ———
-  const latimeTitlu = vertical ? latimeUtila : Math.min(1440 * u, latimeUtila);
-  const INALTIME_RAND_TITLU = 1.05;
-  const inaltimeMaxTitlu = inaltimeZona - inaltimeExtra - 24 * u;
-  const potriveste = (maxim: number) =>
-    potrivesteTitlu({
+    : [];
+  const liniiTitlu = evitaCuvantSingur({
+    linii: imparteEchilibrat({
       text: titluText,
-      latime: latimeTitlu,
-      maxim,
-      minim: Math.min(84 * u, maxim),
-      minimExtrem: Math.min(60 * u, maxim),
-      maxRanduri: vertical ? 6 : 4,
-      preferaRanduri: true,
-    });
-  // un titlu scurt („Mulțumim!”) poate fi mai mare; pe vertical îl limitează oricum lățimea
-  let maximTitlu =
-    (vertical
-      ? 116
-      : interpolate(titluText.length, [12, 30], [168, 128], { extrapolateLeft: "clamp", extrapolateRight: "clamp" })) * u;
-  let titlu = potriveste(maximTitlu);
-  while (titlu.randuri * titlu.marime * INALTIME_RAND_TITLU > inaltimeMaxTitlu && maximTitlu > 56 * u) {
-    maximTitlu -= 4 * u;
-    titlu = potriveste(maximTitlu);
-  }
-  const liniiTitlu = imparteEchilibrat({
-    text: titluText,
+      font: "titlu",
+      marime: titlu.marime,
+      linii: titlu.randuri,
+      spatiere: -0.02,
+    }),
     font: "titlu",
     marime: titlu.marime,
-    linii: titlu.randuri,
+    latime: latimeTitlu,
     spatiere: -0.02,
   });
+
+  // Unde stă titlul, ca inelul din spate să se stingă acolo unde ar trece prin litere.
+  const inaltimeTitlu = liniiTitlu.length * titlu.marime * inaltimeRand;
+  const latimeTitluReala = Math.max(
+    ...liniiTitlu.map(
+      (l) =>
+        masoaraRanduri({ text: l, font: "titlu", marime: titlu.marime, latime: Infinity, spatiere: -0.02 })
+          .celMaiLatRand,
+    ),
+  );
+  const yTitlu = cy - (inaltimeTitlu + inaltimeExtra) / 2 + inaltimeTitlu / 2;
+  const mascaOrbita = `radial-gradient(ellipse ${latimeTitluReala * 0.95 + 40 * u}px ${inaltimeTitlu * 0.95 + 40 * u}px at ${cx}px ${yTitlu}px, transparent 0%, transparent 74%, black 100%)`;
 
   // ——— Calendarul intrării (secunde la ritmul de bază de 5 s) ———
   const nrCuvinteTitlu = titluText.split(/\s+/).filter(Boolean).length;
@@ -231,6 +335,7 @@ export const Final: React.FC<{ scena: ScenaFinal }> = ({ scena }) => {
         desen={desen}
         secunde={frame / fps}
         deriva={deriva}
+        masca={mascaOrbita}
       />
 
       {/* Conținutul, centrat în zona de deasupra logourilor */}
@@ -255,7 +360,7 @@ export const Final: React.FC<{ scena: ScenaFinal }> = ({ scena }) => {
             fontFamily: FONT_TITLU,
             fontWeight: 800,
             fontSize: titlu.marime,
-            lineHeight: INALTIME_RAND_TITLU,
+            lineHeight: inaltimeRand,
             letterSpacing: "-0.02em",
             color: c.text,
             width: latimeTitlu,
@@ -305,17 +410,18 @@ export const Final: React.FC<{ scena: ScenaFinal }> = ({ scena }) => {
             style={{
               marginTop: spatiuContact,
               height: inaltimeCapsula,
+              maxWidth: latimeUtila,
               display: "flex",
               alignItems: "center",
               gap: spatiuPictograma,
               padding: `0 ${padXCapsula}px`,
               boxSizing: "border-box",
-              borderRadius: 999,
+              borderRadius: liniiContact.length > 1 ? 40 * u : 999,
               border: `${Math.max(1.5, 2 * u)}px solid ${transparenta(c.accent, 85)}`,
               backgroundColor: transparenta(c.accent, 7),
               backdropFilter: `blur(${20 * u}px)`,
               // capsula se deschide din centru
-              clipPath: `inset(-2px ${(1 - capsula) * 50}% -2px ${(1 - capsula) * 50}% round 999px)`,
+              clipPath: `inset(-2px ${(1 - capsula) * 50}% -2px ${(1 - capsula) * 50}% round ${liniiContact.length > 1 ? 40 * u : 999}px)`,
               opacity: Math.min(1, capsula * 3),
             }}
           >
@@ -334,14 +440,17 @@ export const Final: React.FC<{ scena: ScenaFinal }> = ({ scena }) => {
                 fontWeight: 600,
                 fontSize: marimeContact,
                 lineHeight: 1.25,
-                letterSpacing: "0.01em",
+                letterSpacing: `${SPATIERE_CONTACT}em`,
                 color: c.text,
                 whiteSpace: "nowrap",
+                textAlign: "left",
                 opacity: textCapsula,
                 translate: `0 ${(1 - textCapsula) * 10 * u}px`,
               }}
             >
-              {contact}
+              {liniiContact.map((l, i) => (
+                <div key={i}>{l}</div>
+              ))}
             </div>
           </div>
         ) : null}

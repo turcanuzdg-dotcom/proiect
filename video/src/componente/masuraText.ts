@@ -289,3 +289,35 @@ export const latimeEchilibrata = ({
   // o mică rezervă: browserul nu trebuie să mute un cuvânt pe un rând în plus
   return Math.min(latime, celMaiLat * 1.015 + 1);
 };
+
+/**
+ * Evită un cuvânt scurt singur pe ultimul rând („Țânțăreni, / 2026”): dacă ultimul
+ * rând are un singur cuvânt de cel mult `maxCaractere` și rândul de dinainte are mai
+ * multe, coboară ultimul cuvânt al acestuia, cât timp noul rând încape în `latime`.
+ */
+export const evitaCuvantSingur = ({
+  linii,
+  font,
+  marime,
+  latime,
+  spatiere = 0,
+  spatiuCuvinte = SPATIU_CUVINTE,
+  maxCaractere = 6,
+}: {
+  linii: string[];
+  font: FontMasura;
+  marime: number;
+  latime: number;
+  spatiere?: number;
+  spatiuCuvinte?: number;
+  maxCaractere?: number;
+}): string[] => {
+  if (linii.length < 2) return linii;
+  const ultim = cuvinteDin(linii[linii.length - 1]);
+  const penultim = cuvinteDin(linii[linii.length - 2]);
+  if (ultim.length !== 1 || ultim[0].length > maxCaractere || penultim.length < 2) return linii;
+  const nou = `${penultim[penultim.length - 1]} ${ultim[0]}`;
+  const lat = randuriText({ text: nou, font, marime, latime: Infinity, spatiere, spatiuCuvinte }).celMaiLatRand;
+  if (lat > latime) return linii;
+  return [...linii.slice(0, -2), penultim.slice(0, -1).join(" "), nou];
+};

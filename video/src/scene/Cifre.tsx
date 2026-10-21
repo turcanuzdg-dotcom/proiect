@@ -1,5 +1,6 @@
 import {
   AbsoluteFill,
+  Easing,
   interpolate,
   useCurrentFrame,
   useVideoConfig,
@@ -8,12 +9,27 @@ import { latimeEm, potrivesteTitlu, randuriText } from "../componente/masuraText
 import { formateazaFinal, formateazaPartial } from "../componente/numere";
 import { Fundal } from "../componente/Fundal";
 import { TextAnimat } from "../componente/TextAnimat";
-import type { Cifra, ScenaCifre } from "../date/tipuri";
-import { EASE_IESIRE, EASE_INTRARE_IESIRE, FONT_TEXT, FONT_TITLU, transparenta, useCulori, useFormat } from "../tema";
+import { type Cifra, type ScenaCifre, sfarsitUtil } from "../date/tipuri";
+import {
+  EASE_IESIRE,
+  EASE_INTRARE_IESIRE,
+  FONT_TEXT,
+  FONT_TITLU,
+  inaltimeRandTitlu,
+  transparenta,
+  useCulori,
+  useFormat,
+} from "../tema";
 
-// Prefixul și sufixul (de ex. „ m²”) stau pe aceeași linie de bază, mai mici.
+// Sufixul (de ex. „ m²”, „ lei”) stă pe aceeași linie de bază, mai mic. Prefixul
+// („€”, „+”) e puțin mai mare și centrat optic pe înălțimea cifrelor, ca să nu
+// pară un indice de notă de subsol.
 const SCARA_UNITATE = 0.4;
+const SCARA_PREFIX = 0.55;
 const SPATIU_UNITATE = 0.1; // em din corpul cifrei
+// Numărătoarea: decelerare cubică (ultimele 10% din valoare în ~0,6 s, nu ~1,8 s ca
+// la curba expo), ca cifrele să se oprească repede și apoi să stea pe loc.
+const EASE_NUMARARE = Easing.out(Easing.cubic);
 const INALTIME_RAND_CIFRA = 1.08;
 const INALTIME_RAND_ETICHETA = 1.3;
 
@@ -25,9 +41,9 @@ const latimeCifraEm = (cifra: Cifra) => {
   });
   const prefix = cifra.prefix?.trim();
   const sufix = cifra.sufix?.trim();
-  const unitate = (t?: string) =>
-    t ? latimeEm(t, "titlu") * SCARA_UNITATE + SPATIU_UNITATE : 0;
-  return valoare + unitate(prefix) + unitate(sufix);
+  const unitate = (t: string | undefined, scara: number) =>
+    t ? latimeEm(t, "titlu") * scara + SPATIU_UNITATE : 0;
+  return valoare + unitate(prefix, SCARA_PREFIX) + unitate(sufix, SCARA_UNITATE);
 };
 
 /**
@@ -62,33 +78,41 @@ export const Cifre: React.FC<{ scena: ScenaCifre }> = ({ scena }) => {
   const textTitlu = scena.titlu?.trim() || null;
 
   // ——— Dimensiuni ———
+  // Zona sigură (în 9:16 ocolește antetul și legenda aplicațiilor), minus amplitudinea
+  // derivei lente (±6u), ca nimic să nu iasă din ea în timpul menținerii.
+  const DERIVA = 6 * u;
   const latimeContinut = f.latime - 2 * f.margineX;
-  const inaltimeContinut = f.inaltime - 2 * f.margineY;
+  const inaltimeContinut = f.inaltime - f.margineSus - f.margineJos - 2 * DERIVA;
+  // în 9:16 numerele late nu intră sub coloana de butoane din dreapta
+  const latimeNumere = vertical ? f.latime - f.margineX - f.margineDreaptaVerticala : latimeContinut;
 
-  const titlu = textTitlu
+  const inaltimeRand = textTitlu ? inaltimeRandTitlu(textTitlu) : 1.2;
+  const minimExtremTitlu = (vertical ? 60 : 54) * u;
+  const titluInitial = textTitlu
     ? potrivesteTitlu({
         text: textTitlu,
         latime: latimeContinut,
-        maxim: (vertical ? 92 : 96) * u,
-        minim: (vertical ? 72 : 76) * u,
-        // în 16:9 un titlu foarte lung coboară pe două rânduri mai mici, ca cifrele să rămână mari
-        minimExtrem: (vertical ? 60 : 54) * u,
-        maxRanduri: vertical ? 3 : 2,
+        maxim: (vertical ? 96 : 96) * u,
+        minim: (vertical ? 76 : 76) * u,
+        // în 16:9 un titlu foarte lung coboară pe două rânduri mai mici, ca cifrele să rămână mari;
+        // în 9:16, cu puține cifre, e loc pentru mai multe rânduri la corp mare
+        minimExtrem: minimExtremTitlu,
+        maxRanduri: vertical ? (n <= 2 ? 5 : 4) : 2,
       })
     : null;
-  const inaltimeTitlu = titlu ? titlu.randuri * titlu.marime * 1.05 : 0;
-  const spatiuTitlu = titlu && n > 0 ? (vertical ? 120 : 104) * u : 0;
+  // cu multe cifre, spațiile se strâng, ca numerele să rămână mari
+  const spatiuTitlu = textTitlu && n > 0 ? (n >= 3 ? (vertical ? 84 : 88) : vertical ? 120 : 104) * u : 0;
 
   const coloane = vertical ? 1 : n === 4 ? 2 : Math.max(1, n);
   const randuri = Math.max(1, Math.ceil(n / coloane));
   const marimeEticheta =
-    (vertical ? (n <= 2 ? 46 : 42) : n === 1 ? 48 : n === 2 ? 44 : 40) * u;
-  const marimeIndice = (vertical ? 26 : 24) * u;
+    (vertical ? (n <= 2 ? 46 : 40) : n === 1 ? 48 : n === 2 ? 44 : 40) * u;
+  const marimeIndice = (vertical ? 34 : 32) * u;
   const inaltimeAntet = marimeIndice * 1.2;
-  const spatiuAntet = (vertical ? 30 : 34) * u;
-  const spatiuEticheta = (vertical ? 18 : 22) * u;
+  const spatiuAntet = (vertical ? (n >= 3 ? 22 : 30) : n === 4 ? 26 : 34) * u;
+  const spatiuEticheta = (vertical ? (n >= 3 ? 14 : 18) : 22) * u;
   const spatiuColoane = (n === 4 ? 160 : n === 3 ? 76 : 120) * u;
-  const spatiuRanduri = (vertical ? (n === 4 ? 64 : 84) : 92) * u;
+  const spatiuRanduri = (vertical ? (n === 4 ? 44 : n === 3 ? 72 : 84) : n === 4 ? 68 : 92) * u;
   const latimeMinima =
     (n === 1 ? 760 : n === 2 ? 520 : n === 3 ? 330 : 600) * u;
   const maxim =
@@ -101,8 +125,9 @@ export const Cifre: React.FC<{ scena: ScenaCifre }> = ({ scena }) => {
     Math.max(0, ...latimiEm.filter((_, i) => i % coloane === j)),
   );
 
-  // Cel mai mare corp la care încap toate cifrele, pe lățime și pe înălțime.
-  const aseaza = (marime: number) => {
+  // Cel mai mare corp la care încap toate cifrele (și titlul), pe lățime și pe înălțime.
+  const aseaza = (marime: number, titlu: { marime: number; randuri: number } | null) => {
+    const inaltimeTitlu = titlu ? titlu.randuri * titlu.marime * inaltimeRand : 0;
     const latimi = vertical
       ? [latimeContinut]
       : latimeColoanaEm.map((w) => Math.max(w * marime, latimeMinima));
@@ -144,14 +169,26 @@ export const Cifre: React.FC<{ scena: ScenaCifre }> = ({ scena }) => {
     const incape =
       total <= latimeContinut + 0.5 &&
       inaltime <= inaltimeContinut &&
-      (!vertical || Math.max(0, ...latimiEm) * marime <= latimeContinut);
+      (!vertical || Math.max(0, ...latimiEm) * marime <= latimeNumere);
     return { latimi: finale, incape };
   };
+  // Dacă nu încape: scad cifrele, dar nu sub ~1,6 × titlul (cifrele sunt rostul scenei);
+  // sub acest raport scade întâi titlul (până la minimul lui), apoi iar cifrele.
+  let titlu = titluInitial;
   let marimeCifra = maxim;
-  let asezare = aseaza(marimeCifra);
+  let asezare = aseaza(marimeCifra, titlu);
   while (!asezare.incape && marimeCifra > 48 * u) {
-    marimeCifra -= 2 * u;
-    asezare = aseaza(marimeCifra);
+    if (titlu && textTitlu && marimeCifra < 1.6 * titlu.marime && titlu.marime > minimExtremTitlu) {
+      const m = titlu.marime - 2 * u;
+      titlu = {
+        marime: m,
+        randuri: randuriText({ text: textTitlu, font: "titlu", marime: m, latime: latimeContinut, spatiere: -0.02 })
+          .randuri,
+      };
+    } else {
+      marimeCifra -= 2 * u;
+    }
+    asezare = aseaza(marimeCifra, titlu);
   }
 
   // ——— Calendarul (secunde) ———
@@ -162,11 +199,12 @@ export const Cifre: React.FC<{ scena: ScenaCifre }> = ({ scena }) => {
   const startTitlu = 0.3 * k;
   const startCifre = (textTitlu ? 0.6 : 0.3) * k;
   const pasCifre = (n > 2 ? 0.16 : 0.22) * k;
-  // numărătorile se termină în cascadă, ultima la ~60% din scenă
+  // Numărătorile se termină în cascadă, la ~2–2,3 s (lizibile repede, apoi cadrul
+  // stă pe loc); la scenele scurte, cel târziu înainte de tranziția de ieșire.
   const sfarsitNumarare = (i: number) =>
-    Math.max(
-      startCifre + i * pasCifre + 1.1,
-      0.6 * durata - (n - 1 - i) * 0.12 * k,
+    Math.min(
+      startCifre + i * pasCifre + 1.4 * Math.max(k, 0.75),
+      sfarsitUtil(durata) - (n - 1 - i) * 0.12 * k,
     );
 
   return (
@@ -174,7 +212,7 @@ export const Cifre: React.FC<{ scena: ScenaCifre }> = ({ scena }) => {
       <Fundal />
       <AbsoluteFill
         style={{
-          padding: `${f.margineY}px ${f.margineX}px`,
+          padding: `${f.margineSus}px ${f.margineX}px ${f.margineJos}px`,
           display: "flex",
           flexDirection: "column",
           justifyContent: "center",
@@ -187,7 +225,7 @@ export const Cifre: React.FC<{ scena: ScenaCifre }> = ({ scena }) => {
             flexDirection: "column",
             alignItems: "flex-start",
             width: latimeContinut,
-            translate: `0 ${-12 * u * deriva}px`,
+            translate: `0 ${DERIVA - 2 * DERIVA * deriva}px`,
           }}
         >
           {titlu && textTitlu ? (
@@ -200,7 +238,7 @@ export const Cifre: React.FC<{ scena: ScenaCifre }> = ({ scena }) => {
                 fontFamily: FONT_TITLU,
                 fontWeight: 800,
                 fontSize: titlu.marime,
-                lineHeight: 1.05,
+                lineHeight: inaltimeRand,
                 letterSpacing: "-0.02em",
                 color: c.text,
                 maxWidth: latimeContinut,
@@ -222,7 +260,7 @@ export const Cifre: React.FC<{ scena: ScenaCifre }> = ({ scena }) => {
             {cifre.map((cifra, i) => {
               const t0 = startCifre + i * pasCifre;
               const tFinal = sfarsitNumarare(i);
-              const numarare = progres(t0 + 0.08, tFinal, EASE_IESIRE);
+              const numarare = progres(t0 + 0.08, tFinal, EASE_NUMARARE);
               const intrare = progres(t0, t0 + 0.9 * Math.max(k, 0.75));
               const antet = progres(t0 - 0.05, t0 + 0.75);
               const linie = progres(t0 + 0.05, t0 + 0.9, EASE_INTRARE_IESIRE);
@@ -358,13 +396,13 @@ export const Cifre: React.FC<{ scena: ScenaCifre }> = ({ scena }) => {
                       {prefix ? (
                         <span
                           style={{
-                            fontSize: `${SCARA_UNITATE}em`,
+                            fontSize: `${SCARA_PREFIX}em`,
                             fontWeight: 700,
                             letterSpacing: 0,
-                            marginRight: `${SPATIU_UNITATE / SCARA_UNITATE}em`,
+                            marginRight: `${SPATIU_UNITATE / SCARA_PREFIX}em`,
                             color: c.textSecundar,
                             // „+”, „€” etc. centrate optic pe înălțimea cifrelor, nu lipite de linia de bază
-                            translate: "0 -0.55em",
+                            translate: "0 -0.32em",
                           }}
                         >
                           {prefix}

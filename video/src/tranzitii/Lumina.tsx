@@ -1,6 +1,6 @@
 import type { TransitionPresentationComponentProps } from "@remotion/transitions";
 import { AbsoluteFill, interpolate } from "remotion";
-import { EASE_INTRARE_IESIRE, useCulori } from "../tema";
+import { EASE_INTRARE_IESIRE, useCulori, useFormat } from "../tema";
 
 const CLAMP = { extrapolateLeft: "clamp", extrapolateRight: "clamp" } as const;
 
@@ -16,13 +16,22 @@ export const Lumina: React.FC<TransitionPresentationComponentProps<Record<string
   presentationProgress: p,
 }) => {
   const c = useCulori();
+  const { u } = useFormat();
 
+  // Schimbul de scene se ascunde sub vârful luminii (p ≈ 0,36): scena veche se
+  // supraexpune, se estompează optic și dispare până la p = 0,5, înainte ca textele
+  // scenei noi să urce; cele două titluri nu apar niciodată clare unul peste altul.
   if (presentationDirection === "exiting") {
-    const expunere = interpolate(p, [0, 0.55], [0, 1], { ...CLAMP, easing: EASE_INTRARE_IESIRE });
+    const expunere = interpolate(p, [0, 0.45], [0, 1], { ...CLAMP, easing: EASE_INTRARE_IESIRE });
+    const disparitie = interpolate(p, [0.3, 0.5], [0, 1], { ...CLAMP, easing: EASE_INTRARE_IESIRE });
     return (
       <AbsoluteFill
         style={{
-          filter: expunere > 0.001 ? `brightness(${1 + 0.35 * expunere}) saturate(${1 + 0.15 * expunere})` : undefined,
+          opacity: 1 - disparitie,
+          filter:
+            expunere > 0.001
+              ? `brightness(${1 + 0.35 * expunere}) saturate(${1 + 0.15 * expunere}) blur(${expunere * 10 * u}px)`
+              : undefined,
         }}
       >
         {children}
@@ -30,10 +39,10 @@ export const Lumina: React.FC<TransitionPresentationComponentProps<Record<string
     );
   }
 
-  const aparitie = interpolate(p, [0.3, 0.72], [0, 1], { ...CLAMP, easing: EASE_INTRARE_IESIRE });
-  const revenire = interpolate(p, [0.3, 1], [0, 1], { ...CLAMP, easing: EASE_INTRARE_IESIRE });
+  const aparitie = interpolate(p, [0.22, 0.48], [0, 1], { ...CLAMP, easing: EASE_INTRARE_IESIRE });
+  const revenire = interpolate(p, [0.22, 1], [0, 1], { ...CLAMP, easing: EASE_INTRARE_IESIRE });
   // anvelopa luminii: urcă repede, coboară lent
-  const lumina = interpolate(p, [0, 0.42, 1], [0, 1, 0], { ...CLAMP, easing: EASE_INTRARE_IESIRE });
+  const lumina = interpolate(p, [0, 0.36, 1], [0, 1, 0], { ...CLAMP, easing: EASE_INTRARE_IESIRE });
   const x = interpolate(p, [0, 1], [-10, 95]); // centrul petei, în procente din lățime
   // o lumină de film e caldă indiferent de paletă; accentul o nuanțează doar puțin
   const cald = `color-mix(in srgb, #ff7a2a 78%, ${c.accent})`;
