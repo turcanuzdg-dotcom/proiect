@@ -1,0 +1,10 @@
+{
+  "name": "@cafenea/punte",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Puntea locală dintre tableta POS și terminalul de plată / imprimanta fiscală",
+  "scripts": {
+    "start": "tsx src/index.ts"
+  }
+}

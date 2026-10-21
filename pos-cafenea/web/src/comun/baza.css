@@ -1,0 +1,128 @@
+/* Stilul comun pentru POS și panoul de administrare. */
+
+:root {
+  --fundal: #f6f3ee;
+  --suprafata: #ffffff;
+  --suprafata-2: #faf8f5;
+  --text: #2a211b;
+  --text-slab: #6f6259;
+  --linie: #e3dcd2;
+  --accent: #3b2a20;
+  --accent-hover: #523a2c;
+  --accent-text: #ffffff;
+  --caramel: #c8742c;
+  --succes: #2f7d4f;
+  --succes-fundal: #e6f2ea;
+  --avertisment: #9a6412;
+  --avertisment-fundal: #fbf0dc;
+  --pericol: #b42318;
+  --pericol-fundal: #fbe9e7;
+  --info: #2563a6;
+  --info-fundal: #e7eef8;
+  --raza: 10px;
+  --umbra: 0 1px 2px rgba(42, 33, 27, 0.06), 0 4px 16px rgba(42, 33, 27, 0.06);
+  color-scheme: light;
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+  font-size: 15px;
+  line-height: 1.4;
+  color: var(--text);
+  background: var(--fundal);
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--fundal); color: var(--text); }
+h1, h2, h3 { margin: 0; line-height: 1.2; }
+h1 { font-size: 22px; }
+h2 { font-size: 18px; }
+h3 { font-size: 15px; }
+p { margin: 0; }
+.slab { color: var(--text-slab); }
+.mic { font-size: 13px; }
+.num { font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+.plus { color: var(--succes); }
+.minus { color: var(--pericol); }
+
+/* ---- Butoane ---- */
+button { font: inherit; }
+.buton, .buton-secundar, .buton-pericol, .buton-succes {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  min-height: 40px; padding: 8px 16px; border-radius: var(--raza);
+  border: 1px solid transparent; cursor: pointer; font-weight: 600; text-decoration: none;
+  transition: background 0.12s, border-color 0.12s;
+}
+.buton { background: var(--accent); color: var(--accent-text); }
+.buton:hover:not(:disabled) { background: var(--accent-hover); }
+.buton-secundar { background: var(--suprafata); color: var(--text); border-color: var(--linie); }
+.buton-secundar:hover:not(:disabled) { border-color: var(--accent); }
+.buton-pericol { background: var(--pericol); color: #fff; }
+.buton-succes { background: var(--succes); color: #fff; }
+.buton:disabled, .buton-secundar:disabled, .buton-pericol:disabled, .buton-succes:disabled { opacity: 0.45; cursor: not-allowed; }
+.buton-icon {
+  border: none; background: transparent; cursor: pointer; font-size: 22px; line-height: 1;
+  width: 36px; height: 36px; border-radius: 8px; color: var(--text-slab);
+}
+.buton-icon:hover { background: var(--fundal); color: var(--text); }
+.buton-link { border: none; background: none; color: var(--info); cursor: pointer; padding: 0; font-weight: 600; }
+.buton-link:hover { text-decoration: underline; }
+
+/* ---- Formulare ---- */
+input, select, textarea {
+  font: inherit; color: var(--text); background: var(--suprafata);
+  border: 1px solid var(--linie); border-radius: 8px; padding: 8px 10px; min-height: 40px; width: 100%;
+}
+input:focus, select:focus, textarea:focus { outline: 2px solid var(--caramel); outline-offset: -1px; border-color: transparent; }
+textarea { min-height: 72px; resize: vertical; }
+.camp { display: grid; gap: 4px; }
+.camp > span { font-size: 13px; color: var(--text-slab); font-weight: 600; }
+.randuri-form { display: grid; gap: 14px; }
+.doua-coloane { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.trei-coloane { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+@media (max-width: 640px) { .doua-coloane, .trei-coloane { grid-template-columns: 1fr; } }
+.bifa { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.bifa input { width: 20px; height: 20px; min-height: 0; }
+
+/* ---- Tabele ---- */
+.tabel-container { overflow-x: auto; border: 1px solid var(--linie); border-radius: var(--raza); background: var(--suprafata); }
+table.tabel { width: 100%; border-collapse: collapse; }
+.tabel th, .tabel td { padding: 9px 12px; border-bottom: 1px solid var(--linie); text-align: left; vertical-align: top; }
+.tabel th { font-size: 12px; text-transform: uppercase; letter-spacing: 0.03em; color: var(--text-slab); background: var(--suprafata-2); font-weight: 700; position: sticky; top: 0; }
+.tabel tr:last-child td { border-bottom: none; }
+.tabel tbody tr.clic { cursor: pointer; }
+.tabel tbody tr.clic:hover td { background: var(--suprafata-2); }
+.tabel tfoot td { font-weight: 700; background: var(--suprafata-2); border-top: 1px solid var(--linie); }
+
+/* ---- Insigne, carduri, alerte ---- */
+.insigna { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 700; background: var(--fundal); color: var(--text-slab); white-space: nowrap; }
+.insigna.succes { background: var(--succes-fundal); color: var(--succes); }
+.insigna.avertisment { background: var(--avertisment-fundal); color: var(--avertisment); }
+.insigna.pericol { background: var(--pericol-fundal); color: var(--pericol); }
+.insigna.info { background: var(--info-fundal); color: var(--info); }
+.card { background: var(--suprafata); border: 1px solid var(--linie); border-radius: var(--raza); padding: 16px; }
+.alerta { padding: 10px 14px; border-radius: var(--raza); background: var(--info-fundal); color: var(--info); }
+.alerta.pericol { background: var(--pericol-fundal); color: var(--pericol); }
+.alerta.avertisment { background: var(--avertisment-fundal); color: var(--avertisment); }
+.alerta.succes { background: var(--succes-fundal); color: var(--succes); }
+.gol { padding: 28px; text-align: center; color: var(--text-slab); }
+
+/* ---- Modal ---- */
+.fundal-modal {
+  position: fixed; inset: 0; background: rgba(30, 22, 16, 0.45); display: grid; place-items: center;
+  padding: 16px; z-index: 50; animation: apare 0.12s ease-out;
+}
+.modal {
+  background: var(--suprafata); border-radius: 14px; box-shadow: 0 20px 60px rgba(0, 0, 0, 0.25);
+  width: min(520px, 100%); max-height: calc(100vh - 32px); display: flex; flex-direction: column;
+}
+.modal-lat { width: min(900px, 100%); }
+.modal-cap { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 16px 20px 8px; }
+.modal-corp { padding: 8px 20px 16px; overflow-y: auto; }
+.modal-subsol { display: flex; gap: 10px; justify-content: flex-end; padding: 12px 20px 16px; border-top: 1px solid var(--linie); flex-wrap: wrap; }
+@keyframes apare { from { opacity: 0; } to { opacity: 1; } }
+
+/* ---- Notificare scurtă ---- */
+.toast {
+  position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 80;
+  background: var(--accent); color: #fff; padding: 12px 20px; border-radius: 12px; box-shadow: var(--umbra);
+  font-weight: 600; max-width: calc(100vw - 32px);
+}
+.toast.pericol { background: var(--pericol); }

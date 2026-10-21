@@ -75,7 +75,8 @@ export async function ruteAdmin(app: FastifyInstance, db: Db, doarAdmin: preHand
 
     a.get('/api/auth/eu', async (req) => req.utilizator);
     a.post('/api/auth/logout', async (req) => {
-      await acces.iesire(db, req.headers.authorization!.slice(7));
+      const token = req.headers.authorization?.slice(7) ?? (req.query as { token?: string }).token;
+      if (token) await acces.iesire(db, token);
       return { ok: true };
     });
 
