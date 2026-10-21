@@ -101,6 +101,13 @@ care au dat rezultate bune:
     mișcării (flux optic) și claritatea (varianța laplacianului) pe ambele videouri.
 - **Exactitate:** în film apar doar imaginile reale. Spre deosebire de un generator AI
   de video, nu inventa pagini, texte sau unghiuri.
+- **Sobrietate (cerința clientului):** un singur efect de lumină pe tot filmul (de
+  exemplu raza de fereastră pe copertă). Fără `reflexie`, flash-uri `lumina` sau raze
+  pe mai multe planuri: „prea multe jocuri cu lumina”.
+- **Răsfoirea** (`pagina`), chiar și între mockup-uri suprapuse la pixel, se vede încă
+  a fi grafică în prim-planurile macro. Clientul a cerut înlocuirea ei cu un cadru real
+  (o tăietură spre altă pagină dublă). Folosește-o doar dacă cere explicit o întoarcere
+  de pagină și acceptă cum arată.
 - `centru` mută punctul de interes când zoom-ul ar tăia produsul. Ține-l aproape de
   0,5: fiecare abatere consumă rezerva de imagine și forțează zoom de siguranță.
 - **`pivot`** (adâncimea care stă pe loc) e implicit percentila 80, de obicei masa din
