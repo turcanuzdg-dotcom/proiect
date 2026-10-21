@@ -64,3 +64,10 @@ Proiectul se îmbunătățește doar dacă fiecare greșeală devine regulă și
   verificarea finală, previzualizările, raportul
 - `hasurare/cunostinte.py` + `cunostinte/` ce s-a învățat
 - `tests/` cazurile învățate și testele cap-coadă pe PDF
+
+## Video (separat de hasurare)
+
+- `video-prezentare`: video de prezentare cu texte pe ecran (Remotion, `video/`).
+- `film-produs`: film de produs fără text, cu efect 3D, din mockup-uri (`video/produs/`).
+- Când cererea e doar „un video din imagini”, întreabă dacă vrea texte pe ecran.
+- Fotografiile, hărțile de adâncime și randările stau în `video/public/media/` și `video/out/`, niciodată în git.

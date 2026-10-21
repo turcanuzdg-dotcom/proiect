@@ -1,0 +1,105 @@
+---
+name: film-produs
+description: Face un film scurt de produs, fără text, din fotografii sau mockup-uri statice (o carte, o broșură, un obiect, un design), cu efect 3D: hărți de adâncime AI și o cameră virtuală care orbitează, se apropie și trece între planuri prin whip pan, zoom sau lumină, în buclă perfectă pentru o pagină web. Folosește-l când utilizatorul vrea un „video din animații”, un „showreel”, o „prezentare video a lucrării” sau un element vizual pentru site sau portofoliu din imagini, mai ales când spune că nu vrea texte. Pentru video cu titluri, cifre și etape, folosește video-prezentare.
+---
+
+# Film de produs din fotografii (2.5D, fără text)
+
+`video/produs/` transformă fotografii statice într-un film care pare filmat. Pentru
+fiecare imagine, un model AI (Depth Anything V2) estimează adâncimea. Apoi o cameră
+virtuală se mișcă prin scenă: prim-planul se deplasează altfel decât fundalul, iar
+planul imaginii se înclină în perspectivă. Planurile se leagă prin treceri, iar
+filmul se termină exact unde începe, ca să ruleze în buclă pe o pagină.
+
+**Întreabă întâi ce vrea utilizatorul:** un film de produs fără text (acest skill) sau
+o prezentare cu titluri și cifre (`video-prezentare`). „Video din imagini” poate
+însemna oricare dintre ele. Pentru portofoliu sau site, de obicei e primul.
+
+## 1. Pregătire (o dată pe sesiune)
+
+```bash
+P=$SCRATCH/pylib                       # $SCRATCH = directorul scratchpad al sesiunii
+pip install -q --target $P -r video/produs/requirements.txt
+curl -sSL -o $SCRATCH/da2-small.onnx \
+  https://huggingface.co/onnx-community/depth-anything-v2-small/resolve/main/onnx/model.onnx
+```
+
+Rulează scripturile cu `PYTHONPATH=$P python3 ...`.
+
+## 2. Imaginile și adâncimea
+
+- Imaginile intră în `video/public/media/<proiect>/` (ignorat de git; o arhivă se
+  despachetează acolo, cu `unzip -j`). Fă o foaie de contact cu `montage`, ca să le vezi
+  pe toate dintr-o privire.
+- `python3 video/produs/adancime.py $SCRATCH/da2-small.onnx video/public/media/<proiect>`
+  scrie `adancime/<nume>.png` (16 biți, alb = aproape), în ~2 s pe imagine. Verifică o
+  foaie de contact a hărților: produsul trebuie să se desprindă clar de fundal.
+
+## 3. Scenariul
+
+Scrie `video/out/film-<proiect>.json` (format complet în antetul `film.py`). Reguli
+care au dat rezultate bune:
+
+- **Ordinea logică a unui produs:** cadru de deschidere spectaculos (produsul pe fond
+  închis) → produsul întreg din alte unghiuri → materiale și detalii (cotor, teanc,
+  textură) → produsul deschis → detalii din interior → imagine de ansamblu → închidere
+  pe coperta sau fața produsului, care se leagă în buclă cu deschiderea.
+- **Durate:** 3–3,4 s pentru planurile principale, 2,5 s pentru detalii; în total
+  25–35 s pentru 10–12 planuri.
+- **Mișcare cu efect 3D vizibil, dar fără deformări:**
+
+  | Parametru | Plan principal | Detaliu macro |
+  |---|---|---|
+  | `orbita` | ±0,045–0,055 | ±0,02–0,03 |
+  | `pan` | — | ±0,035–0,045 |
+  | `perspectiva` | ±3–5° | — |
+  | `dolly` | 0,2–0,35 | — |
+  | `zoom` | 1,05 → 1,2 | — |
+
+  Alternează apropierea cu depărtarea și sensurile, ca planurile vecine să nu se miște
+  la fel. `reflexie: true` pe planurile cu coperta (un reflex de lumină trece peste produs).
+- **Treceri:**
+  - `whip`: energie între unghiuri ale aceluiași obiect; alternează `directie` și `axa`.
+  - `zoom`: intrarea dintr-un plan larg într-un detaliu.
+  - `lumina`: un accent cald, cel mult de două ori.
+  - `taietura`: între două planuri statice înrudite.
+  - `dizolvare`: lentă, doar la bucla de la final. Mai multe dizolvări la rând fac din film un slideshow.
+- `centru` mută punctul de interes când zoom-ul ar tăia produsul.
+
+## 4. Verificare (fără să deschizi videoul)
+
+```bash
+F="PYTHONPATH=$P python3 video/produs/film.py video/out/film-<proiect>.json -"
+$F --previzualizare --cadre=planuri   --foaie=video/out/f-planuri.jpg     # mijlocul planurilor
+$F --previzualizare --cadre=capete    --foaie=video/out/f-capete.jpg      # mișcarea 3D din fiecare plan
+$F --previzualizare --cadre=tranzitii --coloane=5 --foaie=video/out/f-tr.jpg
+```
+
+Micșorează foile cu `convert -resize 2000x` înainte să le deschizi. Mișcările mari se
+verifică la rezoluție completă, pe un decupaj din jurul marginilor produsului
+(`--cadre=15,95 --foaie=...`, fără `--previzualizare`). Acolo s-ar vedea întinderile.
+
+## 5. Randare și livrare pentru web
+
+```bash
+PYTHONPATH=$P python3 video/produs/film.py video/out/film-<proiect>.json video/out/film-master.mp4 --crf=16
+```
+
+Randarea durează ~10 min pentru 35 s în Full HD. Din master se fac apoi versiunile
+pentru web: MP4 H.264 cu `faststart` (crf 23–24), WebM VP9, o variantă de 1280 px
+pentru mobil și un poster JPG din primul cadru. Fără pistă audio. Dă-i utilizatorului
+și codul de inserare:
+
+```html
+<video autoplay muted loop playsinline preload="metadata" poster="film-poster.jpg">
+  <source src="film.webm" type="video/webm">
+  <source src="film.mp4" type="video/mp4">
+</video>
+```
+
+## Reguli
+
+- Imaginile, hărțile de adâncime, scenariile și videourile nu intră în git (stau în
+  `public/media/` și `out/`). Modelul se descarcă în scratchpad, nu în repo.
+- Nu inventa unghiuri pe care fotografiile nu le au: camera se mișcă doar în jurul
+  unghiului fiecărei fotografii. Pentru alte unghiuri e nevoie de alte mockup-uri.

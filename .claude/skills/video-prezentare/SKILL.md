@@ -1,6 +1,6 @@
 ---
 name: video-prezentare
-description: Montează un video modern de prezentare a unui proiect (lucrări, investiții, evenimente, proiecte finanțate) din fotografii și texte, cu șablonul Remotion din video/. Folosește-l ori de câte ori utilizatorul cere un video, clip, reel, montaj, slideshow sau prezentare video din imagini, în format orizontal (site, YouTube, ecran) sau vertical (Facebook/Instagram Reels, TikTok, Shorts), chiar dacă nu spune „Remotion”.
+description: Montează un video modern de prezentare a unui proiect (lucrări, investiții, evenimente, proiecte finanțate) din fotografii ȘI TEXTE pe ecran (titluri, cifre, etape, final), cu șablonul Remotion din video/, în format orizontal (site, YouTube, ecran) sau vertical (Reels, TikTok, Shorts). Folosește-l când utilizatorul vrea un video care spune ceva în cuvinte. Dacă vrea doar imagine, fără text (film de produs, showreel, element vizual pentru site sau portofoliu), folosește film-produs. Dacă nu e clar, întreabă.
 ---
 
 # Video de prezentare din fotografii
