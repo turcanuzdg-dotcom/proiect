@@ -70,7 +70,7 @@ Scrie `video/out/proiect.json` (ignorat de git). Căile imaginilor sunt relative
 |---|---|---|
 | `intro` | `titlu`, `eticheta?`, `subtitlu?`, `imagine?` | 5 s |
 | `foto` | `imagine`, `titlu?`, `text?` | 4,5 s |
-| `inainte-dupa` | `inainte`, `dupa`, `titlu?` | 6 s |
+| `inainte-dupa` | `inainte`, `dupa`, `titlu?`, `etichetaInainte?`, `etichetaDupa?` (implicit ÎNAINTE / DUPĂ; de ex. „2023” / „2026”) | 6 s |
 | `cifre` | `cifre[1–4]` (`valoare`, `prefix?`, `sufix?`, `eticheta`), `titlu?` | 5,5 s |
 | `etape` | `etape[2–5]` (`data?`, `text`), `titlu?` | 7 s |
 | `final` | `titlu`, `text?`, `logouri?`, `contact?` | 5 s |
@@ -114,6 +114,11 @@ Trimite MP4-ul cu `SendUserFile` (și foaia de cadre, dacă ajută). Ajustările
 - Scenă nouă: tipul în `src/date/tipuri.ts`, componenta în `src/scene/`, cazul în
   `ScenaRandata` din `src/Prezentare.tsx`. Folosește `useFormat()` (merge în ambele
   formate), `useCulori()`, `TextAnimat`, `ImagineMiscare`, `Fundal`.
+- Tranzițiile se aleg automat, după tipurile scenelor (`src/tranzitii/plan.ts`): estompare,
+  cortină cu muchie de accent, glisare cu paralaxă și o lumină caldă de film după intro.
+  Granulația de film se pune o singură dată peste tot filmul (în `Prezentare.tsx`), nu în scene.
+- Textul se măsoară cu tabelele de glife din `src/componente/masuraText.ts` (nu cu
+  `measureText`); dacă schimbi fonturile, regenerează tabelele.
 - După modificări de cod: `npx tsc --noEmit && npx eslint src`.
 
 ## Reguli

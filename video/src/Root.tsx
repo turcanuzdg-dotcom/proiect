@@ -1,7 +1,8 @@
 import { type CalculateMetadataFunction, Composition } from "remotion";
 import { PROIECT_EXEMPLU } from "./date/exemplu";
-import { durataScena, type Proiect, type Scena } from "./date/tipuri";
-import { durataTotala, Prezentare, ScenaSingura } from "./Prezentare";
+import type { Proiect, Scena } from "./date/tipuri";
+import { Prezentare, ScenaSingura } from "./Prezentare";
+import { cadreScena, durataTotala } from "./tranzitii";
 
 const FPS = 30;
 
@@ -11,7 +12,7 @@ const calculeazaDurata: CalculateMetadataFunction<Proiect> = ({ props }) => ({
 
 type PropsScena = { scena: Scena; culori?: Proiect["culori"] };
 const calculeazaDurataScena: CalculateMetadataFunction<PropsScena> = ({ props }) => ({
-  durationInFrames: Math.round(durataScena(props.scena) * FPS),
+  durationInFrames: cadreScena(props.scena, FPS),
 });
 
 export const RemotionRoot: React.FC = () => {

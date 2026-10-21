@@ -51,6 +51,12 @@ export const PROIECT_EXEMPLU: Proiect = {
       tip: "final",
       titlu: "Împreună construim comunitatea",
       text: "Mulțumim tuturor celor care au contribuit",
+      logouri: [
+        "exemplu/logo-exemplu-1.png",
+        "exemplu/logo-exemplu-2.png",
+        "exemplu/logo-exemplu-3.png",
+        "exemplu/logo-exemplu-4.png",
+      ],
       contact: "exemplu.md",
     },
   ],

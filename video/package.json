@@ -39,7 +39,10 @@
     "dev": "remotion studio",
     "build": "remotion bundle",
     "upgrade": "remotion upgrade",
-    "lint": "eslint src && tsc"
+    "lint": "eslint src && tsc",
+    "randeaza": "remotion render Prezentare out/prezentare.mp4",
+    "randeaza:vertical": "remotion render PrezentareVerticala out/prezentare-verticala.mp4",
+    "previzualizare": "remotion render Prezentare out/previzualizare.mp4 --scale=0.5"
   },
   "allowScripts": {
     "esbuild": false

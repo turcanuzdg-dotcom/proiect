@@ -1,11 +1,10 @@
 import type { CSSProperties } from "react";
 import { AbsoluteFill, Easing, interpolate, useCurrentFrame, useVideoConfig } from "remotion";
-import { Granulatie } from "../componente/Fundal";
 import { ImagineMiscare } from "../componente/ImagineMiscare";
-import { potrivesteTitlu } from "../componente/IntroPotrivire";
+import { latimeEchilibrata, latimeEm, potrivesteTitlu } from "../componente/masuraText";
 import { TextAnimat } from "../componente/TextAnimat";
 import type { ScenaInainteDupa } from "../date/tipuri";
-import { EASE_IESIRE, FONT_TEXT, FONT_TITLU, useCulori, useFormat } from "../tema";
+import { EASE_IESIRE, FONT_TEXT, FONT_TITLU, transparenta, useCulori, useFormat } from "../tema";
 
 /*
  * Scena „înainte / după”.
@@ -26,16 +25,14 @@ const EASE_PRIMA_TRECERE = Easing.bezier(0.33, 0, 0.12, 1);
 /** A doua trecere: accelerează și iese din cadru încă în mișcare. */
 const EASE_A_DOUA_TRECERE = Easing.bezier(0.6, 0, 0.3, 1);
 
-const transparenta = (culoare: string, procent: number) =>
-  `color-mix(in srgb, ${culoare} ${procent}%, transparent)`;
-
 /** Momentele scenei, în secunde, pentru o scenă de `T` secunde. */
 const calendar = (T: number) => {
   // ritmul mișcării: 1 la durata implicită (6 s), comprimat la scenele scurte
-  const k = Math.min(1.5, Math.max(0.5, (T - 0.6) / 5.4));
+  const k = Math.min(1.3, Math.max(0.5, (T - 0.6) / 5.4));
   const intrare = Math.min(1.0, 0.17 * T); // linia începe să intre
   const oprire = intrare + 1.0 * k; // ajunge la ~35%
-  const reluare = oprire + 0.65 * k; // pornește din nou
+  // la scenele lungi, timpul în plus merge mai ales în momentul comparației
+  const reluare = oprire + 0.65 * k + Math.max(0, T - 6) * 0.12; // pornește din nou
   const final = reluare + 1.25 * k; // „după” e descoperită complet
   // textele: puțin mai repede la scenele scurte, niciodată mai lent decât la 6 s
   const kText = Math.min(1, Math.max(0.6, T / 6));
@@ -230,25 +227,41 @@ export const InainteDupa: React.FC<{ scena: ScenaInainteDupa }> = ({ scena }) =>
         minim: 84 * u,
         minimExtrem: 60 * u,
         maxRanduri: vertical ? 3 : 2,
+        preferaRanduri: true,
+        prag: 0.88,
       })
     : null;
+  const latimeTitluEchilibrata =
+    titlu && asezare
+      ? latimeEchilibrata({ text: titlu, font: "titlu", marime: asezare.marime, latime: latimeTitlu, spatiere: -0.02 })
+      : latimeTitlu;
   const nrCuvinte = titlu ? titlu.split(/\s+/).filter(Boolean).length : 0;
   const pasTitlu = (nrCuvinte > 1 ? Math.min(0.07, 0.5 / (nrCuvinte - 1)) : 0) * timp.kText;
   const startTitlu = 0.3 * timp.kText;
   const inaltimeTitlu = asezare ? asezare.randuri * asezare.marime * 1.05 : 0;
   // după intrare, titlul urcă foarte lent (paralaxă față de fotografie)
-  const derivaTitlu = interpolate(frame, [s(1.4 * timp.kText), durationInFrames], [0, -10 * u], CLAMP);
+  const derivaTitlu = interpolate(
+    frame,
+    [Math.min(s(1.4 * timp.kText), durationInFrames - 1), durationInFrames],
+    [0, -10 * u],
+    CLAMP,
+  );
 
   // ——— Etichetele ———
   const intrareInainte = interpolate(frame, [s(0.35 * timp.kText), s(1.15 * timp.kText)], [0, 1], {
     ...CLAMP,
     easing: EASE_IESIRE,
   });
-  const latimeInainte = (vertical ? 290 : 270) * u; // estimare, doar pentru stingere
+  // etichetele pot fi înlocuite din date (de ex. „2023” / „2026”); lățimea capsulei, pentru stingere
+  const textInainte = (scena.etichetaInainte?.trim() || "Înainte").toLocaleUpperCase("ro-RO");
+  const textDupa = (scena.etichetaDupa?.trim() || "După").toLocaleUpperCase("ro-RO");
+  const latimeCapsula = (text: string) =>
+    (vertical ? 70 + 32 : 62 + 32) * u + (latimeEm(text, "textSemibold", { spatiere: 0.16 }) - 0.16) * (vertical ? 40 : 36) * u;
+  const latimeInainte = latimeCapsula(textInainte);
   const stingereInainte = interpolate(x, [f.margineX + 40 * u, f.margineX + latimeInainte + 180 * u], [0, 1], CLAMP);
 
   const margineDupa = latime - f.margineX;
-  const latimeDupa = (vertical ? 210 : 200) * u;
+  const latimeDupa = latimeCapsula(textDupa);
   // linia merge spre stânga: cu cât x e mai mic, cu atât eticheta e mai prezentă
   const intrareDupa = interpolate(x, [margineDupa - latimeDupa - 150 * u, margineDupa + 20 * u], [1, 0], {
     ...CLAMP,
@@ -312,11 +325,20 @@ export const InainteDupa: React.FC<{ scena: ScenaInainteDupa }> = ({ scena }) =>
             background: `linear-gradient(to bottom, ${transparenta(c.fundal, 76)} 0%, ${transparenta(c.fundal, 56)} 35%, ${transparenta(c.fundal, 24)} 70%, ${transparenta(c.fundal, 0)} 100%)`,
           }}
         />
-      ) : null}
+      ) : (
+        // fără titlu: doar o umbră discretă sus, ca baza cinematică să rămână aceeași
+        <AbsoluteFill
+          style={{
+            bottom: "auto",
+            height: (vertical ? 520 : 340) * u,
+            background: `linear-gradient(to bottom, ${transparenta(c.fundal, 42)} 0%, ${transparenta(c.fundal, 16)} 50%, ${transparenta(c.fundal, 0)} 100%)`,
+          }}
+        />
+      )}
 
       {/* Etichetele, tăiate de linie */}
       <Eticheta
-        text="ÎNAINTE"
+        text={textInainte}
         latura="stanga"
         x={x}
         punct={c.textSecundar}
@@ -324,7 +346,7 @@ export const InainteDupa: React.FC<{ scena: ScenaInainteDupa }> = ({ scena }) =>
         ridicare={(1 - intrareInainte) * 18 * u}
       />
       <Eticheta
-        text="DUPĂ"
+        text={textDupa}
         latura="dreapta"
         x={x}
         punct={c.accent}
@@ -371,6 +393,8 @@ export const InainteDupa: React.FC<{ scena: ScenaInainteDupa }> = ({ scena }) =>
             left: f.margineX,
             top: f.margineY,
             translate: `0 ${derivaTitlu}px`,
+            // umbra pe tot blocul (pe cuvinte ar fi tăiată de măștile din TextAnimat)
+            filter: `drop-shadow(0 ${2 * u}px ${18 * u}px ${transparenta(c.fundal, 40)})`,
           }}
         >
           <TextAnimat
@@ -379,20 +403,18 @@ export const InainteDupa: React.FC<{ scena: ScenaInainteDupa }> = ({ scena }) =>
             pas={pasTitlu}
             durata={0.9 * timp.kText}
             style={{
-              maxWidth: latimeTitlu,
+              maxWidth: latimeTitluEchilibrata,
               fontFamily: FONT_TITLU,
               fontWeight: 800,
               fontSize: asezare.marime,
               lineHeight: 1.05,
               letterSpacing: "-0.02em",
               color: c.text,
-              textShadow: `0 ${2 * u}px ${28 * u}px ${transparenta(c.fundal, 35)}`,
             }}
           />
         </div>
       ) : null}
 
-      <Granulatie opacitate={0.06} />
     </AbsoluteFill>
   );
 };

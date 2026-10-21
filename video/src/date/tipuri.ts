@@ -24,6 +24,8 @@ export type ScenaInainteDupa = {
   inainte: string;
   dupa: string;
   titlu?: string;
+  etichetaInainte?: string; // implicit „Înainte”; de ex. „2023”
+  etichetaDupa?: string; // implicit „După”; de ex. „2026”
   durata?: number;
 };
 

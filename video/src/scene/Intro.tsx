@@ -1,8 +1,8 @@
 import { Fragment } from "react";
 import { AbsoluteFill, Easing, interpolate, useCurrentFrame, useVideoConfig } from "remotion";
-import { Fundal, Granulatie } from "../componente/Fundal";
+import { Fundal } from "../componente/Fundal";
 import { ImagineMiscare } from "../componente/ImagineMiscare";
-import { incapeEticheta, potrivesteEticheta, potrivesteTitlu } from "../componente/IntroPotrivire";
+import { incapePeRand, potrivesteTitlu } from "../componente/masuraText";
 import { TextAnimat } from "../componente/TextAnimat";
 import type { ScenaIntro } from "../date/tipuri";
 import {
@@ -10,6 +10,7 @@ import {
   EASE_INTRARE_IESIRE,
   FONT_TEXT,
   FONT_TITLU,
+  transparenta,
   useCulori,
   useFormat,
 } from "../tema";
@@ -17,9 +18,38 @@ import {
 // Ieșirea din întuneric: pornește imediat, dar se așază lent.
 const EASE_LUMINA = Easing.bezier(0.3, 0, 0.2, 1);
 
-/** O culoare a temei la o anumită opacitate, indiferent de formatul în care e scrisă. */
-const transparenta = (culoare: string, procent: number) =>
-  `color-mix(in srgb, ${culoare} ${procent}%, transparent)`;
+/** Încape eticheta (Inter 600, majuscule) pe un rând de `latime` px? */
+const incapeEticheta = (text: string, marime: number, spatiere: number, latime: number) =>
+  incapePeRand(text.toLocaleUpperCase("ro-RO"), "textSemibold", marime, spatiere, latime);
+
+/**
+ * Eticheta pe un singur rând: întâi strânge spațierea literelor, apoi micșorează
+ * corpul; dacă tot nu încape, o lasă să se rupă (la separatori).
+ */
+const potrivesteEticheta = ({
+  text,
+  latime,
+  marime,
+  marimeMinima,
+  spatiere,
+  spatiereMinima,
+}: {
+  text: string;
+  latime: number;
+  marime: number;
+  marimeMinima: number;
+  spatiere: number;
+  spatiereMinima: number;
+}): { marime: number; spatiere: number; incape: boolean } => {
+  const incape = (m: number, sp: number) => incapeEticheta(text, m, sp, latime);
+  for (let sp = spatiere; sp >= spatiereMinima - 1e-6; sp -= 0.02) {
+    if (incape(marime, sp)) return { marime, spatiere: sp, incape: true };
+  }
+  for (let m = marime; m >= marimeMinima; m -= 1) {
+    if (incape(m, spatiereMinima)) return { marime: m, spatiere: spatiereMinima, incape: true };
+  }
+  return { marime: marimeMinima, spatiere: spatiereMinima, incape: false };
+};
 
 /**
  * Pentru intro fără fotografie: cercuri concentrice foarte fine, ca niște curbe
@@ -108,6 +138,8 @@ export const Intro: React.FC<{ scena: ScenaIntro }> = ({ scena }) => {
     minim: 84 * u,
     minimExtrem: 64 * u,
     maxRanduri: vertical ? 4 : 3,
+    preferaRanduri: true,
+    prag: 0.88,
   });
 
   // Eticheta: pe un rând dacă se poate; altfel se rupe doar la separatorii „·”,
@@ -392,7 +424,6 @@ export const Intro: React.FC<{ scena: ScenaIntro }> = ({ scena }) => {
         ) : null}
       </div>
 
-      <Granulatie opacitate={0.06} />
     </AbsoluteFill>
   );
 };

@@ -45,6 +45,10 @@ export type Culori = typeof CULORI_IMPLICITE;
 export const CuloriContext = createContext<Culori>(CULORI_IMPLICITE);
 export const useCulori = () => useContext(CuloriContext);
 
+/** O culoare a temei la o anumită opacitate (0–100), indiferent de formatul în care e scrisă. */
+export const transparenta = (culoare: string, procent: number) =>
+  `color-mix(in srgb, ${culoare} ${procent}%, transparent)`;
+
 // Curbe de mișcare comune, ca toate scenele să „respire” la fel.
 export const EASE_IESIRE = Easing.bezier(0.16, 1, 0.3, 1);
 export const EASE_INTRARE_IESIRE = Easing.bezier(0.65, 0, 0.35, 1);

@@ -8,8 +8,8 @@ import {
   useDelayRender,
   useVideoConfig,
 } from "remotion";
-import { Granulatie } from "../componente/Fundal";
 import { type Directie, ImagineMiscare } from "../componente/ImagineMiscare";
+import { latimeEchilibrata, randuriText } from "../componente/masuraText";
 import { TextAnimat } from "../componente/TextAnimat";
 import type { ScenaFoto } from "../date/tipuri";
 import { EASE_IESIRE, FONT_TEXT, FONT_TITLU, useCulori, useFormat } from "../tema";
@@ -120,101 +120,29 @@ const alegeMiscare = (
 /* Legenda: mărimea și încadrarea textelor                             */
 /* ------------------------------------------------------------------ */
 
-// Fonturile se încarcă asincron, deci nu putem măsura textul la randare (measureText ar
-// memora lățimi greșite). Folosim lățimile caracterelor, măsurate o dată în browser.
-
-const tabel = (litere: string, sutimi: number[]) =>
-  Object.fromEntries([...litere].map((ch, i) => [ch, sutimi[i] / 100]));
-
-const PUNCTUATIE = ".,;:!?'’\"„”()-–«»/&%+";
-
-/** Unbounded 700 cu letter-spacing -0.02em, în em. */
-const LATIMI_UNBOUNDED: Record<string, number> = {
-  ...tabel("abcdefghijklmnopqrstuvwxyz", [81, 79, 74, 81, 71, 57, 79, 76, 30, 30, 72, 30, 119, 77, 77, 79, 79, 53, 73, 58, 76, 75, 112, 70, 76, 67]),
-  ...tabel("ABCDEFGHIJKLMNOPQRSTUVWXYZ", [94, 86, 91, 91, 77, 75, 94, 92, 33, 79, 85, 74, 122, 95, 94, 79, 94, 83, 82, 80, 86, 91, 134, 85, 90, 79]),
-  ...tabel("0123456789", [90, 50, 81, 82, 84, 79, 84, 73, 87, 84]),
-  ...tabel(PUNCTUATIE, [28, 28, 31, 31, 30, 68, 25, 28, 49, 54, 54, 37, 37, 35, 64, 60, 60, 60, 90, 100, 70]),
-};
-
-/** Inter 500 cu letter-spacing -0.005em, în em. */
-const LATIMI_INTER: Record<string, number> = {
-  ...tabel("abcdefghijklmnopqrstuvwxyz", [56, 61, 57, 61, 58, 37, 61, 60, 25, 25, 55, 25, 88, 60, 60, 61, 61, 38, 53, 34, 60, 57, 82, 55, 57, 55]),
-  ...tabel("ABCDEFGHIJKLMNOPQRSTUVWXYZ", [70, 65, 73, 72, 60, 58, 74, 74, 27, 57, 68, 56, 91, 75, 76, 64, 76, 64, 64, 65, 74, 70, 100, 70, 69, 64]),
-  ...tabel("0123456789", [64, 41, 61, 62, 65, 60, 62, 57, 62, 62]),
-  ...tabel(PUNCTUATIE, [30, 30, 31, 30, 30, 52, 31, 27, 49, 45, 47, 36, 36, 46, 50, 50, 50, 40, 70, 85, 60]),
-};
-
-/** Lățimea unui cuvânt în em; literele cu diacritice au lățimea literei de bază. */
-const masoara = (latimi: Record<string, number>, implicit: number) => (cuvant: string) =>
-  [...cuvant].reduce((t, ch) => t + (latimi[ch] ?? latimi[ch.normalize("NFD")[0]] ?? implicit), 0);
-
-const emTitlu = masoara(LATIMI_UNBOUNDED, 0.85);
-const emText = masoara(LATIMI_INTER, 0.62);
-
-type Cuvinte = { latimi: number[]; spatiu: number; spatiuLaCapat: boolean };
-
-/**
- * Câte rânduri ocupă cuvintele (lățimi în px) într-o coloană, cu încadrare lacomă.
- * `spatiuLaCapat`: în TextAnimat spațiul e marginRight-ul fiecărui cuvânt, deci contează
- * și la capăt de rând; într-un text obișnuit spațiul de la capăt nu ocupă loc.
- */
-const numarRanduri = ({ latimi, spatiu, spatiuLaCapat }: Cuvinte, latimeMax: number) => {
-  let randuri = 1;
-  let rand = 0;
-  latimi.forEach((w0, i) => {
-    const w = w0 + (spatiuLaCapat && i < latimi.length - 1 ? spatiu : 0);
-    const necesar = rand > 0 ? rand + (spatiuLaCapat ? 0 : spatiu) + w : w;
-    if (rand > 0 && necesar > latimeMax) {
-      randuri++;
-      rand = w;
-    } else {
-      rand = necesar;
-    }
-  });
-  return randuri;
-};
-
-/**
- * Cea mai îngustă coloană în care cuvintele rămân pe același număr de rânduri ca în
- * `latimeMax`: rânduri echilibrate, fără un cuvânt singur pe ultimul rând, și un panou
- * care îmbracă textul fără gol în dreapta.
- */
-const latimeEchilibrata = (c: Cuvinte, latimeMax: number) => {
-  const randuri = numarRanduri(c, latimeMax);
-  if (randuri === 1) return latimeMax;
-  for (let w = Math.max(...c.latimi); w < latimeMax; w += 4) {
-    if (numarRanduri(c, w) <= randuri) return Math.min(latimeMax, w * 1.03); // rezervă pentru estimare
-  }
-  return latimeMax;
-};
-
-const cuvinteTitlu = (titlu: string, marime: number): Cuvinte => ({
-  latimi: titlu.split(/\s+/).filter(Boolean).map((c) => emTitlu(c) * marime),
-  spatiu: 0.28 * marime, // = marginRight din TextAnimat
-  spatiuLaCapat: true,
-});
-
-const cuvinteText = (text: string, marime: number): Cuvinte => ({
-  latimi: text.split(/\s+/).filter(Boolean).map((c) => emText(c) * marime),
-  spatiu: 0.26 * marime,
-  spatiuLaCapat: false,
-});
+// Lățimile vin din tabelele de glife comune (masuraText.ts), nu din DOM: fonturile se
+// încarcă asincron, iar measureText ar memora lățimi greșite.
 
 /**
  * Mărimea titlului = cea mai mare la care încape în numărul de rânduri permis
- * (`trepte` = [[mărime minimă, rânduri maxime]], în ordinea preferinței).
+ * (`trepte` = [[mărime minimă, rânduri maxime]], în ordinea preferinței), apoi
+ * coloana cea mai îngustă cu același număr de rânduri (rânduri echilibrate).
  */
 const asezareTitlu = (titlu: string, latimeMax: number, maxim: number, trepte: [number, number][]) => {
   let marime = trepte[trepte.length - 1][0];
   cauta: for (const [minim, randuriMax] of trepte) {
     for (let s = maxim; s >= minim; s -= 2) {
-      if (numarRanduri(cuvinteTitlu(titlu, s), latimeMax) <= randuriMax) {
+      const r = randuriText({ text: titlu, font: "titlu", marime: s, latime: latimeMax, spatiere: -0.02 });
+      if (r.celMaiLung <= latimeMax && r.randuri <= randuriMax) {
         marime = s;
         break cauta;
       }
     }
   }
-  return { marime, latime: latimeEchilibrata(cuvinteTitlu(titlu, marime), latimeMax) };
+  return {
+    marime,
+    latime: latimeEchilibrata({ text: titlu, font: "titlu", marime, latime: latimeMax, spatiere: -0.02 }),
+  };
 };
 
 /* ------------------------------------------------------------------ */
@@ -257,10 +185,14 @@ const Legenda: React.FC<{ titlu?: string; text?: string; k: number }> = ({ titlu
   // descrierea: cel mult cât titlul sau o măsură comodă de citit, cu rânduri echilibrate
   const masuraDescriere = (titlu ? (f.vertical ? 15 : 26) : f.vertical ? 15 : 20) * marimeDescriere;
   const latimeDescriere = text
-    ? latimeEchilibrata(
-        cuvinteText(text, marimeDescriere),
-        Math.min(latimeColoana, Math.max(titluAsezat?.latime ?? 0, masuraDescriere)) * 0.98,
-      )
+    ? latimeEchilibrata({
+        text,
+        font: "text",
+        marime: marimeDescriere,
+        latime: Math.min(latimeColoana, Math.max(titluAsezat?.latime ?? 0, masuraDescriere)) * 0.98,
+        spatiere: -0.005,
+        spatiuCuvinte: 0.27, // spațiul obișnuit din Inter: descrierea e text simplu, nu TextAnimat
+      })
     : 0;
 
   // Timpi (secunde), comprimați pentru scenele scurte
@@ -453,7 +385,6 @@ export const Foto: React.FC<{ scena: ScenaFoto }> = ({ scena }) => {
 
       {areLegenda ? <Legenda titlu={titlu} text={text} k={k} /> : null}
 
-      <Granulatie opacitate={0.06} />
     </AbsoluteFill>
   );
 };
