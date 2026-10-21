@@ -1,6 +1,6 @@
 """Film de produs din fotografii statice: cameră virtuală 2.5D pe hărți de adâncime.
 
-    python film.py <scenariu.json> <ieșire.mp4> [--previzualizare] [--crf=18]
+    python film.py <scenariu.json> <ieșire.mp4> [--previzualizare] [--crf=18] [--interval=120-170]
     python film.py <scenariu.json> - --previzualizare --cadre=planuri|tranzitii|capete|0,30,60 --foaie=x.jpg [--coloane=4]
 
 Fiecare cadru (plan) e o fotografie cu harta ei de adâncime (vezi adancime.py).
@@ -549,7 +549,8 @@ def cadru_global(g: float, planuri: list[Plan], starts, total, rand: Randator, f
         dt = (g - granita + total / 2) % total - total / 2
         if -T / 2 <= dt < T / 2:
             u = (dt + T / 2) / T
-            return tranzitie(rand, A, B, A.durata + dt, dt, u, tz, fps)
+            # _du = cât avansează u într-un cadru (pentru blurul de mișcare din treceri)
+            return tranzitie(rand, A, B, A.durata + dt, dt, u, dict(tz, _du=1.0 / (T * fps)), fps)
     for i in range(n):
         tau = (g - starts[i]) % total
         if tau < planuri[i].durata:
@@ -631,7 +632,10 @@ def main() -> None:
          "-tune", "grain", "-movflags", "+faststart", "-an", iesire],
         stdin=subprocess.PIPE,
     )
-    for k in range(nr):
+    k0, k1 = 0, nr
+    if "interval" in optiuni:  # doar o bucată din film, de ex. --interval=120-170 (cadre)
+        k0, k1 = (int(x) for x in optiuni["interval"].split("-"))
+    for k in range(k0, k1):
         img = gradeaza(cadru_global(k / fps + decalaj, planuri, starts, total, rand, fps), rand, gr, k)
         ff.stdin.write((img * 255 + 0.5).astype(np.uint8).tobytes())
         if k % 60 == 0:
