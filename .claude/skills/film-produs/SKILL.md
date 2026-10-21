@@ -64,9 +64,15 @@ care au dat rezultate bune:
   - `lumina`: un accent cald, cel mult de două ori.
   - `taietura`: între două planuri statice înrudite.
   - `pagina`: răsfoire. Pagina din dreapta se ridică în jurul cotorului, se curbează și
-    se întoarce, iar pe spatele ei apare imaginea următoare. Pune-o între două imagini
-    cu cartea deschisă și cotorul în centrul cadrului (sau dă-i `ax`), de exemplu de la
-    foaia de titlu la prima pagină dublă. Durează 1–1,1 s.
+    se întoarce, iar pe spatele ei apare imaginea următoare. Durează 1–1,1 s. **Doar
+    între două mockup-uri suprapuse la pixel**, adică aceeași scenă și aceeași carte,
+    doar cu alte pagini. Le găsești cu o imagine-diferență, unde totul în afară de pagini
+    se anulează la negru (aici: `Deschisa_p4-5` și `Deschisa_p22-23`). Ambele planuri
+    primesc aceeași cameră: același `centru`, aceeași `rotire` care aduce cotorul vertical
+    pe axa întoarcerii, un `zoom` care continuă în același ritm, fără orbită sau dolly.
+    Zoom-ul trebuie să fie destul de mare ca jumătatea dreaptă a cadrului să fie numai
+    pagină. Între două fotografii diferite, la mijlocul întoarcerii ar apărea o pagină
+    dublă care nu există și o bucată de masă care se întoarce odată cu pagina.
   - `dizolvare`: lentă, doar la bucla de la final. Mai multe dizolvări la rând fac din film un slideshow.
 - **Stilul „macro” (ca în videourile AI de tip Flow sau Veo, dar exact):** planuri scurte
   de 1,5–2 s legate prin tăieturi seci. Camera e foarte aproape: `zoom` 1,5–2,3 pe un
@@ -78,6 +84,21 @@ care au dat rezultate bune:
   `putere` [16, 5]). Folosește-l când utilizatorul arată un asemenea video ca
   referință. Mockup-urile la care coperta e frontală și mare (cartea sprijinită,
   variantele verticale) dau macro-urile cele mai clare.
+  - **Focusul** (`punct`) se pune pe ce e deja clar în fotografie: multe mockup-uri au
+    profunzimea lor de câmp „coaptă” în imagine, iar blurul sintetic peste blurul
+    existent face tot cadrul moale. Pe o retragere lungă, folosește `focus` fix (de
+    exemplu [0,64, 0,68]), nu autofocus: punctul alunecă pe fundal și focusul pompează.
+  - **Planurile întinse pe masă** (fața și spatele, văzute de sus) nu primesc `dof`: stau
+    într-un singur plan și trebuie să fie clare de la un capăt la altul.
+  - **Mișcarea** e mai hotărâtă decât pare: travlingul pe cotoare `pan` ±0,11, alunecarea
+    pe o pagină ±0,045, iar retragerea finală liniar, fără `curba` care o oprește devreme.
+  - **Gradarea** neutru-rece, ca videourile de produs: `"expunere": 0,92, "caldura": -0,02,
+    "contrast": 0,12, "vineta": 0,32`. Hârtia caldă, crem, arată mai puțin premium.
+  - **Raza de lumină:** `{"unghi": 125, "latime": 0,07, "intensitate": 0,5, "drum": [-0,3, 0,1]}`,
+    adică o bandă îngustă care alunecă încet. Luminează după cât de deschisă e suprafața,
+    deci negrul copertei rămâne adânc.
+  - Ca să compari cu o referință, măsoară: tăieturile (diferența dintre cadre), viteza
+    mișcării (flux optic) și claritatea (varianța laplacianului) pe ambele videouri.
 - **Exactitate:** în film apar doar imaginile reale. Spre deosebire de un generator AI
   de video, nu inventa pagini, texte sau unghiuri.
 - `centru` mută punctul de interes când zoom-ul ar tăia produsul. Ține-l aproape de

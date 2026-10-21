@@ -15,7 +15,7 @@ Scenariul (JSON), cu toate valorile opționale în afară de `imagine`:
 {
   "latime": 1920, "inaltime": 1080, "fps": 30,
   "imagini": "../public/media/proiect", "adancime": "../public/media/proiect/adancime",
-  "gradare": {"caldura": 0.03, "contrast": 0.06, "vineta": 0.22, "granulatie": 2.5},
+  "gradare": {"expunere": 1.0, "caldura": 0.03, "contrast": 0.06, "vineta": 0.22, "granulatie": 2.5},
   "planuri": [
     {"imagine": "foto.jpg", "durata": 3.2,
      "zoom": [1.08, 1.18],          // de la -> la (1 = imaginea acoperă exact cadrul)
@@ -222,10 +222,13 @@ class Randator:
             pozitie = lin(de_la, la, p["t"]) * (W / 2 + self.H / 2)
             banda = (self.X * math.cos(unghi) + self.Y * math.sin(unghi)) - pozitie
             lat = float(raza.get("latime", 0.16)) * W
-            lumina = np.exp(-(banda**2) / (2 * lat**2)).astype(np.float32)
+            # bandă cu platou și margini moi (ca lumina printr-o fereastră), nu un clopot difuz
+            lumina = np.clip((lat - np.abs(banda)) / (0.5 * lat), 0, 1).astype(np.float32)
+            lumina = lumina * lumina * (3 - 2 * lumina)
             cald = np.array([0.80, 0.92, 1.0], np.float32)  # BGR: alb cald
             k = (float(raza.get("intensitate", 0.22)) * lumina)[..., None]
-            img = img + k * cald * (1.0 - img)
+            # lumina luminează suprafața după cât de deschisă e (negrul rămâne adânc), plus puțin aer
+            img = img + k * cald * (0.25 * (1.0 - img) + 0.75 * img)
 
         # 6. profunzime de câmp: doar o fâșie de adâncime e clară, restul se estompează
         dof = cfg.get("dof")
@@ -256,6 +259,16 @@ def profunzime(img: np.ndarray, d: np.ndarray, t: float, dof: dict, produs: floa
     plaja = val(dof.get("plaja"), 0.04)
     putere = val(dof.get("putere"), 12) * W / 1920
     coc = np.clip((np.abs(d - f) - plaja) / val(dof.get("cadere"), 0.22), 0, 1) * putere
+    # câmpul apropiat se revarsă peste fundal: conturul unui prim-plan neclar e și el neclar,
+    # nu decupat pe un fundal mai clar (altfel apare o margine tăioasă / o linie subțire în jurul lui)
+    if putere >= 1:
+        r = max(1, int(round(putere)))
+        aproape = np.where(d > f, coc, 0).astype(np.float32)
+        nucleu = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * r + 1, 2 * r + 1))
+        revarsat = cv2.GaussianBlur(cv2.dilate(aproape, nucleu), (0, 0), r / 2)
+        # doar peste salturi de adâncime (marginea unui obiect), nu pe o suprafață înclinată continuă
+        salt = np.clip((revarsat - coc) / (0.25 * putere) - 1, 0, 1)
+        coc = coc + salt * np.clip(revarsat - coc, 0, None)
     # câteva niveluri de blur (cele mari la rezoluție redusă) și amestec după cercul de confuzie
     H = img.shape[0]
     sigme = [0.0, putere * 0.18, putere * 0.4, putere * 0.7, putere]
@@ -408,14 +421,16 @@ def rasfoire(rand: Randator, a: np.ndarray, b: np.ndarray, u: float, tz: dict) -
     lum = np.clip((amb + (1 - amb) * np.clip(cosl, 0, 1)) / (amb + (1 - amb) * lz), 0, 1.12)
     wn = np.clip(w / lat, 0, 1)
     lum = lum * (1 - 0.2 * arc * np.exp(-wn / 0.06))  # umbra din cotor, doar cât foaia e ridicată
-    alfa_col = np.clip((lat - w) / 2.5, 0, 1) * are
+    # marginea liberă se netezește doar când e în cadru (la capete ar lăsa să se vadă B pe ultima coloană)
+    alfa_col = (np.clip((lat - w) / 2.5, 0, 1) if 1 < xp[-1] < W - 1 else np.ones_like(w)) * are
 
     # pe verticală: rândul se scalează după adâncimea coloanei
     y = rand.Y + H / 2
     yy = cy + (y - cy) * ((f - col_z) / f)[None, :]
-    valid = are[None, :] & (yy >= 0) & (yy <= H - 1)
+    yy = yy - 0.5  # din coordonate continue (pixelul i = [i, i+1]) în indici de pixel, cum cere remap
+    valid = are[None, :] & (yy >= -0.5) & (yy <= H - 0.5)
     alfa = alfa_col[None, :] * valid
-    mx = np.broadcast_to(np.where(fata, xs + w, xs - w).astype(np.float32)[None, :], (H, W))
+    mx = np.broadcast_to((np.where(fata, xs + w, xs - w) - 0.5).astype(np.float32)[None, :], (H, W))
     my = np.where(valid, yy, 0).astype(np.float32)
     pa = cv2.remap(a, np.ascontiguousarray(mx), my, cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT101)
     pb = cv2.remap(b, np.ascontiguousarray(mx), my, cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT101)
@@ -490,6 +505,9 @@ def tranzitie(rand: Randator, A: Plan, B: Plan, tA: float, tB: float, u: float, 
 
 
 def gradeaza(img: np.ndarray, rand: Randator, gr: dict, nr_cadru: int) -> np.ndarray:
+    e = float(gr.get("expunere", 1.0))
+    if e != 1.0:
+        img = img * e
     c = float(gr.get("contrast", 0.06))
     if c:
         img = img + c * (img - 0.5) * (1 - np.abs(2 * img - 1))  # curbă în S, blândă
@@ -610,7 +628,7 @@ def main() -> None:
     ff = subprocess.Popen(
         ["ffmpeg", "-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "bgr24", "-s", f"{W}x{H}", "-r", str(fps),
          "-i", "-", "-c:v", "libx264", "-preset", "slow", "-crf", optiuni.get("crf", "18"), "-pix_fmt", "yuv420p",
-         "-movflags", "+faststart", "-an", iesire],
+         "-tune", "grain", "-movflags", "+faststart", "-an", iesire],
         stdin=subprocess.PIPE,
     )
     for k in range(nr):
