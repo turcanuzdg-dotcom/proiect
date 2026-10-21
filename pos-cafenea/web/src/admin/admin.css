@@ -1,0 +1,127 @@
+@import '../comun/baza.css';
+
+/* ---- Cadrul: meniu lateral + conținut ---- */
+.cadru { display: grid; grid-template-columns: 220px 1fr; min-height: 100vh; }
+.meniu {
+  background: var(--accent); color: #f3ebe2; display: flex; flex-direction: column; gap: 8px;
+  position: sticky; top: 0; height: 100vh; overflow-y: auto; padding: 16px 12px;
+}
+.marca { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 17px; padding: 0 6px 8px; }
+.meniu .marca img { border-radius: 8px; }
+.indicator-live {
+  margin-left: auto; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em;
+  padding: 2px 7px; border-radius: 999px; background: rgba(255, 255, 255, 0.12); color: #d6cbbf;
+}
+.indicator-live.activ { background: #2f7d4f; color: #fff; }
+.indicator-live.activ::before { content: '● '; }
+.meniu nav { display: flex; flex-direction: column; gap: 10px; }
+.meniu-grup { display: flex; flex-direction: column; gap: 2px; }
+.meniu-grup-titlu { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: #b9a99a; padding: 4px 10px 2px; }
+.meniu nav a {
+  color: #f3ebe2; text-decoration: none; padding: 8px 10px; border-radius: 8px; font-weight: 500;
+}
+.meniu nav a:hover { background: rgba(255, 255, 255, 0.08); }
+.meniu nav a.activ { background: #f6f3ee; color: var(--accent); font-weight: 700; }
+.meniu-jos { margin-top: auto; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 6px 0; border-top: 1px solid rgba(255, 255, 255, 0.12); }
+.meniu-jos .slab { color: #d6cbbf; }
+.meniu-jos .buton-link { color: #f3c99c; }
+
+.continut { padding: 24px 28px 48px; min-width: 0; display: flex; flex-direction: column; gap: 18px; }
+
+@media (max-width: 860px) {
+  .cadru { grid-template-columns: 1fr; }
+  .meniu { position: sticky; top: 0; z-index: 20; height: auto; flex-direction: row; flex-wrap: wrap; align-items: center; padding: 8px 12px; gap: 6px; }
+  .marca { padding: 0; font-size: 15px; }
+  .meniu nav { order: 3; width: 100%; flex-direction: row; overflow-x: auto; gap: 2px; padding-bottom: 2px; scrollbar-width: none; }
+  .meniu-grup { flex-direction: row; gap: 2px; }
+  .meniu-grup-titlu { display: none; }
+  .meniu nav a { white-space: nowrap; padding: 6px 10px; font-size: 14px; }
+  .meniu-jos { margin: 0 0 0 auto; border: none; padding: 0; }
+  .continut { padding: 16px 16px 40px; }
+}
+
+/* ---- Antet de pagină, filtre, taburi ---- */
+.cap-pagina { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
+.cap-pagina p { margin-top: 4px; }
+.actiuni { display: flex; gap: 8px; flex-wrap: wrap; }
+.bara-filtre { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; }
+.bara-filtre .camp-filtru { min-width: 180px; }
+.camp-filtru select { min-width: 180px; }
+.alege-interval { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.alege-interval select { width: auto; min-width: 140px; }
+.alege-interval input[type='date'] { width: 160px; }
+.eticheta-interval { font-weight: 700; font-size: 13px; color: var(--text-slab); min-width: 70px; }
+.taburi { display: flex; gap: 4px; border-bottom: 1px solid var(--linie); overflow-x: auto; scrollbar-width: none; }
+.tab {
+  background: none; border: none; border-bottom: 2px solid transparent; padding: 10px 14px; cursor: pointer;
+  color: var(--text-slab); font-weight: 600; white-space: nowrap; margin-bottom: -1px;
+}
+.tab:hover { color: var(--text); }
+.tab.activ { color: var(--accent); border-bottom-color: var(--caramel); }
+.reincarcare { opacity: 0.6; transition: opacity 0.15s; }
+.sectiune { display: flex; flex-direction: column; gap: 12px; }
+.sectiune > h2 { margin-top: 6px; }
+
+/* ---- Indicatori ---- */
+.grila-kpi { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 12px; }
+.grila-carduri { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; }
+.kpi { display: flex; flex-direction: column; gap: 2px; }
+.kpi-eticheta { font-size: 13px; color: var(--text-slab); }
+.kpi-valoare { font-size: 24px; font-weight: 650; }
+.kpi-nota { font-size: 12px; color: var(--text-slab); }
+.card-locatie { display: flex; flex-direction: column; gap: 14px; }
+.card-locatie header { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.card-locatie .grila-kpi { grid-template-columns: repeat(2, 1fr); }
+.lista-alerte { display: flex; flex-direction: column; gap: 8px; }
+.lista-alerte .alerta { display: flex; justify-content: space-between; gap: 12px; align-items: center; flex-wrap: wrap; }
+.dif-minus { color: var(--pericol); font-weight: 700; }
+.dif-plus { color: var(--avertisment); font-weight: 700; }
+tr.anulata td { color: var(--text-slab); }
+tr.anulata td.taiat { text-decoration: line-through; }
+tr.discrepanta td:first-child { box-shadow: inset 3px 0 0 var(--pericol); }
+td.detalii-linii { background: var(--suprafata-2); }
+.linii-comanda { margin: 0; padding-left: 18px; }
+.linii-comanda li { margin: 2px 0; }
+.cod-mare {
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace; font-size: 30px; font-weight: 700; letter-spacing: 0.18em;
+  background: var(--suprafata-2); border: 1px dashed var(--caramel); border-radius: 12px; padding: 14px 18px; text-align: center;
+}
+.editor-linii { display: flex; flex-direction: column; gap: 8px; }
+.linie-editor { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr) auto; gap: 8px; align-items: center; }
+.linie-editor.trei { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) auto; }
+.linie-editor .um { font-size: 13px; color: var(--text-slab); white-space: nowrap; }
+.cu-um { display: flex; align-items: center; gap: 6px; }
+.grila-bife { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 8px; }
+.input-mic { width: 120px; min-height: 34px; padding: 4px 8px; text-align: right; }
+pre.payload { background: var(--suprafata-2); border: 1px solid var(--linie); border-radius: 8px; padding: 10px; font-size: 12px; overflow-x: auto; max-height: 220px; margin: 0; }
+.tabel td .buton-link + .buton-link { margin-left: 12px; }
+
+/* ---- Grafice ---- */
+.grafic { display: flex; flex-direction: column; gap: 8px; }
+.grafic-cap { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+.grafic-zona { position: relative; width: 100%; }
+.grafic-zona svg { display: block; outline: none; }
+.grafic-zona svg:focus-visible { outline: 2px solid var(--caramel); outline-offset: 2px; border-radius: 6px; }
+.grafic-text { font-size: 11px; fill: #8a7d72; font-variant-numeric: tabular-nums; }
+.grafic-tooltip {
+  position: absolute; transform: translate(-50%, -100%); pointer-events: none; background: var(--suprafata);
+  border: 1px solid var(--linie); border-radius: 8px; box-shadow: var(--umbra); padding: 6px 10px;
+  display: flex; flex-direction: column; font-size: 12px; color: var(--text-slab); white-space: nowrap;
+}
+.grafic-tooltip strong { font-size: 14px; color: var(--text); }
+.legenda { display: flex; gap: 16px; flex-wrap: wrap; font-size: 13px; color: var(--text-slab); }
+.legenda i { display: inline-block; width: 12px; height: 12px; border-radius: 3px; vertical-align: -1px; margin-right: 4px; }
+.bare-pereche { display: block; }
+.bare-orizontale { display: flex; flex-direction: column; gap: 8px; }
+.bara-rand { display: grid; grid-template-columns: minmax(110px, 180px) 1fr auto; gap: 10px; align-items: center; }
+.bara-eticheta { font-size: 13px; }
+.bara-pista { height: 12px; }
+.bara-umplere { display: block; height: 12px; border-radius: 0 4px 4px 0; }
+.bara-valoare { font-size: 13px; min-width: 90px; }
+
+/* ---- Login ---- */
+.pagina-login { min-height: 100vh; display: grid; place-items: center; padding: 16px; }
+.login { width: min(400px, 100%); display: grid; gap: 16px; padding: 24px; }
+.login .marca { padding: 0; }
+.login .marca h1 { font-size: 20px; }
+.login .marca p { font-weight: 400; font-size: 13px; }
