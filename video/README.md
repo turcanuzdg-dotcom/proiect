@@ -1,54 +1,18 @@
-# Remotion video
+# Video de prezentare (Remotion)
 
-<p align="center">
-  <a href="https://github.com/remotion-dev/logo">
-    <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="https://github.com/remotion-dev/logo/raw/main/animated-logo-banner-dark.apng">
-      <img alt="Animated Remotion Logo" src="https://github.com/remotion-dev/logo/raw/main/animated-logo-banner-light.gif">
-    </picture>
-  </a>
-</p>
+Șablon pentru un video modern de prezentare a unui proiect, din fotografii și texte.
+Scenele se descriu într-un fișier JSON; formatele: 16:9 (`Prezentare`) și 9:16
+(`PrezentareVerticala`). Instrucțiunile complete: `.claude/skills/video-prezentare/SKILL.md`.
 
-Welcome to your Remotion project!
-
-## Commands
-
-**Install Dependencies**
-
-```console
-npm i --loglevel=error
+```bash
+npm ci                                                  # o dată
+npm run previzualizare -- --props=out/proiect.json      # rapid, jumătate de rezoluție
+npm run randeaza -- --props=out/proiect.json            # out/prezentare.mp4
+npm run randeaza:vertical -- --props=out/proiect.json   # out/prezentare-verticala.mp4
 ```
 
-**Start Preview**
+Fără `--props` se randează exemplul fictiv din `src/date/exemplu.ts`.
+Fotografiile reale stau în `public/media/` și nu intră în git.
 
-```console
-npm run dev
-```
-
-**Render video**
-
-```console
-npx remotion render
-```
-
-**Upgrade Remotion**
-
-```console
-npx remotion upgrade
-```
-
-## Docs
-
-Get started with Remotion by reading the [fundamentals page](https://www.remotion.dev/docs/the-fundamentals).
-
-## Help
-
-We provide help on our [Discord server](https://discord.gg/6VzzNDwUwV).
-
-## Issues
-
-Found an issue with Remotion? [File an issue here](https://github.com/remotion-dev/remotion/issues/new).
-
-## License
-
-Note that for some entities a company license is needed. [Read the terms here](https://github.com/remotion-dev/remotion/blob/main/LICENSE.md).
+Remotion e gratuit pentru persoane fizice, organizații nonprofit și firme de cel mult
+3 angajați; altfel: https://www.remotion.pro/license

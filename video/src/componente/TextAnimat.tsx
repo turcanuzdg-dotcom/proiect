@@ -32,7 +32,9 @@ export const TextAnimat: React.FC<{
             style={{
               display: "inline-block",
               overflow: "hidden",
-              // spațiu sub linie pentru diacriticele de jos (ș, ț) și coada literelor
+              // spațiu în mască pentru accentele de sus (Ă, Î, Â) și diacriticele de jos (ș, ț)
+              paddingTop: "0.14em",
+              marginTop: "-0.14em",
               paddingBottom: "0.12em",
               marginBottom: "-0.12em",
               marginRight: i < cuvinte.length - 1 ? "0.28em" : 0,
