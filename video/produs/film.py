@@ -30,11 +30,17 @@ Scenariul (JSON), cu toate valorile opționale în afară de `imagine`:
      "reflexie": false,             // un reflex de lumină care trece peste produs
      "reflexie_adancime": null,     // adâncimea produsului (implicit: cea din jurul lui `centru`)
      "reflexie_zona": null,         // opțional [x0,y0,x1,y1]: reflexia doar în această zonă a fotografiei
+     "raza": null,                  // rază de lumină de fereastră: {"unghi": 35, "latime": 0.16, "intensitate": 0.22, "drum": [-0.9, 0.7]}
+     "dof": null,                   // profunzime de câmp: {"punct": [0.5, 0.5], "focus": null|d|[d0,d1], "plaja": 0.04, "putere": 12, "cadere": 0.22}
+                                    // (fără "focus": autofocus pe ce se află în "punct", fracțiuni din cadru)
+     "curba": "lin",                // lin | iesire (pornește repede, se așază) | intrare-iesire
      "tranzitie": {"tip": "whip", "durata": 0.5, "directie": 1}}  // spre planul următor
   ]
 }
 Tipuri de tranziție: dizolvare, whip (directie 1 = cadrul fuge spre stânga / în sus,
--1 = invers; "axa": "y" pentru panoramare verticală), zoom, lumina, taietura.
+-1 = invers; "axa": "y" pentru panoramare verticală), zoom, lumina, taietura,
+pagina (răsfoire: pagina din dreapta se întoarce în jurul cotorului; "ax": poziția
+cotorului în cadru, implicit 0.5; "directie": -1 întoarce pagina din stânga).
 """
 
 from __future__ import annotations
@@ -112,6 +118,11 @@ class Plan:
         """Parametrii camerei la timpul local tau (secunde); liniari, deci se prelungesc firesc."""
         c = self.cfg
         t = tau / self.durata
+        curba = c.get("curba", "lin")
+        if curba == "iesire" and 0 <= t <= 1:  # pornește repede și se așază (retrageri, dezvăluiri)
+            t = 1 - (1 - t) ** 2.4
+        elif curba == "intrare-iesire" and 0 <= t <= 1:
+            t = t * t * (3 - 2 * t)
         z0, z1 = pereche(c.get("zoom"), 1.1)
         pan = c.get("pan") or [[0, 0], [0, 0]]
         return {
@@ -202,7 +213,70 @@ class Randator:
                 masca = masca * np.clip(np.minimum(vy - zona[1], zona[3] - vy) / 0.015, 0, 1)
             k = (0.16 * lumina * masca)[..., None]
             img = img + k * (1.0 - img)
+
+        # 5. raza de lumină de fereastră: o bandă caldă, largă, care traversează cadrul
+        raza = cfg.get("raza")
+        if raza:
+            unghi = math.radians(float(raza.get("unghi", 35)))
+            de_la, la = raza.get("drum", [-0.9, 0.7])
+            pozitie = lin(de_la, la, p["t"]) * (W / 2 + self.H / 2)
+            banda = (self.X * math.cos(unghi) + self.Y * math.sin(unghi)) - pozitie
+            lat = float(raza.get("latime", 0.16)) * W
+            lumina = np.exp(-(banda**2) / (2 * lat**2)).astype(np.float32)
+            cald = np.array([0.80, 0.92, 1.0], np.float32)  # BGR: alb cald
+            k = (float(raza.get("intensitate", 0.22)) * lumina)[..., None]
+            img = img + k * cald * (1.0 - img)
+
+        # 6. profunzime de câmp: doar o fâșie de adâncime e clară, restul se estompează
+        dof = cfg.get("dof")
+        if dof:
+            img = profunzime(img, d, p["t"], dof, plan.adancime_produs, W)
         return np.clip(img, 0, 1)
+
+
+def profunzime(img: np.ndarray, d: np.ndarray, t: float, dof: dict, produs: float, W: int) -> np.ndarray:
+    """Profunzime de câmp mică, ca la un obiectiv macro: blurul crește cu distanța
+    (în adâncime) față de planul focalizat. `focus` = adâncimea clară (implicit cea a
+    produsului; o pereche [de_la, la] face o tragere de focus pe durata planului),
+    `plaja` = cât rămâne clar în jurul ei, `putere` = blurul maxim, în pixeli la 1920 px."""
+    f = dof.get("focus")
+    if f is None:
+        # autofocus: adâncimea a ceea ce se află în punctul ales din cadru (implicit centrul)
+        px, py = dof.get("punct", [0.5, 0.5])
+        H_, W_ = d.shape
+        x0, y0 = int(px * W_), int(py * H_)
+        fer = d[max(0, y0 - H_ // 20) : y0 + H_ // 20, max(0, x0 - W_ // 30) : x0 + W_ // 30]
+        f = float(np.median(fer))
+    elif isinstance(f, (list, tuple)):
+        f = lin(f[0], f[1], min(1.0, max(0.0, t)))
+    def val(v, implicit):  # valoare fixă sau pereche [de_la, la] pe durata planului
+        v = implicit if v is None else v
+        return lin(v[0], v[1], min(1.0, max(0.0, t))) if isinstance(v, (list, tuple)) else float(v)
+
+    plaja = val(dof.get("plaja"), 0.04)
+    putere = val(dof.get("putere"), 12) * W / 1920
+    coc = np.clip((np.abs(d - f) - plaja) / val(dof.get("cadere"), 0.22), 0, 1) * putere
+    # câteva niveluri de blur (cele mari la rezoluție redusă) și amestec după cercul de confuzie
+    H = img.shape[0]
+    sigme = [0.0, putere * 0.18, putere * 0.4, putere * 0.7, putere]
+    niveluri = [img]
+    for sg in sigme[1:]:
+        if sg < 0.6:
+            niveluri.append(img)
+            continue
+        fct = 2 if sg > 3 else 1
+        mic = cv2.resize(img, (img.shape[1] // fct, H // fct), interpolation=cv2.INTER_AREA) if fct > 1 else img
+        bl = cv2.GaussianBlur(mic, (0, 0), sg / fct)
+        niveluri.append(cv2.resize(bl, (img.shape[1], H), interpolation=cv2.INTER_LINEAR) if fct > 1 else bl)
+    out = np.zeros_like(img)
+    ponderi = np.zeros(d.shape, np.float32)
+    for i, sg in enumerate(sigme):
+        # pondere triunghiulară în jurul fiecărui nivel
+        lat = max(1e-3, (sigme[min(i + 1, len(sigme) - 1)] - sigme[max(i - 1, 0)]) / 2)
+        w_ = np.clip(1 - np.abs(coc - sg) / lat, 0, 1).astype(np.float32)
+        out += niveluri[i] * w_[..., None]
+        ponderi += w_
+    return out / np.maximum(ponderi, 1e-6)[..., None]
 
 
 def calculeaza_siguranta(rand: Randator, plan: Plan, de_la: float, pana_la: float, pasi: int = 9) -> float:
@@ -265,12 +339,109 @@ def blur_radial(img: np.ndarray, putere: float) -> np.ndarray:
 # ---------------------------------------------------------------- tranziții
 
 
+def rasfoire(rand: Randator, a: np.ndarray, b: np.ndarray, u: float, tz: dict) -> np.ndarray:
+    """Pagina din dreapta (A) se ridică în jurul cotorului, se curbează ca o foaie și
+    se întoarce; pe spatele ei e jumătatea stângă a lui B, iar sub ea apare jumătatea
+    dreaptă a lui B.
+
+    Cotorul e verticala `ax` (fracțiune din lățime). Foaia e o curbă în planul X–Z
+    (unghiul crește spre marginea liberă cu întârziere, ca la hârtie), proiectată în
+    perspectivă de o cameră aflată în fața centrului cadrului. Proiecția orizontală
+    nu depinde de rând, deci fiecare coloană a cadrului primește un singur punct al
+    foii (cel mai apropiat de cameră); pe verticală, rândul se scalează după adâncime.
+    """
+    if float(tz.get("directie", 1)) < 0:  # pagina din stânga se întoarce spre dreapta: oglindim
+        tz2 = dict(tz, directie=1, ax=1 - float(tz.get("ax", 0.5)))
+        return rasfoire(rand, a[:, ::-1], b[:, ::-1], u, tz2)[:, ::-1]
+    H, W = rand.H, rand.W
+    xs = float(tz.get("ax", 0.5)) * W
+    lat = W - xs  # lățimea foii
+    e = u**3 * (u * (6 * u - 15) + 10)  # pornește și se așază lin
+    th0 = math.pi * e
+    arc = math.sin(math.pi * e)  # 0 la început și la sfârșit: foaia e plată, fără umbre
+    f = 2.2 * W
+    cx, cy = W / 2, H / 2
+
+    # forma foii: unghiul scade spre marginea liberă (rămâne în urmă), apoi se îndreaptă
+    n = 240
+    ds = lat / n
+    sarc = np.linspace(0, lat, n + 1)
+    unghi = np.clip(th0 - float(tz.get("curbura", 0.6)) * arc * (sarc / lat) ** 1.6, 0, math.pi)
+    mijloc = (unghi[:-1] + unghi[1:]) / 2
+    X = xs + np.concatenate([[0.0], np.cumsum(np.cos(mijloc)) * ds])
+    Z = np.concatenate([[0.0], np.cumsum(np.sin(mijloc)) * ds])
+    xp = cx + (X - cx) * f / (f - Z)
+
+    # rasterizare pe coloane: pentru fiecare coloană, punctul foii cel mai apropiat de cameră
+    col_w = np.full(W, np.nan, np.float32)
+    col_z = np.full(W, -np.inf, np.float32)
+    col_x = np.zeros(W, np.float32)
+    col_t = np.zeros(W, np.float32)
+    centre = np.arange(W, dtype=np.float32) + 0.5
+    for i in range(n):
+        x0, x1 = xp[i], xp[i + 1]
+        c0 = max(0, int(math.ceil(min(x0, x1) - 0.5)))
+        c1 = min(W - 1, int(math.floor(max(x0, x1) - 0.5)))
+        if c1 < c0:
+            continue
+        cc = centre[c0 : c1 + 1]
+        t = (cc - x0) / (x1 - x0) if abs(x1 - x0) > 1e-6 else np.full_like(cc, 0.5)
+        z = Z[i] + t * (Z[i + 1] - Z[i])
+        sus = z > col_z[c0 : c1 + 1]
+        idx = np.nonzero(sus)[0] + c0
+        col_z[idx] = z[sus]
+        col_w[idx] = sarc[i] + t[sus] * ds
+        col_x[idx] = X[i] + t[sus] * (X[i + 1] - X[i])
+        col_t[idx] = mijloc[i]
+    are = np.isfinite(col_w)
+    w = np.where(are, col_w, 0)
+    # fața (A) sau spatele (B), după cum privește camera normala foii
+    nx, nz = -np.sin(col_t), np.cos(col_t)
+    fata = (nx * (cx - col_x) + nz * (f - col_z)) > 0
+    # lumină dinspre stânga-sus-față; egală cu 1 când foaia e plată (fără salt la capete)
+    lx, lz = -0.35, 1.0
+    ln = math.hypot(lx, lz)
+    lx, lz = lx / ln, lz / ln
+    semn = np.where(fata, 1.0, -1.0)
+    cosl = semn * (nx * lx + nz * lz)
+    amb = 0.5
+    lum = np.clip((amb + (1 - amb) * np.clip(cosl, 0, 1)) / (amb + (1 - amb) * lz), 0, 1.12)
+    wn = np.clip(w / lat, 0, 1)
+    lum = lum * (1 - 0.2 * arc * np.exp(-wn / 0.06))  # umbra din cotor, doar cât foaia e ridicată
+    alfa_col = np.clip((lat - w) / 2.5, 0, 1) * are
+
+    # pe verticală: rândul se scalează după adâncimea coloanei
+    y = rand.Y + H / 2
+    yy = cy + (y - cy) * ((f - col_z) / f)[None, :]
+    valid = are[None, :] & (yy >= 0) & (yy <= H - 1)
+    alfa = alfa_col[None, :] * valid
+    mx = np.broadcast_to(np.where(fata, xs + w, xs - w).astype(np.float32)[None, :], (H, W))
+    my = np.where(valid, yy, 0).astype(np.float32)
+    pa = cv2.remap(a, np.ascontiguousarray(mx), my, cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT101)
+    pb = cv2.remap(b, np.ascontiguousarray(mx), my, cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT101)
+    pagina = np.where(fata[None, :, None], pa, pb) * lum[None, :, None]
+
+    # dedesubt: în stânga încă A, în dreapta B descoperit; umbra foii ridicate lângă cotor
+    x = rand.X + W / 2
+    out = np.where((x < xs)[..., None], a, b)
+    raza = 0.15 * lat + 0.5 * lat * abs(math.cos(th0))
+    if th0 < math.pi / 2:
+        umbra = 0.45 * arc * np.exp(-np.clip(x - xs, 0, None) / raza) * (x >= xs)
+    else:
+        umbra = 0.45 * arc * np.exp(-np.clip(xs - x, 0, None) / raza) * (x < xs)
+    out = out * (1 - umbra)[..., None]
+    k = alfa[..., None].astype(np.float32)
+    return np.clip(out * (1 - k) + pagina * k, 0, 1)
+
+
 def tranzitie(rand: Randator, A: Plan, B: Plan, tA: float, tB: float, u: float, tz: dict, fps: int) -> np.ndarray:
     """Cadrul de la progresul u (0..1) al trecerii de la A la B."""
     tip = tz.get("tip", "dizolvare")
     W = rand.W
     if tip == "taietura":
         return rand.cadru(A if u < 0.5 else B, tA if u < 0.5 else tB)
+    if tip == "pagina":
+        return rasfoire(rand, rand.cadru(A, tA), rand.cadru(B, tB), u, tz)
     if tip == "whip":
         # Panoramare foarte rapidă: A pleacă accelerând, B sosește frânând; schimbul
         # se face în vârful blurului de mișcare, unde ochiul nu mai distinge imaginea.

@@ -63,7 +63,23 @@ care au dat rezultate bune:
   - `zoom`: intrarea dintr-un plan larg într-un detaliu.
   - `lumina`: un accent cald, cel mult de două ori.
   - `taietura`: între două planuri statice înrudite.
+  - `pagina`: răsfoire. Pagina din dreapta se ridică în jurul cotorului, se curbează și
+    se întoarce, iar pe spatele ei apare imaginea următoare. Pune-o între două imagini
+    cu cartea deschisă și cotorul în centrul cadrului (sau dă-i `ax`), de exemplu de la
+    foaia de titlu la prima pagină dublă. Durează 1–1,1 s.
   - `dizolvare`: lentă, doar la bucla de la final. Mai multe dizolvări la rând fac din film un slideshow.
+- **Stilul „macro” (ca în videourile AI de tip Flow sau Veo, dar exact):** planuri scurte
+  de 1,5–2 s legate prin tăieturi seci. Camera e foarte aproape: `zoom` 1,5–2,3 pe un
+  detaliu (titlul copertei, desenul, o linie a timpului). Profunzimea de câmp e mică:
+  `dof` cu `punct` pe detaliul care trebuie să fie clar (autofocus pe ce se află acolo),
+  `plaja` 0,03–0,04, `putere` 12–16 și `cadere` 0,12. Raza de lumină de fereastră
+  (`raza`) trece peste copertă, iar finalul se retrage de pe un detaliu până la tot
+  produsul (`zoom` [2,3, 1,05] cu `curba: "iesire"` și `dof` care se deschide:
+  `putere` [16, 5]). Folosește-l când utilizatorul arată un asemenea video ca
+  referință. Mockup-urile la care coperta e frontală și mare (cartea sprijinită,
+  variantele verticale) dau macro-urile cele mai clare.
+- **Exactitate:** în film apar doar imaginile reale. Spre deosebire de un generator AI
+  de video, nu inventa pagini, texte sau unghiuri.
 - `centru` mută punctul de interes când zoom-ul ar tăia produsul. Ține-l aproape de
   0,5: fiecare abatere consumă rezerva de imagine și forțează zoom de siguranță.
 - **`pivot`** (adâncimea care stă pe loc) e implicit percentila 80, de obicei masa din
