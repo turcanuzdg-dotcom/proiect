@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react';
-import { hashPin, type CatalogPOS } from '@cafenea/shared';
+import { hashPin, LIMITE, type CatalogPOS } from '@cafenea/shared';
 import { cerereJson } from '../comun/http';
 import { formatOra } from '../comun/format';
 import type { StareSync } from './sincronizare';
 import type { BaristaActiv, ConfigTableta } from './stocare';
 
-export function Asociere({ onAsociata }: { onAsociata: (c: ConfigTableta) => void }) {
+export function Asociere({ onAsociata, reasociere = false, onRenunta }: { onAsociata: (c: ConfigTableta) => void; reasociere?: boolean; onRenunta?: () => void }) {
   const [cod, setCod] = useState('');
   const [eroare, setEroare] = useState('');
   const [lucreaza, setLucreaza] = useState(false);
@@ -27,10 +27,11 @@ export function Asociere({ onAsociata }: { onAsociata: (c: ConfigTableta) => voi
   return (
     <div className="ecran-centrat">
       <form className="card cutie-ingusta randuri-form" onSubmit={trimite}>
-        <h1>Asociați tableta</h1>
+        <h1>{reasociere ? 'Asociați din nou tableta' : 'Asociați tableta'}</h1>
         <p className="slab">
-          În panoul de administrare, la Setări → Tablete, creați o tabletă pentru această cafenea și introduceți aici codul
-          primit.
+          {reasociere
+            ? 'În panoul de administrare, la Setări → Tablete, cereți un cod nou pentru această tabletă. Vânzările netrimise rămân salvate și pleacă după asociere.'
+            : 'În panoul de administrare, la Setări → Tablete, creați o tabletă pentru această cafenea și introduceți aici codul primit.'}
         </p>
         <label className="camp">
           <span>Cod de asociere</span>
@@ -48,6 +49,11 @@ export function Asociere({ onAsociata }: { onAsociata: (c: ConfigTableta) => voi
         <button className="buton buton-mare" disabled={cod.length < 6 || lucreaza}>
           {lucreaza ? 'Se verifică…' : 'Asociază'}
         </button>
+        {onRenunta && (
+          <button type="button" className="buton-link" onClick={onRenunta}>
+            Înapoi
+          </button>
+        )}
       </form>
     </div>
   );
@@ -144,19 +150,26 @@ export function Autentificare(props: {
 export function DeschidereTura(props: {
   barista: BaristaActiv;
   locatie: string;
-  onDeschisa: (fond: number) => void;
+  onDeschisa: (fond: number) => Promise<void> | void;
   onSchimbaUtilizator: () => void;
 }) {
   const [fond, setFond] = useState('');
+  const [lucreaza, setLucreaza] = useState(false);
   const valoare = Number(fond.replace(',', '.'));
-  const valid = fond !== '' && Number.isFinite(valoare) && valoare >= 0;
+  const valid = fond !== '' && Number.isFinite(valoare) && valoare >= 0 && valoare <= LIMITE.bani;
   return (
     <div className="ecran-centrat">
       <form
         className="card cutie-ingusta randuri-form"
-        onSubmit={(e) => {
+        onSubmit={async (e) => {
           e.preventDefault();
-          if (valid) props.onDeschisa(Math.round(valoare * 100) / 100);
+          if (!valid || lucreaza) return;
+          setLucreaza(true);
+          try {
+            await props.onDeschisa(Math.round(valoare * 100) / 100);
+          } finally {
+            setLucreaza(false);
+          }
         }}
       >
         <div>
@@ -170,8 +183,8 @@ export function DeschidereTura(props: {
           <input className="intrare-mare" inputMode="decimal" value={fond} onChange={(e) => setFond(e.target.value)} autoFocus placeholder="0" />
         </label>
         <p className="slab mic">Numărați banii din sertar. Dacă suma diferă de cea lăsată la tura trecută, administratorul va fi anunțat.</p>
-        <button className="buton buton-mare" disabled={!valid}>
-          Deschide tura
+        <button className="buton buton-mare" disabled={!valid || lucreaza}>
+          {lucreaza ? 'Se deschide…' : 'Deschide tura'}
         </button>
         <button type="button" className="buton-link" onClick={props.onSchimbaUtilizator}>
           Nu sunteți {props.barista.nume}? Schimbați utilizatorul

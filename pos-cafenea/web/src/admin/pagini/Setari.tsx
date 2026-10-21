@@ -140,6 +140,7 @@ interface Utilizator {
   locatie: string | null;
   activ: boolean;
   are_pin: boolean;
+  are_parola: boolean;
 }
 
 function TabUtilizatori() {
@@ -219,7 +220,7 @@ function FormularUtilizator(props: { utilizator: Utilizator | null; onInchide: (
     if (pin && !/^\d{4,6}$/.test(pin)) return setEroare('PIN-ul are 4–6 cifre');
     if (rol === 'barista' && !u && !pin) return setEroare('Barista are nevoie de un PIN ca să intre pe tabletă');
     if (rol === 'admin' && !login.trim()) return setEroare('Administratorul are nevoie de un nume de utilizator');
-    if (rol === 'admin' && !u && parola.length < 8) return setEroare('Parola are cel puțin 8 caractere');
+    if (rol === 'admin' && !u?.are_parola && parola.length < 8) return setEroare('Administratorul are nevoie de o parolă de cel puțin 8 caractere');
     if (parola && parola.length < 8) return setEroare('Parola are cel puțin 8 caractere');
     try {
       const corp = {
@@ -283,7 +284,7 @@ function FormularUtilizator(props: { utilizator: Utilizator | null; onInchide: (
               <input value={login} onChange={(e) => setLogin(e.target.value)} autoComplete="off" />
             </label>
             <label className="camp">
-              <span>Parola {u ? '(gol = rămâne cea veche)' : ''}</span>
+              <span>Parola {u?.are_parola ? '(gol = rămâne cea veche)' : ''}</span>
               <input type="password" value={parola} onChange={(e) => setParola(e.target.value)} autoComplete="new-password" placeholder="cel puțin 8 caractere" />
             </label>
           </div>

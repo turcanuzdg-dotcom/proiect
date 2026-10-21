@@ -125,8 +125,12 @@ export function Vanzare() {
           linii: locala.linii.map((l) => ({ nume: l.nume + l.modificatori.map((m) => ` + ${m.nume}`).join(''), cantitate: l.cantitate, pret_unitar: l.total / l.cantitate, total: l.total })),
         })
         .catch((e: Error) => ({ ok: false, mesaj: e.message }));
-      if (r.ok) await stocare.salveazaComanda({ ...locala, bon_tiparit: true });
-      else app.anunta(`Vânzarea e salvată, dar bonul nu s-a tipărit: ${r.mesaj ?? 'imprimanta nu răspunde'}. Retipăriți din Istoric.`, true);
+      if (r.ok) await stocare.marcheazaBonTiparit(comandaId);
+      else {
+        const rest = metoda === 'numerar' && locala.rest != null ? `Rest: ${formatLei(locala.rest)}. ` : '';
+        app.anunta(`${rest}Vânzarea e salvată, dar bonul NU s-a tipărit (${r.mesaj ?? 'imprimanta nu răspunde'}). Tipăriți-l din Istoric.`, true);
+        return;
+      }
     }
     if (metoda === 'numerar' && locala.rest != null) app.anunta(`Rest: ${formatLei(locala.rest)}`);
     else if (metoda === 'card') app.anunta('Plată cu cardul acceptată');

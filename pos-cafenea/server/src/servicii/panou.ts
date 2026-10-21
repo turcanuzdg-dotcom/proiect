@@ -23,16 +23,19 @@ export async function panou(db: Db, deAzi: string) {
             (t.declarat_doze - t.scriptic_doze) AS dif_doze,
             (t.declarat_anulari - t.scriptic_anulari) AS dif_anulari,
             (t.declarat_casari - t.scriptic_casari) AS dif_casari,
-            (t.fond_initial - t.scriptic_fond) AS dif_fond
+            CASE WHEN EXISTS (SELECT 1 FROM miscari_bani mb WHERE mb.tura_id = t.id AND mb.tip = 'fond_initial') THEN NULL
+                 ELSE (t.fond_initial - t.scriptic_fond) END AS dif_fond
        FROM ture t JOIN locatii l ON l.id = t.locatie_id LEFT JOIN utilizatori u ON u.id = t.utilizator_id
       WHERE t.are_discrepante AND t.verificata_la IS NULL
       ORDER BY t.deschisa_la DESC LIMIT 50`,
   );
   const subPrag = await db.query(
-    `SELECT l.nume AS locatie, a.nume, a.um, a.prag_minim, s.stoc
-       FROM (SELECT locatie_id, articol_id, SUM(cantitate) AS stoc FROM miscari_stoc GROUP BY 1, 2) s
-       JOIN articole a ON a.id = s.articol_id JOIN locatii l ON l.id = s.locatie_id
-      WHERE a.activ AND a.prag_minim > 0 AND s.stoc < a.prag_minim AND l.activ
+    `SELECT l.nume AS locatie, a.nume, a.um, a.prag_minim, COALESCE(s.stoc, 0)::numeric AS stoc
+       FROM articole a
+       CROSS JOIN locatii l
+       LEFT JOIN (SELECT locatie_id, articol_id, SUM(cantitate) AS stoc FROM miscari_stoc GROUP BY 1, 2) s
+         ON s.articol_id = a.id AND s.locatie_id = l.id
+      WHERE a.activ AND a.prag_minim > 0 AND l.activ AND l.tip = 'punct' AND COALESCE(s.stoc, 0) < a.prag_minim
       ORDER BY l.nume, a.nume LIMIT 100`,
   );
   const eroriSync = (await db.query<{ n: number }>(`SELECT COUNT(*)::int AS n FROM evenimente_sync WHERE stare = 'eroare'`))[0].n;

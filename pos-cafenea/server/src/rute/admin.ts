@@ -65,8 +65,8 @@ const schemaLocatie = z.object({ nume, tip: z.enum(['depozit', 'punct']), activ:
 /** API-ul panoului de administrare. Autentificare: sesiunea adminului. */
 export async function ruteAdmin(app: FastifyInstance, db: Db, doarAdmin: preHandlerAsyncHookHandler) {
   app.post('/api/auth/login', async (req) => {
-    const { login, parola } = z.object({ login: z.string().min(1), parola: z.string().min(1) }).parse(req.body);
-    return acces.autentificare(db, login, parola);
+    const { login, parola } = z.object({ login: z.string().min(1).max(60), parola: z.string().min(1).max(200) }).parse(req.body);
+    return acces.autentificare(db, login, parola, req.ip);
   });
 
   app.register(async (a) => {
@@ -75,8 +75,7 @@ export async function ruteAdmin(app: FastifyInstance, db: Db, doarAdmin: preHand
 
     a.get('/api/auth/eu', async (req) => req.utilizator);
     a.post('/api/auth/logout', async (req) => {
-      const token = req.headers.authorization?.slice(7) ?? (req.query as { token?: string }).token;
-      if (token) await acces.iesire(db, token);
+      await acces.iesire(db, req.headers.authorization!.slice(7));
       return { ok: true };
     });
 
@@ -92,7 +91,7 @@ export async function ruteAdmin(app: FastifyInstance, db: Db, doarAdmin: preHand
       return r;
     });
     a.put('/api/utilizatori/:id', async (req) => {
-      const r = await acces.salveazaUtilizator(db, schemaUtilizator.parse(req.body), idNum.parse(req.params).id);
+      const r = await acces.salveazaUtilizator(db, schemaUtilizator.parse(req.body), idNum.parse(req.params).id, req.headers.authorization!.slice(7));
       anunta('catalog');
       return r;
     });

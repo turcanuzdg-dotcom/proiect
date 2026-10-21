@@ -5,7 +5,7 @@ import { ZodError } from 'zod';
 import type { Db } from './db';
 import { EroareUtilizator } from './erori';
 import { magistrala, type Notificare } from './magistrala';
-import { dispozitivDinToken, utilizatorDinToken, type DispozitivAutentificat, type UtilizatorAutentificat } from './servicii/acces';
+import { creeazaBilet, detinatorBilet, dispozitivDinToken, utilizatorDinToken, type DispozitivAutentificat, type UtilizatorAutentificat } from './servicii/acces';
 import { ruteAdmin } from './rute/admin';
 import { rutePOS } from './rute/pos';
 
@@ -23,15 +23,19 @@ export interface OptiuniApp {
   jurnal?: boolean;
 }
 
+/** Tokenul vine doar din antet: în URL ar ajunge în jurnalele serverului și ale proxy-ului. */
 function tokenDin(req: FastifyRequest): string | null {
   const h = req.headers.authorization;
-  if (h?.startsWith('Bearer ')) return h.slice(7);
-  const q = (req.query as Record<string, unknown> | undefined)?.token;
-  return typeof q === 'string' ? q : null;
+  return h?.startsWith('Bearer ') ? h.slice(7) : null;
 }
 
 export async function construiesteApp({ db, dirWeb, jurnal = false }: OptiuniApp) {
-  const app = Fastify({ logger: jurnal, bodyLimit: 5 * 1024 * 1024 });
+  const app = Fastify({
+    // În jurnal, adresa fără parametri: acolo pot ajunge bilete și coduri.
+    logger: jurnal ? { serializers: { req: (r) => ({ method: r.method, url: r.url.split('?')[0], ip: r.ip }) } } : false,
+    bodyLimit: 5 * 1024 * 1024,
+    trustProxy: true,
+  });
 
   app.setErrorHandler((err, _req, reply) => {
     if (err instanceof ZodError) {
@@ -62,11 +66,19 @@ export async function construiesteApp({ db, dirWeb, jurnal = false }: OptiuniApp
   app.get('/api/sanatate', async () => ({ ok: true, ora: new Date().toISOString() }));
 
   // Notificări în timp real: panoul și tabletele își reîncarcă datele când se schimbă ceva.
-  app.get('/api/flux', async (req, reply) => {
+  // EventSource nu poate trimite antete, deci întâi se cere un bilet scurt, apoi se deschide fluxul cu el.
+  app.post('/api/flux/bilet', async (req, reply) => {
     const token = tokenDin(req);
     const u = token ? await utilizatorDinToken(db, token) : null;
     const d = !u && token ? await dispozitivDinToken(db, token) : null;
     if (!u && !d) return reply.status(401).send({ eroare: 'Autentificare necesară' });
+    return { bilet: creeazaBilet(u ? { utilizator: u } : { dispozitiv: d! }) };
+  });
+  app.get('/api/flux', async (req, reply) => {
+    const bilet = (req.query as { bilet?: string }).bilet;
+    const detinator = typeof bilet === 'string' ? detinatorBilet(bilet) : null;
+    if (!detinator) return reply.status(401).send({ eroare: 'Bilet lipsă sau expirat' });
+    const d = detinator.dispozitiv ?? null;
     reply.hijack();
     const res = reply.raw;
     res.writeHead(200, {

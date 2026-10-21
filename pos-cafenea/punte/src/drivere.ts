@@ -36,6 +36,8 @@ export interface ImprimantaFiscala {
   readonly nume: string;
   bon(b: Bon): Promise<void>;
   retur(b: Bon): Promise<void>;
+  /** Copie nefiscală a unui bon deja emis (clientul a pierdut bonul); nu e un bon fiscal nou. */
+  duplicat(b: Bon): Promise<void>;
   raportZ(): Promise<void>;
 }
 
@@ -64,6 +66,10 @@ export class ImprimantaSimulata implements ImprimantaFiscala {
   async retur(b: Bon) {
     this.tiparite.push({ tip: 'retur', bon: b });
     console.log(`[imprimantă] RETUR #${b.nr} ${b.total.toFixed(2)} lei`);
+  }
+  async duplicat(b: Bon) {
+    this.tiparite.push({ tip: 'duplicat', bon: b });
+    console.log(`[imprimantă] DUPLICAT (nefiscal) #${b.nr}`);
   }
   async raportZ() {
     this.tiparite.push({ tip: 'raport_z' });

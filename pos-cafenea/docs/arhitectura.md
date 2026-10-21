@@ -59,6 +59,19 @@ flowchart LR
   offline) și servește la atribuirea vânzărilor, nu ca protecție puternică.
 - **Același cod de bază de date peste tot**: PostgreSQL în producție, PGlite în dezvoltare și teste.
   Toate testele trec pe amândouă.
+- **Evenimentele care ajung târziu nu strică numărările deja făcute.** O vânzare offline sincronizată
+  după finalizarea unei inventarieri era deja cuprinsă în cantitatea numărată: se compensează pe
+  inventariere, la momentul numărării. La fel, o încasare în numerar ajunsă după închiderea turei
+  corectează numărarea turei respective (scripticul și semnalarea), nu lasă o lipsă falsă pe tura
+  următoare. Comenzile ajunse într-o tură închisă refac cifrele scriptice ale acelei ture.
+- **Vânzările se raportează la data vânzării, iar o comandă anulată nu mai e vânzare.** Dacă anularea
+  vine într-o altă perioadă decât vânzarea (rar: retururile se fac în aceeași tură), raportul de vânzări
+  al perioadei vechi scade, iar restituirea apare în registrul de bani la data ei. Raportul de pierderi
+  arată anulările la data anulării.
+- **Securitate pe măsura unei cafenele, nu a unei bănci.** Tokenul de sesiune circulă doar în antet
+  (fluxul de notificări folosește bilete de un minut), loginul are pauze după încercări greșite,
+  schimbarea parolei închide celelalte sesiuni, tableta poate declara doar bariste din locația ei, iar
+  puntea de echipamente cere un secret și verifică originea paginii.
 
 ## Limitări cunoscute (de rezolvat în etapele următoare)
 
@@ -67,6 +80,10 @@ flowchart LR
 - La o plată cu cardul care expiră (terminalul nu răspunde), reîncercarea poate duce la dublă debitare
   dacă terminalul a aprobat totuși; protocoalele ECR au de obicei o comandă „ultima tranzacție”, care
   se va folosi în driver.
+- Un eveniment respins de server pentru format invalid nu poate fi corectat din panou; se marchează
+  rezolvat, iar operațiunea se reface manual. Tableta verifică aceleași limite înainte de a salva, deci
+  cazul apare doar la date corupte.
+- Operațiunile de casă introduse din panou (depuneri, alimentări) au data introducerii, nu una aleasă.
 - Inventarierea cere internet (scripticul vine de pe server). Vânzarea merge în continuare offline.
 - Momentul vânzării vine de la ceasul tabletei; tabletele trebuie să aibă ora setată automat.
 - Același preț în toate locațiile; fără reduceri, carduri de fidelitate sau mese/comenzi deschise.

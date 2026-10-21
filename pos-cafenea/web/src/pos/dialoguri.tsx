@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { ETICHETE_MOTIVE, MOTIVE_CASARE, formatLei, type ModificatorCatalog, type MotivCasare, type ProdusCatalog } from '@cafenea/shared';
+import { ETICHETE_MOTIVE, LIMITE, MOTIVE_CASARE, formatLei, type ModificatorCatalog, type MotivCasare, type ProdusCatalog } from '@cafenea/shared';
+import { creeazaEchipamente } from './echipamente';
 import { formatDataOra, formatOra } from '../comun/format';
 import { Modal } from '../comun/Modal';
 import { useAplicatie } from './context';
@@ -67,7 +68,7 @@ export function PlataNumerar({ total, onConfirma, onInchide }: { total: number; 
   const [lucreaza, setLucreaza] = useState(false);
   const valoare = primit === '' ? total : numar(primit);
   const rest = Math.round((valoare - total) * 100) / 100;
-  const valid = Number.isFinite(valoare) && rest >= 0;
+  const valid = Number.isFinite(valoare) && rest >= 0 && valoare <= LIMITE.bani;
   const bancnote = [50, 100, 200, 500, 1000].filter((b) => b > total).slice(0, 4);
   return (
     <Modal
@@ -104,7 +105,7 @@ export function PlataNumerar({ total, onConfirma, onInchide }: { total: number; 
           ))}
         </div>
         <div className={`suma-mare rest${valid ? '' : ' insuficient'}`}>
-          <span className="slab">{valid ? 'Rest de dat' : 'Suma primită e mai mică decât totalul'}</span>
+          <span className="slab">{valid ? 'Rest de dat' : valoare > LIMITE.bani ? 'Suma primită e prea mare' : 'Suma primită e mai mică decât totalul'}</span>
           <strong>{valid ? formatLei(rest) : '—'}</strong>
         </div>
       </div>
@@ -224,6 +225,7 @@ export function Istoric({ onInchide }: { onInchide: () => void }) {
   const [comenzi, setComenzi] = useState<stocare.ComandaLocala[] | null>(null);
   const [selectata, setSelectata] = useState<stocare.ComandaLocala | null>(null);
   const [anulare, setAnulare] = useState(false);
+  const [ocupat, setOcupat] = useState(false);
   const reincarca = () => stocare.comenziTura(app.tura.id).then(setComenzi);
   useEffect(() => {
     void reincarca();
@@ -242,29 +244,48 @@ export function Istoric({ onInchide }: { onInchide: () => void }) {
       />
     );
 
+  // Tipărirea fiscală se face o singură dată; după aceea se poate da doar o copie nefiscală.
+  const tipareste = async (c: stocare.ComandaLocala) => {
+    if (ocupat) return;
+    setOcupat(true);
+    const fiscal = !c.bon_tiparit;
+    const r = await (fiscal ? app.echipamente.tiparesteBon(bonDin(c)) : app.echipamente.tiparesteDuplicat(bonDin(c))).catch((e: Error) => ({ ok: false, mesaj: e.message }));
+    if (r.ok) {
+      if (fiscal) await stocare.marcheazaBonTiparit(c.comanda_id);
+      app.anunta(fiscal ? 'Bonul fiscal a fost tipărit' : 'Copia bonului a fost tipărită');
+      const curenta = await stocare.citesteComanda(c.comanda_id);
+      if (curenta) setSelectata(curenta);
+      await reincarca();
+    } else app.anunta(`Imprimanta: ${r.mesaj ?? 'eroare'}`, true);
+    setOcupat(false);
+  };
+
+  const incepeAnularea = async (c: stocare.ComandaLocala) => {
+    const curenta = await stocare.citesteComanda(c.comanda_id);
+    if (!curenta || curenta.stare !== 'finalizata') {
+      app.anunta('Comanda a fost deja anulată', true);
+      if (curenta) setSelectata(curenta);
+      await reincarca();
+      return;
+    }
+    setSelectata(curenta);
+    setAnulare(true);
+  };
+
   if (selectata)
     return (
       <Modal
         titlu={`Bon #${selectata.nr} · ${formatOra(selectata.la)}`}
-        onInchide={() => setSelectata(null)}
+        onInchide={ocupat ? undefined : () => setSelectata(null)}
         subsol={
           selectata.stare === 'finalizata' && (
             <>
               {selectata.metoda !== 'casare' && (
-                <button
-                  className="buton-secundar"
-                  onClick={async () => {
-                    const r = await app.echipamente.tiparesteBon(bonDin(selectata)).catch((e: Error) => ({ ok: false, mesaj: e.message }));
-                    if (r.ok) {
-                      await stocare.salveazaComanda({ ...selectata, bon_tiparit: true });
-                      app.anunta('Bonul a fost retipărit');
-                    } else app.anunta(`Imprimanta: ${r.mesaj ?? 'eroare'}`, true);
-                  }}
-                >
-                  Retipărește bonul
+                <button className="buton-secundar" disabled={ocupat} onClick={() => tipareste(selectata)}>
+                  {selectata.bon_tiparit ? 'Copie bon (nefiscală)' : 'Tipărește bonul fiscal'}
                 </button>
               )}
-              <button className="buton-pericol" onClick={() => setAnulare(true)}>
+              <button className="buton-pericol" disabled={ocupat} onClick={() => incepeAnularea(selectata)}>
                 {selectata.metoda === 'casare' ? 'Anulează casarea' : 'Anulează / retur'}
               </button>
             </>
@@ -375,9 +396,16 @@ function Anulare({ comanda, onInapoi, onGata }: { comanda: stocare.ComandaLocala
   const valid = !!textMotiv && preparat !== null;
 
   const confirma = async () => {
+    if (lucreaza) return;
     setLucreaza(true);
     setEroare('');
-    // Banii se dau înapoi înainte de a înregistra anularea: pe card, prin terminal.
+    const curenta = await stocare.citesteComanda(comanda.comanda_id);
+    if (!curenta || curenta.stare !== 'finalizata') {
+      app.anunta('Comanda a fost deja anulată', true);
+      onGata();
+      return;
+    }
+    // Pe card, banii se dau înapoi prin terminal înainte de a înregistra anularea.
     if (comanda.metoda === 'card') {
       const r = await app.echipamente.returCard(comanda.total, comanda.card_autorizare, comanda.comanda_id).catch((e: Error) => ({ aprobat: false, mesaj: e.message }));
       if (!r.aprobat) {
@@ -386,10 +414,8 @@ function Anulare({ comanda, onInapoi, onGata }: { comanda: stocare.ComandaLocala
         return;
       }
     }
-    if (comanda.metoda !== 'casare') {
-      const r = await app.echipamente.tiparesteRetur(bonDin(comanda)).catch((e: Error) => ({ ok: false, mesaj: e.message }));
-      if (!r.ok) app.anunta(`Bonul de retur nu s-a tipărit: ${r.mesaj ?? ''}`, true);
-    }
+    // Anularea se înregistrează imediat după restituire, înainte de tipărire: o imprimantă
+    // care nu răspunde nu poate lăsa un retur bancar făcut fără urmă în sistem.
     const ev = app.eveniment('comanda_anulata', {
       comanda_id: comanda.comanda_id,
       tura_id: app.tura.id,
@@ -397,7 +423,12 @@ function Anulare({ comanda, onInapoi, onGata }: { comanda: stocare.ComandaLocala
       motiv: textMotiv,
       restituie_stoc: !preparat,
     });
-    await app.inregistreaza(ev, { ...comanda, stare: 'anulata', anulata_la: ev.la, motiv_anulare: textMotiv, stoc_restituit: !preparat });
+    await app.inregistreaza(ev, { ...curenta, stare: 'anulata', anulata_la: ev.la, motiv_anulare: textMotiv, stoc_restituit: !preparat });
+    // Bon de retur doar pentru un bon fiscal emis; altfel n-ar avea ce storna.
+    if (comanda.metoda !== 'casare' && curenta.bon_tiparit) {
+      const r = await app.echipamente.tiparesteRetur(bonDin(comanda)).catch((e: Error) => ({ ok: false, mesaj: e.message }));
+      if (!r.ok) app.anunta(`Anulat, dar bonul de retur nu s-a tipărit: ${r.mesaj ?? ''}`, true);
+    }
     app.anunta(comanda.metoda === 'numerar' ? `Anulat. Dați clientului ${formatLei(comanda.total)}` : 'Comanda a fost anulată');
     onGata();
   };
@@ -405,10 +436,10 @@ function Anulare({ comanda, onInapoi, onGata }: { comanda: stocare.ComandaLocala
   return (
     <Modal
       titlu={`Anulare bon #${comanda.nr}`}
-      onInchide={onInapoi}
+      onInchide={lucreaza ? undefined : onInapoi}
       subsol={
         <>
-          <button className="buton-secundar" onClick={onInapoi}>Înapoi</button>
+          <button className="buton-secundar" disabled={lucreaza} onClick={onInapoi}>Înapoi</button>
           <button className="buton-pericol" disabled={!valid || lucreaza} onClick={confirma}>
             {lucreaza ? 'Se procesează…' : comanda.metoda === 'casare' ? 'Anulează casarea' : `Anulează și restituie ${formatLei(comanda.total)}`}
           </button>
@@ -451,17 +482,20 @@ export function PlataMarunta({ onInchide }: { onInchide: () => void }) {
   const app = useAplicatie();
   const [suma, setSuma] = useState('');
   const [descriere, setDescriere] = useState('');
+  const [lucreaza, setLucreaza] = useState(false);
   const v = numar(suma);
-  const valid = v > 0 && descriere.trim().length > 1;
+  const valid = v > 0 && v <= LIMITE.bani && descriere.trim().length > 1;
   return (
     <Modal
       titlu="Plată mărunță din casă"
-      onInchide={onInchide}
+      onInchide={lucreaza ? undefined : onInchide}
       subsol={
         <button
           className="buton buton-mare lat"
-          disabled={!valid}
+          disabled={!valid || lucreaza}
           onClick={async () => {
+            if (lucreaza) return;
+            setLucreaza(true);
             await app.inregistreaza(app.eveniment('plata_marunta', { tura_id: app.tura.id, utilizator_id: app.barista.id, suma: Math.round(v * 100) / 100, descriere: descriere.trim() }));
             app.anunta(`Plată de ${formatLei(v)} înregistrată`);
             onInchide();
@@ -478,7 +512,7 @@ export function PlataMarunta({ onInchide }: { onInchide: () => void }) {
         </label>
         <label className="camp">
           <span>Pentru ce</span>
-          <input value={descriere} onChange={(e) => setDescriere(e.target.value)} maxLength={200} placeholder="de ex. detergent, șervețele" />
+          <input value={descriere} onChange={(e) => setDescriere(e.target.value)} maxLength={LIMITE.text} placeholder="de ex. detergent, șervețele" />
         </label>
         <p className="slab mic">Păstrați bonul de la magazin pentru administrator.</p>
       </div>
@@ -496,7 +530,11 @@ export function InchidereTura({ onInchide }: { onInchide: () => void }) {
   const [gata, setGata] = useState<string | null>(null);
   const camp = (k: keyof typeof v) => ({ value: v[k], onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => setV({ ...v, [k]: e.target.value }) });
   const valori = { doze: numar(v.doze), numerar: numar(v.numerar), card: numar(v.card), anulari: numar(v.anulari), casari: numar(v.casari) };
-  const valid = Object.values(valori).every((x) => Number.isFinite(x) && x >= 0) && Number.isInteger(valori.anulari) && Number.isInteger(valori.casari);
+  const valid =
+    Object.values(valori).every((x) => Number.isFinite(x) && x >= 0) &&
+    Number.isInteger(valori.anulari) && Number.isInteger(valori.casari) &&
+    valori.doze <= LIMITE.doze && valori.numerar <= LIMITE.bani && valori.card <= LIMITE.bani &&
+    valori.anulari <= LIMITE.bucati && valori.casari <= LIMITE.bucati;
 
   if (gata)
     return (
@@ -607,7 +645,8 @@ export function Setari({ onInchide }: { onInchide: () => void }) {
               await app.reincarcaEchipamente();
               setTest('Se verifică…');
               try {
-                const s = await app.echipamente.verifica();
+                // Instanța nouă, nu cea din contextul de dinainte de salvare.
+                const s = await creeazaEchipamente(cfg).verifica();
                 setTest(`Terminal: ${s.terminal} · Imprimantă: ${s.imprimanta}`);
               } catch (e) {
                 setTest(`Nu răspunde: ${(e as Error).message}`);
@@ -642,10 +681,16 @@ export function Setari({ onInchide }: { onInchide: () => void }) {
           </div>
         </div>
         {cfg.tip === 'punte' ? (
-          <label className="camp">
-            <span>Adresa punții</span>
-            <input value={cfg.url} onChange={(e) => setCfg({ ...cfg, url: e.target.value })} />
-          </label>
+          <div className="doua-coloane">
+            <label className="camp">
+              <span>Adresa punții</span>
+              <input value={cfg.url} onChange={(e) => setCfg({ ...cfg, url: e.target.value })} />
+            </label>
+            <label className="camp">
+              <span>Secretul punții (afișat la pornirea ei)</span>
+              <input value={cfg.secret ?? ''} onChange={(e) => setCfg({ ...cfg, secret: e.target.value.trim() })} autoComplete="off" />
+            </label>
+          </div>
         ) : (
           <label className="bifa">
             <input type="checkbox" checked={!!cfg.simuleazaRefuz} onChange={(e) => setCfg({ ...cfg, simuleazaRefuz: e.target.checked })} />

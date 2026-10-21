@@ -1,5 +1,8 @@
 // Tipurile comune pentru server, POS și panoul de administrare.
 
+/** Limitele acceptate de server; tableta le verifică înainte de a salva, ca nimic să nu fie respins ulterior. */
+export const LIMITE = { bani: 1_000_000, doze: 100_000, cantitate_linie: 1000, bucati: 10_000, text: 500, observatii: 2000 } as const;
+
 export type UM = 'g' | 'ml' | 'buc';
 export type TipArticol = 'materie_prima' | 'ambalaj' | 'marfa';
 export type TipLocatie = 'depozit' | 'punct';

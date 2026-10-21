@@ -53,6 +53,8 @@ export interface ComandaLocala {
 export interface ConfigEchipamente {
   tip: 'simulator' | 'punte';
   url: string;
+  /** Secretul afișat de punte la pornire. */
+  secret?: string;
   simuleazaRefuz?: boolean;
 }
 
@@ -109,6 +111,8 @@ export async function urmatorulNumar(): Promise<number> {
 export interface OptiuniInregistrare {
   /** Închiderea turei: tura și barista dispar din memorie odată cu punerea evenimentului în coadă. */
   inchideTura?: boolean;
+  /** Deschiderea turei: tura se salvează odată cu evenimentul. */
+  deschideTura?: TuraLocala;
 }
 
 /**
@@ -125,6 +129,20 @@ export async function inregistreaza(ev: EvenimentPOS, comanda?: ComandaLocala, o
     await tx.objectStore('kv').delete('tura');
     await tx.objectStore('kv').delete('barista');
   }
+  if (opt.deschideTura) await tx.objectStore('kv').put(opt.deschideTura, 'tura');
+  await tx.done;
+}
+
+export async function citesteComanda(id: string): Promise<ComandaLocala | undefined> {
+  return (await db()).get('comenzi', id);
+}
+
+/** Doar bifa „bon tipărit”, pe înregistrarea curentă: nu suprascrie o anulare făcută între timp. */
+export async function marcheazaBonTiparit(id: string): Promise<void> {
+  const d = await db();
+  const tx = d.transaction('comenzi', 'readwrite');
+  const c = await tx.store.get(id);
+  if (c) await tx.store.put({ ...c, bon_tiparit: true });
   await tx.done;
 }
 

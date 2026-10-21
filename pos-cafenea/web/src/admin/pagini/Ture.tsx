@@ -160,7 +160,7 @@ function DetaliuTura({ id, onInchide }: { id: string; onInchide: () => void }) {
       onInchide={onInchide}
       lat
       subsol={
-        t && t.inchisa_la && !t.verificata_la ? (
+        t && (t.inchisa_la || t.are_discrepante) && !t.verificata_la ? (
           <>
             <input placeholder="Notă (de ex. „discutat cu barista, lipsa reținută din salariu”)" value={nota} onChange={(e) => setNota(e.target.value)} style={{ flex: 1, minWidth: 220 }} />
             <button type="button" className="buton" disabled={lucreaza} onClick={verifica}>

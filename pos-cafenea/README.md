@@ -40,7 +40,8 @@ PORT=3000 npm start
 - Serverul servește și interfața construită (`web/dist`), deci e un singur proces.
 - Trebuie pus în spatele unui **HTTPS** (de ex. Caddy sau nginx): fără HTTPS tableta nu poate instala
   aplicația și nu poate porni offline.
-- La prima pornire se creează contul de administrator din `ADMIN_LOGIN` / `ADMIN_PAROLA`.
+- La prima pornire se creează contul de administrator din `ADMIN_LOGIN` / `ADMIN_PAROLA`; cu
+  `DATABASE_URL` setat, serverul refuză să pornească fără `ADMIN_PAROLA` dacă nu există niciun admin.
 - Migrațiile bazei de date (`server/migrari/*.sql`) se aplică automat la pornire.
 
 ### Puntea de echipamente
@@ -52,8 +53,11 @@ Browserul tabletei nu poate vorbi direct cu terminalul băncii sau cu casa de ma
 ORIGINE=https://adresa-serverului npm start -w punte   # ascultă pe http://127.0.0.1:8099
 ```
 
-În POS: Meniu → Echipamente și tabletă → Punte locală. Până se scriu driverele pentru modelele reale,
-atât puntea cât și POS-ul au un simulator.
+La pornire puntea afișează un **secret** (din `PUNTE_SECRET` sau generat o dată și păstrat în
+`punte/.secret`). În POS: Meniu → Echipamente și tabletă → Punte locală, cu adresa și secretul.
+Fără secret, puntea refuză orice comandă, deci o altă pagină din browser sau un calculator din rețea
+nu pot porni plăți sau bonuri. Până se scriu driverele pentru modelele reale, atât puntea cât și
+POS-ul au un simulator.
 
 ## Teste
 

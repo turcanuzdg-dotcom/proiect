@@ -34,6 +34,8 @@ export interface Echipamente {
   returCard(suma: number, autorizare: string | null, referinta: string): Promise<RezultatCard>;
   tiparesteBon(bon: BonFiscal): Promise<RezultatTiparire>;
   tiparesteRetur(bon: BonFiscal): Promise<RezultatTiparire>;
+  /** Copie nefiscală a unui bon deja emis. */
+  tiparesteDuplicat(bon: BonFiscal): Promise<RezultatTiparire>;
   /** Raportul Z fiscal, la închiderea zilei. */
   raportZ(): Promise<RezultatTiparire>;
   verifica(): Promise<{ terminal: string; imprimanta: string }>;
@@ -62,6 +64,10 @@ class Simulator implements Echipamente {
     console.info('[simulator] bon de retur', bon);
     return { ok: true };
   }
+  async tiparesteDuplicat(bon: BonFiscal): Promise<RezultatTiparire> {
+    console.info('[simulator] duplicat', bon);
+    return { ok: true };
+  }
   async raportZ(): Promise<RezultatTiparire> {
     return { ok: true };
   }
@@ -73,11 +79,14 @@ class Simulator implements Echipamente {
 /** Puntea locală: un mic serviciu HTTP pe tabletă sau pe un calculator din cafenea. */
 class Punte implements Echipamente {
   readonly descriere: string;
-  constructor(private url: string) {
+  constructor(
+    private url: string,
+    private secret: string,
+  ) {
     this.descriere = `Punte locală ${url}`;
   }
   private cere<T>(cale: string, body?: unknown, timeout = 10_000) {
-    return cerereJson<T>(`${this.url.replace(/\/$/, '')}${cale}`, { body, timeout });
+    return cerereJson<T>(`${this.url.replace(/\/$/, '')}${cale}`, { body, timeout, method: body === undefined ? 'GET' : 'POST', headers: { 'X-Punte-Token': this.secret } });
   }
   // Plata așteaptă clientul la terminal; terminalele anulează singure după ~60 s.
   platesteCard(suma: number, referinta: string) {
@@ -92,6 +101,9 @@ class Punte implements Echipamente {
   tiparesteRetur(bon: BonFiscal) {
     return this.cere<RezultatTiparire>('/imprimanta/retur', bon, 30_000);
   }
+  tiparesteDuplicat(bon: BonFiscal) {
+    return this.cere<RezultatTiparire>('/imprimanta/duplicat', bon, 30_000);
+  }
   raportZ() {
     return this.cere<RezultatTiparire>('/imprimanta/raport-z', {}, 60_000);
   }
@@ -101,6 +113,6 @@ class Punte implements Echipamente {
 }
 
 export function creeazaEchipamente(c: ConfigEchipamente | undefined): Echipamente {
-  if (c?.tip === 'punte' && c.url) return new Punte(c.url);
+  if (c?.tip === 'punte' && c.url) return new Punte(c.url, c.secret ?? '');
   return new Simulator(c?.simuleazaRefuz);
 }

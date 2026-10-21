@@ -3,7 +3,7 @@ import { z } from 'zod';
 import type { Db } from '../db';
 import { EroareNegasit } from '../erori';
 import { magistrala } from '../magistrala';
-import { asociazaDispozitiv } from '../servicii/acces';
+import { asociazaDispozitiv, utilizatorPermisTabletei } from '../servicii/acces';
 import { catalogPOS } from '../servicii/catalog';
 import { creeazaInventariere, finalizeazaInventariere, raportInventariere, salveazaNumaratori } from '../servicii/inventar';
 import { proceseazaSync } from '../servicii/sync';
@@ -38,6 +38,7 @@ export async function rutePOS(app: FastifyInstance, db: Db, doarDispozitiv: preH
 
     p.post('/api/pos/inventarieri', async (req) => {
       const { utilizator_id } = z.object({ utilizator_id: z.number().int().positive().nullish() }).parse(req.body ?? {});
+      if (utilizator_id) await utilizatorPermisTabletei(db, utilizator_id, req.dispozitiv!.locatie_id);
       const { id } = await creeazaInventariere(db, { locatie_id: req.dispozitiv!.locatie_id, utilizator_id, dispozitiv_id: req.dispozitiv!.id });
       return raportInventariere(db, id);
     });

@@ -4,7 +4,7 @@ import { ImprimantaSimulata, TerminalSimulat } from './drivere';
 import { creeazaPunte } from './server';
 
 const imprimanta = new ImprimantaSimulata();
-const server = creeazaPunte(new TerminalSimulat(), imprimanta);
+const server = creeazaPunte(new TerminalSimulat(), imprimanta, { secret: 'secret-test', origine: 'https://pos.exemplu.md' });
 let baza = '';
 beforeAll(async () => {
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
@@ -12,8 +12,8 @@ beforeAll(async () => {
 });
 afterAll(() => new Promise<void>((r) => server.close(() => r())));
 
-const post = async (cale: string, body: unknown) =>
-  (await fetch(baza + cale, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })).json();
+const antete = { 'Content-Type': 'application/json', 'X-Punte-Token': 'secret-test', Origin: 'https://pos.exemplu.md' };
+const post = async (cale: string, body: unknown) => (await fetch(baza + cale, { method: 'POST', headers: antete, body: JSON.stringify(body) })).json();
 
 describe('puntea de echipamente', () => {
   it('aprobă plata pe terminal și tipărește bonul', async () => {
@@ -24,9 +24,13 @@ describe('puntea de echipamente', () => {
     expect(imprimanta.tiparite.at(-1)?.tip).toBe('bon');
   });
 
-  it('refuză cererile care nu sunt JSON (un formular de pe altă pagină)', async () => {
-    const r = await fetch(`${baza}/imprimanta/bon`, { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: '{}' });
-    expect(r.status).toBe(415);
+  it('refuză cererile fără secret, de pe altă origine sau care nu sunt JSON', async () => {
+    const corp = JSON.stringify({ referinta: 'x', nr: 2, linii: [], total: 1, metoda: 'card' });
+    expect((await fetch(`${baza}/imprimanta/bon`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: corp })).status).toBe(401);
+    expect((await fetch(`${baza}/imprimanta/bon`, { method: 'POST', headers: { ...antete, Origin: 'https://alt-site.md' }, body: corp })).status).toBe(403);
+    // 'text/plain; charset=application/json' trece de un simplu `includes` și nu cere cerere preliminară.
+    expect((await fetch(`${baza}/imprimanta/bon`, { method: 'POST', headers: { ...antete, 'Content-Type': 'text/plain; charset=application/json' }, body: corp })).status).toBe(415);
+    expect(imprimanta.tiparite.filter((x) => x.bon?.nr === 2)).toHaveLength(0);
   });
 
   it('răspunde la cererea preliminară CORS cu acces la rețeaua privată', async () => {

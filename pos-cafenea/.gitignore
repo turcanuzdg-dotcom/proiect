@@ -3,3 +3,4 @@ dist/
 date/
 *.log
 .env
+punte/.secret

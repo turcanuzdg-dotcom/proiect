@@ -1,18 +1,21 @@
 import { z } from 'zod';
-import { MOTIVE_CASARE, type EvenimentPOS, type RaspunsSync } from '@cafenea/shared';
+import { LIMITE, MOTIVE_CASARE, type EvenimentPOS, type RaspunsSync } from '@cafenea/shared';
 import type { Db } from '../db';
 import { EroareNegasit, EroareUtilizator } from '../erori';
 import { magistrala, type Notificare } from '../magistrala';
+import { utilizatorPermisTabletei } from './acces';
 import { catalogPOS } from './catalog';
 import { deschideTura, inchideTura, plataMarunta } from './ture';
 import { anuleazaComanda, inregistreazaComanda, type ContextPOS } from './vanzari';
 
 const id = z.string().uuid();
-const bani = z.number().finite().min(0).max(1_000_000);
+const bani = z.number().finite().min(0).max(LIMITE.bani);
+// Fără NUL: PostgreSQL îl refuză atât în text, cât și în jsonb.
+const text = (max: number) => z.string().max(max).regex(/^[^\u0000]*$/, 'caractere invalide');
 
 const linie = z.object({
   produs_id: z.number().int().positive(),
-  cantitate: z.number().int().positive().max(1000),
+  cantitate: z.number().int().positive().max(LIMITE.cantitate_linie),
   pret_unitar: bani,
   modificatori: z.array(z.object({ id: z.number().int().positive(), pret: bani })).max(20),
 });
@@ -30,11 +33,11 @@ const schemaEveniment = z.discriminatedUnion('tip', [
       nr: z.number().int().nonnegative(),
       metoda: z.enum(['numerar', 'card', 'casare']),
       motiv_casare: z.enum(MOTIVE_CASARE).nullish(),
-      nota: z.string().max(500).nullish(),
+      nota: text(LIMITE.text).nullish(),
       linii: z.array(linie).min(1).max(200),
       total: bani,
       primit: bani.nullish(),
-      card_autorizare: z.string().max(100).nullish(),
+      card_autorizare: text(100).nullish(),
     }),
   }),
   z.object({
@@ -44,7 +47,7 @@ const schemaEveniment = z.discriminatedUnion('tip', [
       comanda_id: id,
       tura_id: id,
       utilizator_id: z.number().int().positive(),
-      motiv: z.string().min(1).max(500),
+      motiv: text(LIMITE.text).min(1),
       restituie_stoc: z.boolean(),
     }),
   }),
@@ -59,12 +62,12 @@ const schemaEveniment = z.discriminatedUnion('tip', [
     date: z.object({
       tura_id: id,
       utilizator_id: z.number().int().positive(),
-      doze: z.number().finite().min(0).max(100_000),
+      doze: z.number().finite().min(0).max(LIMITE.doze),
       numerar: bani,
       card: bani,
-      anulari: z.number().int().min(0).max(10_000),
-      casari: z.number().int().min(0).max(10_000),
-      observatii: z.string().max(2000).nullish(),
+      anulari: z.number().int().min(0).max(LIMITE.bucati),
+      casari: z.number().int().min(0).max(LIMITE.bucati),
+      observatii: text(LIMITE.observatii).nullish(),
     }),
   }),
   z.object({
@@ -74,7 +77,7 @@ const schemaEveniment = z.discriminatedUnion('tip', [
       tura_id: id,
       utilizator_id: z.number().int().positive(),
       suma: bani,
-      descriere: z.string().min(1).max(500),
+      descriere: text(LIMITE.text).min(1),
     }),
   }),
 ]);
@@ -99,10 +102,6 @@ async function aplica(db: Db, ctx: ContextPOS, ev: EvenimentPOS): Promise<Notifi
   }
 }
 
-async function utilizatorValid(db: Db, utilizatorId: number) {
-  const r = await db.query('SELECT 1 FROM utilizatori WHERE id = $1', [utilizatorId]);
-  if (!r.length) throw new EroareUtilizator(`Utilizatorul ${utilizatorId} nu există`);
-}
 
 /**
  * Primește coada offline a unei tablete. Fiecare eveniment se aplică în propria tranzacție,
@@ -135,7 +134,7 @@ export async function proceseazaSync(db: Db, ctx: ContextPOS, evenimente: unknow
     }
     try {
       const tipuri = await db.tx(async (t) => {
-        await utilizatorValid(t, ev.date.utilizator_id);
+        await utilizatorPermisTabletei(t, ev.date.utilizator_id, ctx.locatie_id);
         const rez = await aplica(t, ctx, ev);
         await t.query(
           `INSERT INTO evenimente_sync (id, dispozitiv_id, locatie_id, tip, la, stare, payload) VALUES ($1, $2, $3, $4, $5, 'aplicat', $6)`,
@@ -175,12 +174,20 @@ function eroarePermanenta(e: unknown): boolean {
   return typeof cod === 'string' && /^2[23]/.test(cod);
 }
 
+/** Evenimentul respins se păstrează orice ar conține: altfel ar bloca pentru totdeauna coada tabletei. */
 async function salveazaEroare(db: Db, ctx: ContextPOS, evId: string, tip: string, la: string | null, eroare: string, payload: unknown) {
-  await db.query(
-    `INSERT INTO evenimente_sync (id, dispozitiv_id, locatie_id, tip, la, stare, eroare, payload)
-     VALUES ($1, $2, $3, $4, $5, 'eroare', $6, $7) ON CONFLICT (id) DO NOTHING`,
-    [evId, ctx.dispozitiv_id, ctx.locatie_id, String(tip).slice(0, 50), la, eroare, JSON.stringify(payload)],
-  );
+  const curat = (s: string) => s.replace(/\u0000/g, '');
+  const insereaza = (p: string, e: string) =>
+    db.query(
+      `INSERT INTO evenimente_sync (id, dispozitiv_id, locatie_id, tip, la, stare, eroare, payload)
+       VALUES ($1, $2, $3, $4, $5, 'eroare', $6, $7) ON CONFLICT (id) DO NOTHING`,
+      [evId, ctx.dispozitiv_id, ctx.locatie_id, curat(String(tip)).slice(0, 50), la, curat(e), p],
+    );
+  try {
+    await insereaza(JSON.stringify(payload).replace(/\\u0000/g, ''), eroare);
+  } catch (e) {
+    await insereaza(JSON.stringify({ id: evId, tip, nesalvabil: true }), `${eroare} (conținutul nu a putut fi păstrat: ${(e as Error).message})`);
+  }
 }
 
 export function listaEroriSync(db: Db) {
@@ -201,7 +208,10 @@ export async function reaplicaEveniment(db: Db, evId: string) {
   const ctx: ContextPOS = { locatie_id: e.locatie_id, dispozitiv_id: e.dispozitiv_id };
   try {
     await db.tx(async (t) => {
-      await utilizatorValid(t, ev.date.utilizator_id);
+      // Două apăsări pe „Reaplică” în același timp: a doua așteaptă și găsește evenimentul aplicat.
+      const stare = (await t.query<{ stare: string }>('SELECT stare FROM evenimente_sync WHERE id = $1 FOR UPDATE', [evId]))[0];
+      if (stare?.stare !== 'eroare') throw new EroareUtilizator('Evenimentul a fost deja aplicat sau rezolvat');
+      await utilizatorPermisTabletei(t, ev.date.utilizator_id, ctx.locatie_id);
       await aplica(t, ctx, ev);
       await t.query(`UPDATE evenimente_sync SET stare = 'aplicat', eroare = NULL WHERE id = $1`, [evId]);
     });

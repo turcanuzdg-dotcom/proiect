@@ -27,8 +27,8 @@ export async function salveazaArticol(db: Db, d: DateArticol, id?: number) {
     return r[0];
   }
   const r = await db.query(
-    `INSERT INTO articole (nume, um, tip, prag_minim) VALUES ($1, $2, $3, $4) RETURNING *`,
-    [d.nume, d.um, d.tip, d.prag_minim ?? 0],
+    `INSERT INTO articole (nume, um, tip, prag_minim, activ) VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+    [d.nume, d.um, d.tip, d.prag_minim ?? 0, d.activ ?? true],
   );
   return r[0];
 }
@@ -97,8 +97,8 @@ export async function salveazaProdus(db: Db, d: DateProdus, id?: number) {
       await t.query('DELETE FROM produse_modificatori WHERE produs_id = $1', [id]);
     } else {
       const r = await t.query(
-        `INSERT INTO produse (nume, categorie_id, pret, doze_cafea, ordine) VALUES ($1, $2, $3, $4, $5) RETURNING id`,
-        [d.nume, d.categorie_id, d.pret, d.doze_cafea ?? 0, d.ordine ?? 0],
+        `INSERT INTO produse (nume, categorie_id, pret, doze_cafea, ordine, activ) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+        [d.nume, d.categorie_id, d.pret, d.doze_cafea ?? 0, d.ordine ?? 0, d.activ ?? true],
       );
       produsId = r[0].id;
     }
@@ -151,9 +151,9 @@ export async function salveazaModificator(db: Db, d: DateModificator, id?: numbe
       await t.query('DELETE FROM modificatori_linii WHERE modificator_id = $1', [id]);
     } else {
       const r = await t.query(
-        `INSERT INTO modificatori (nume, pret, doze_cafea, inlocuieste_articol_id, inlocuitor_articol_id)
-         VALUES ($1, $2, $3, $4, $5) RETURNING id`,
-        [d.nume, d.pret, d.doze_cafea ?? 0, inl, cu],
+        `INSERT INTO modificatori (nume, pret, doze_cafea, inlocuieste_articol_id, inlocuitor_articol_id, activ)
+         VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+        [d.nume, d.pret, d.doze_cafea ?? 0, inl, cu, d.activ ?? true],
       );
       modId = r[0].id;
     }

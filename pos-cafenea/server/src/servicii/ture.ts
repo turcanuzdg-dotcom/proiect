@@ -66,26 +66,29 @@ export async function deschideTura(db: Db, ctx: ContextPOS, la: string, d: DateT
   const fond = rotunjeste(d.fond_initial);
   const dif = rotunjeste(fond - scriptic);
   const tol = await citesteTolerante(db);
+  // Prima tură a unei case goale stabilește fondul de pornire. Dacă registrul avea deja bani
+  // (o alimentare din panou), o diferență e o diferență și la prima tură.
+  const fondDePornire = anterioare.length === 0 && scriptic === 0;
+  const discrepanta = !fondDePornire && Math.abs(dif) > tol.numerar;
 
   if (existenta) {
     await db.query(
       `UPDATE ture SET utilizator_id = $2, deschisa_la = LEAST(deschisa_la, $3::timestamptz), fond_initial = $4, scriptic_fond = $5,
               creata_automat = false, are_discrepante = are_discrepante OR $6
         WHERE id = $1`,
-      [d.tura_id, d.utilizator_id, la, fond, scriptic, anterioare.length > 0 && Math.abs(dif) > tol.numerar],
+      [d.tura_id, d.utilizator_id, la, fond, scriptic, discrepanta],
     );
   } else {
     await db.query(
       `INSERT INTO ture (id, locatie_id, dispozitiv_id, utilizator_id, deschisa_la, fond_initial, scriptic_fond, are_discrepante)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-      [d.tura_id, ctx.locatie_id, ctx.dispozitiv_id, d.utilizator_id, la, fond, scriptic, anterioare.length > 0 && Math.abs(dif) > tol.numerar],
+      [d.tura_id, ctx.locatie_id, ctx.dispozitiv_id, d.utilizator_id, la, fond, scriptic, discrepanta],
     );
   }
-  // Prima tură a locației stabilește fondul de pornire; nu e o discrepanță.
-  if (anterioare.length) {
-    await diferentaCasa(db, ctx.locatie_id, d.tura_id, dif, 'diferenta_casa', 'Diferență la deschiderea turei', d.utilizator_id, la);
-  } else {
+  if (fondDePornire) {
     await diferentaCasa(db, ctx.locatie_id, d.tura_id, dif, 'fond_initial', 'Fondul de pornire al casei', d.utilizator_id, la);
+  } else {
+    await diferentaCasa(db, ctx.locatie_id, d.tura_id, dif, 'diferenta_casa', 'Diferență la deschiderea turei', d.utilizator_id, la);
   }
 }
 
@@ -136,8 +139,8 @@ export async function reevalueazaDiscrepante(db: Db, turaId: string): Promise<vo
   const t = (await db.query<any>('SELECT * FROM ture WHERE id = $1', [turaId]))[0];
   if (!t) return;
   const tol = await citesteTolerante(db);
-  const primaTura = !(await db.query('SELECT 1 FROM ture WHERE locatie_id = $1 AND id <> $2 AND deschisa_la < $3 LIMIT 1', [t.locatie_id, turaId, t.deschisa_la])).length;
-  let d = !primaTura && t.scriptic_fond != null && Math.abs(t.fond_initial - t.scriptic_fond) > tol.numerar;
+  const fondDePornire = (await db.query(`SELECT 1 FROM miscari_bani WHERE tura_id = $1 AND tip = 'fond_initial'`, [turaId])).length > 0;
+  let d = !fondDePornire && t.scriptic_fond != null && Math.abs(t.fond_initial - t.scriptic_fond) > tol.numerar;
   if (t.inchisa_la) {
     d =
       d ||
@@ -249,7 +252,8 @@ const SELECT_TURA = `
          (t.declarat_doze - t.scriptic_doze) AS dif_doze,
          (t.declarat_anulari - t.scriptic_anulari) AS dif_anulari,
          (t.declarat_casari - t.scriptic_casari) AS dif_casari,
-         (t.fond_initial - t.scriptic_fond) AS dif_fond,
+         CASE WHEN EXISTS (SELECT 1 FROM miscari_bani mb WHERE mb.tura_id = t.id AND mb.tip = 'fond_initial') THEN NULL
+              ELSE (t.fond_initial - t.scriptic_fond) END AS dif_fond,
          (SELECT COALESCE(SUM(c.total), 0) FROM comenzi c WHERE c.tura_id = t.id AND c.stare = 'finalizata') AS vanzari,
          (SELECT COUNT(*) FROM comenzi c WHERE c.tura_id = t.id) AS nr_comenzi
     FROM ture t

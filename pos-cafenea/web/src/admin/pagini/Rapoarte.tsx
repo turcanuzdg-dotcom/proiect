@@ -417,7 +417,8 @@ interface Pierderi {
   casari: { motiv: MotivCasare; eticheta: string; produse: number; valoare_cost: number; valoare_vanzare: number }[];
   casari_produse: { nume: string; motiv: MotivCasare; cantitate: number; valoare_cost: number }[];
   anulari: { restituit: boolean; comenzi: number; valoare_vanzare: number; valoare_cost: number }[];
-  inventar: { nume: string; um: string; cantitate: number; valoare: number }[];
+  casari_anulate: number;
+  inventar: { locatie: string; nume: string; um: string; cantitate: number; valoare: number }[];
   casa: { minus: number; plus: number };
   total_pierderi_cost: number;
 }
@@ -557,6 +558,14 @@ function PierderiContinut(props: {
                   <td className="num">{formatLei(props.cuRestituire?.valoare_vanzare ?? 0)}</td>
                   <td className="num slab">0,00 lei</td>
                 </tr>
+                {d.casari_anulate > 0 && (
+                  <tr>
+                    <td>Casări anulate (fără bani)</td>
+                    <td className="num">{d.casari_anulate}</td>
+                    <td className="num slab">—</td>
+                    <td className="num slab">—</td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>
@@ -571,6 +580,7 @@ function PierderiContinut(props: {
               <table className="tabel">
                 <thead>
                   <tr>
+                    <th>Gestiunea</th>
                     <th>Articol</th>
                     <th className="num">Cantitate</th>
                     <th className="num">Valoare</th>
@@ -578,7 +588,8 @@ function PierderiContinut(props: {
                 </thead>
                 <tbody>
                   {d.inventar.map((x) => (
-                    <tr key={x.nume}>
+                    <tr key={`${x.locatie}:${x.nume}`}>
+                      <td>{x.locatie}</td>
                       <td>{x.nume}</td>
                       <td className={`num ${x.cantitate < 0 ? 'minus' : 'plus'}`}>{formatCantitate(x.cantitate, x.um)}</td>
                       <td className={`num ${x.valoare < 0 ? 'minus' : 'plus'}`}>{formatLei(x.valoare)}</td>

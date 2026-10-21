@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CatalogPOS, EvenimentPOS } from '@cafenea/shared';
 import { cerereJson } from '../comun/http';
 import { uuid } from '../comun/uuid';
+import { actualizare } from './actualizare';
 import { ContextAplicatie, type Aplicatie } from './context';
 import { creeazaEchipamente, type Echipamente } from './echipamente';
 import { Asociere, Autentificare, DeschidereTura } from './ecrane';
@@ -24,6 +25,8 @@ export function App() {
   const [echipamente, setEchipamente] = useState<Echipamente>(() => creeazaEchipamente(undefined));
   const [sync, setSync] = useState<StareSync>({ online: navigator.onLine, inAsteptare: 0, ultimaSincronizare: null, respinse: 0, dezasociata: false });
   const [toast, setToast] = useState<{ mesaj: string; pericol?: boolean } | null>(null);
+  const [reasociere, setReasociere] = useState(false);
+  const [actualizareGata, setActualizareGata] = useState(actualizare.disponibila);
   const sincronizator = useRef<Sincronizator | null>(null);
   const catalogRef = useRef<CatalogPOS | undefined>(undefined);
   catalogRef.current = catalog;
@@ -86,9 +89,17 @@ export function App() {
     };
   }, [config, incarcaCatalog]);
 
+  // Versiunea nouă se aplică doar pe ecranul de PIN, când nu e nimic în lucru.
+  useEffect(() => actualizare.aboneaza(() => setActualizareGata(true)), []);
+  useEffect(() => {
+    if (actualizareGata && faza.tip === 'gata' && !barista) actualizare.aplica();
+  }, [actualizareGata, faza, barista]);
+
   const asociata = async (cfg: stocare.ConfigTableta) => {
+    // Re-asocierea păstrează coada de evenimente netrimise: pleacă cu tokenul nou.
     await stocare.scrie('config', cfg);
     setConfig(cfg);
+    setReasociere(false);
     try {
       await incarcaCatalog(cfg.token);
       setFaza({ tip: 'gata' });
@@ -125,6 +136,7 @@ export function App() {
   let ecran;
   if (faza.tip === 'incarcare') ecran = <div className="ecran-centrat slab">Se pornește…</div>;
   else if (faza.tip === 'asociere') ecran = <Asociere onAsociata={asociata} />;
+  else if (reasociere) ecran = <Asociere onAsociata={asociata} reasociere onRenunta={() => setReasociere(false)} />;
   else if (faza.tip === 'fara_catalog')
     ecran = (
       <div className="ecran-centrat">
@@ -164,11 +176,15 @@ export function App() {
         }}
         onDeschisa={async (fond) => {
           const t: stocare.TuraLocala = { id: uuid(), deschisa_la: new Date().toISOString(), fond_initial: fond, deschisa_de: barista.id };
-          await stocare.curataComenziVechi();
-          await stocare.inregistreaza({ id: uuid(), tip: 'tura_deschisa', la: t.deschisa_la, date: { tura_id: t.id, utilizator_id: barista.id, fond_initial: fond } });
-          await stocare.scrie('tura', t);
+          // Evenimentul și tura locală, în aceeași tranzacție.
+          await stocare.inregistreaza(
+            { id: uuid(), tip: 'tura_deschisa', la: t.deschisa_la, date: { tura_id: t.id, utilizator_id: barista.id, fond_initial: fond } },
+            undefined,
+            { deschideTura: t },
+          );
           setTura(t);
           sincronizator.current?.acum();
+          void stocare.curataComenziVechi();
         }}
       />
     );
@@ -182,10 +198,13 @@ export function App() {
   return (
     <>
       {ecran}
-      {sync.dezasociata && (
+      {sync.dezasociata && !reasociere && (
         <div className="banda-avertisment">
-          Serverul nu mai recunoaște această tabletă (a fost dezactivată sau re-asociată). Vânzările se păstrează local;
-          cereți administratorului un cod nou.
+          Serverul nu mai recunoaște această tabletă (a fost dezactivată sau i s-a dat un cod nou). Vânzările se păstrează
+          local și se trimit după re-asociere.
+          <button className="buton-secundar" onClick={() => setReasociere(true)}>
+            Asociază din nou
+          </button>
         </div>
       )}
       {toast && <div className={`toast${toast.pericol ? ' pericol' : ''}`} role="status">{toast.mesaj}</div>}

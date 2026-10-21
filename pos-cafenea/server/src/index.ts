@@ -15,6 +15,10 @@ const db = await deschideDb({
 // La prima pornire nu există niciun cont: se creează administratorul din variabilele de mediu.
 const admini = await db.query(`SELECT 1 FROM utilizatori WHERE rol = 'admin' LIMIT 1`);
 if (!admini.length) {
+  if (process.env.DATABASE_URL && !process.env.ADMIN_PAROLA) {
+    console.error('Baza de date nu are niciun administrator. În producție setați ADMIN_LOGIN și ADMIN_PAROLA la prima pornire.');
+    process.exit(1);
+  }
   const parola = process.env.ADMIN_PAROLA ?? 'schimba-ma';
   await salveazaUtilizator(db, { nume: 'Administrator', rol: 'admin', login: process.env.ADMIN_LOGIN ?? 'admin', parola });
   console.warn(`Cont de administrator creat: ${process.env.ADMIN_LOGIN ?? 'admin'} / ${process.env.ADMIN_PAROLA ? '(din ADMIN_PAROLA)' : parola} — schimbați parola.`);

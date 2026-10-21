@@ -34,20 +34,39 @@ export function FurnizorAdmin({ children }: { children: ReactNode }) {
   useEffect(reincarcaLocatii, [reincarcaLocatii]);
 
   // Notificări în timp real; mai multe evenimente apropiate produc o singură reîncărcare.
+  // Tokenul de sesiune nu intră în URL: se cere un bilet scurt, iar la cădere se cere altul.
   useEffect(() => {
-    const token = citesteToken();
-    if (!token || typeof EventSource === 'undefined') return;
-    const sursa = new EventSource(`/api/flux?token=${encodeURIComponent(token)}`);
+    if (!citesteToken() || typeof EventSource === 'undefined') return;
+    let sursa: EventSource | null = null;
     let timer = 0;
-    sursa.onopen = () => setLive(true);
-    sursa.onerror = () => setLive(false);
-    sursa.onmessage = () => {
-      window.clearTimeout(timer);
-      timer = window.setTimeout(() => setVersiune((v) => v + 1), 500);
+    let reconectare = 0;
+    let oprit = false;
+    const conecteaza = async () => {
+      try {
+        const { bilet } = await api.post<{ bilet: string }>('/api/flux/bilet');
+        if (oprit) return;
+        sursa = new EventSource(`/api/flux?bilet=${encodeURIComponent(bilet)}`);
+        sursa.onopen = () => setLive(true);
+        sursa.onmessage = () => {
+          window.clearTimeout(timer);
+          timer = window.setTimeout(() => setVersiune((v) => v + 1), 500);
+        };
+        sursa.onerror = () => {
+          setLive(false);
+          sursa?.close();
+          reconectare = window.setTimeout(conecteaza, 5000);
+        };
+      } catch {
+        setLive(false);
+        reconectare = window.setTimeout(conecteaza, 10_000);
+      }
     };
+    void conecteaza();
     return () => {
+      oprit = true;
       window.clearTimeout(timer);
-      sursa.close();
+      window.clearTimeout(reconectare);
+      sursa?.close();
     };
   }, []);
 

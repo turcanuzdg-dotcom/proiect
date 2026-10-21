@@ -159,15 +159,26 @@ export async function raportPierderi(db: Db, i: Interval) {
     `SELECT COALESCE(c.stoc_restituit, false) AS restituit, COUNT(DISTINCT c.id)::int AS comenzi,
             SUM(cl.total)::numeric AS valoare_vanzare, SUM(cl.cost)::numeric AS valoare_cost
        FROM comenzi c JOIN comenzi_linii cl ON cl.comanda_id = c.id
-      WHERE c.stare = 'anulata' AND c.anulata_la >= $1 AND c.anulata_la < $2 AND ($3::int IS NULL OR c.locatie_id = $3)
+      WHERE c.stare = 'anulata' AND c.metoda <> 'casare'
+        AND c.anulata_la >= $1 AND c.anulata_la < $2 AND ($3::int IS NULL OR c.locatie_id = $3)
       GROUP BY 1`,
     p,
   );
-  const inventar = await db.query<{ nume: string; um: UM; cantitate: number; valoare: number }>(
-    `SELECT a.nume, a.um, SUM(m.cantitate)::numeric AS cantitate, SUM(m.cantitate * m.cost_unitar)::numeric AS valoare
-       FROM miscari_stoc m JOIN articole a ON a.id = m.articol_id
+  // O casare anulată n-a mișcat bani: se numără separat, nu la „restituit clienților”.
+  const casariAnulate = (
+    await db.query<{ n: number }>(
+      `SELECT COUNT(*)::int AS n FROM comenzi c
+        WHERE c.stare = 'anulata' AND c.metoda = 'casare'
+          AND c.anulata_la >= $1 AND c.anulata_la < $2 AND ($3::int IS NULL OR c.locatie_id = $3)`,
+      p,
+    )
+  )[0].n;
+  // Pe locații: o lipsă într-o cafenea nu se compensează cu un plus al aceluiași articol în alta.
+  const inventar = await db.query<{ locatie: string; nume: string; um: UM; cantitate: number; valoare: number }>(
+    `SELECT l.nume AS locatie, a.nume, a.um, SUM(m.cantitate)::numeric AS cantitate, SUM(m.cantitate * m.cost_unitar)::numeric AS valoare
+       FROM miscari_stoc m JOIN articole a ON a.id = m.articol_id JOIN locatii l ON l.id = m.locatie_id
       WHERE m.tip = 'inventar' AND m.creata_la >= $1 AND m.creata_la < $2 AND ($3::int IS NULL OR m.locatie_id = $3)
-      GROUP BY a.id ORDER BY 4`,
+      GROUP BY l.id, a.id ORDER BY 5`,
     p,
   );
   const casa = await db.query<{ minus: number; plus: number }>(
@@ -185,6 +196,7 @@ export async function raportPierderi(db: Db, i: Interval) {
     casari: casari.map((x) => ({ ...x, eticheta: ETICHETE_MOTIVE[x.motiv] ?? x.motiv, valoare_cost: rotunjeste(x.valoare_cost), valoare_vanzare: rotunjeste(x.valoare_vanzare) })),
     casari_produse: casariProduse,
     anulari,
+    casari_anulate: casariAnulate,
     inventar: inventar.map((x) => ({ ...x, valoare: rotunjeste(x.valoare) })),
     casa: casa[0],
     total_pierderi_cost: rotunjeste(totalCasari + (anulareFaraRestituire?.valoare_cost ?? 0) + Math.abs(minusInventar)),

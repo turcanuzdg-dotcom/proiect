@@ -45,14 +45,17 @@ export function Inventar({ onInchide }: { onInchide: () => void }) {
   const [confirmare, setConfirmare] = useState(false);
   const deschisa = useRef<number | null>(null);
 
+  /** Eroarea rămâne afișată până la următoarea reușită; întoarce dacă a reușit. */
   const incarca = async (r?: Promise<Raport>) => {
     try {
-      setEroare('');
       const nou = await (r ?? cerereJson<Raport>('/api/pos/inventarieri', { token, body: { utilizator_id: app.barista.id } }));
       deschisa.current = nou.stare === 'deschisa' ? nou.id : null;
       setRaport(nou);
+      setEroare('');
+      return true;
     } catch (e) {
       setEroare((e as Error).message);
+      return false;
     }
   };
 
@@ -74,8 +77,8 @@ export function Inventar({ onInchide }: { onInchide: () => void }) {
   const salveaza = async () => {
     if (!raport || !deSalvat.length) return;
     setLucreaza(true);
-    await incarca(cerereJson<Raport>(`/api/pos/inventarieri/${raport.id}/linii`, { token, method: 'PUT', body: { linii: deSalvat } }));
-    setIntroduse({});
+    // Cantitățile tastate se păstrează dacă salvarea nu reușește (de ex. fără internet).
+    if (await incarca(cerereJson<Raport>(`/api/pos/inventarieri/${raport.id}/linii`, { token, method: 'PUT', body: { linii: deSalvat } }))) setIntroduse({});
     setLucreaza(false);
   };
 
@@ -100,7 +103,10 @@ export function Inventar({ onInchide }: { onInchide: () => void }) {
   return (
     <Modal
       titlu={finalizata ? 'Raport de inventariere' : 'Inventariere'}
-      onInchide={onInchide}
+      onInchide={() => {
+        if (deSalvat.length && !window.confirm('Aveți cantități nesalvate. Închideți fără să le salvați?')) return;
+        onInchide();
+      }}
       lat
       subsol={
         raport &&

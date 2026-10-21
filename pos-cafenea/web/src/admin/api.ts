@@ -1,16 +1,21 @@
 import { cerereJson, EroareHttp } from '../comun/http';
 
 const CHEIE_TOKEN = 'cafenea-admin-token';
+// Tokenul stă și în memorie: dacă browserul blochează localStorage, sesiunea ține cât e deschisă pagina.
+let tokenMemorie: string | null = null;
 
 export function citesteToken(): string | null {
+  if (tokenMemorie) return tokenMemorie;
   try {
-    return localStorage.getItem(CHEIE_TOKEN);
+    tokenMemorie = localStorage.getItem(CHEIE_TOKEN);
   } catch {
-    return null;
+    /* stocare blocată */
   }
+  return tokenMemorie;
 }
 
 export function salveazaToken(token: string | null) {
+  tokenMemorie = token;
   try {
     if (token) localStorage.setItem(CHEIE_TOKEN, token);
     else localStorage.removeItem(CHEIE_TOKEN);
