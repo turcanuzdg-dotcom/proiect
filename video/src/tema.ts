@@ -1,0 +1,68 @@
+import { loadFont } from "@remotion/fonts";
+import { createContext, useContext } from "react";
+import { Easing, staticFile, useVideoConfig } from "remotion";
+
+// Fonturile sunt locale (public/fonturi), cu subsetul latin-ext pentru ă, ș, ț.
+const LATIN =
+  "U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD";
+const LATIN_EXT =
+  "U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF";
+
+const incarca = (family: string, fisier: string) =>
+  Promise.all([
+    loadFont({
+      family,
+      url: staticFile(`fonturi/${fisier}-latin-wght-normal.woff2`),
+      weight: "100 900",
+      unicodeRange: LATIN,
+    }),
+    loadFont({
+      family,
+      url: staticFile(`fonturi/${fisier}-latin-ext-wght-normal.woff2`),
+      weight: "100 900",
+      unicodeRange: LATIN_EXT,
+    }),
+  ]);
+
+incarca("Unbounded", "unbounded");
+incarca("Inter", "inter");
+
+export const FONT_TITLU = "Unbounded, Inter, sans-serif";
+export const FONT_TEXT = "Inter, sans-serif";
+
+// Paleta implicită; proiectul o poate suprascrie prin `culori`.
+export const CULORI_IMPLICITE = {
+  fundal: "#0B0F14",
+  suprafata: "#141A22",
+  text: "#F5F7FA",
+  textSecundar: "#A9B4C2",
+  principala: "#2F7CF6",
+  accent: "#FFC23D",
+};
+
+export type Culori = typeof CULORI_IMPLICITE;
+
+export const CuloriContext = createContext<Culori>(CULORI_IMPLICITE);
+export const useCulori = () => useContext(CuloriContext);
+
+// Curbe de mișcare comune, ca toate scenele să „respire” la fel.
+export const EASE_IESIRE = Easing.bezier(0.16, 1, 0.3, 1);
+export const EASE_INTRARE_IESIRE = Easing.bezier(0.65, 0, 0.35, 1);
+
+/**
+ * Dimensiuni relative la format. `u` = 1px pe un cadru lat de 1920 (orizontal)
+ * sau de 1080 (vertical), ca textul să aibă aceeași greutate vizuală în ambele.
+ */
+export const useFormat = () => {
+  const { width, height } = useVideoConfig();
+  const vertical = height > width;
+  const u = vertical ? width / 1080 : width / 1920;
+  return {
+    vertical,
+    u,
+    latime: width,
+    inaltime: height,
+    margineX: (vertical ? 80 : 140) * u,
+    margineY: (vertical ? 140 : 100) * u,
+  };
+};

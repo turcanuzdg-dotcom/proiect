@@ -8,3 +8,8 @@ iesiri/*
 __pycache__/
 .pytest_cache/
 *.pyc
+
+# Video: fotografiile și randările reale NU intră în git.
+video/public/media/*
+!video/public/media/.gitkeep
+video/out/
