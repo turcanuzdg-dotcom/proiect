@@ -48,6 +48,7 @@ Scrie `video/out/proiect.json` (ignorat de git). Căile imaginilor sunt relative
 
 ```json
 {
+  "stil": "modern",
   "culori": { "principala": "#2F7CF6", "accent": "#FFC23D" },
   "muzica": "media/fundal.mp3",
   "scene": [
@@ -73,7 +74,7 @@ Scrie `video/out/proiect.json` (ignorat de git). Căile imaginilor sunt relative
 | `inainte-dupa` | `inainte`, `dupa`, `titlu?`, `etichetaInainte?`, `etichetaDupa?` (implicit ÎNAINTE / DUPĂ; de ex. „2023” / „2026”) | 6 s |
 | `cifre` | `cifre[1–4]` (`valoare`, `prefix?`, `sufix?`, `eticheta`), `titlu?` | 5,5 s |
 | `etape` | `etape[2–5]` (`data?`, `text`), `titlu?` | 7 s |
-| `final` | `titlu`, `text?`, `logouri?`, `contact?` | 5 s |
+| `final` | `titlu`, `text?`, `logouri?`, `contact?` (site, e-mail, telefon sau orice alt text, de ex. instituția: primește pictograma potrivită) | 5 s |
 
 Structura recomandată pentru 45–75 s: intro, 4–8 fotografii (cu o comparație
 înainte/după dacă există), cifre, etape, final. Pentru Reels: 15–30 s, mai puține scene.
@@ -86,10 +87,12 @@ unește-le într-o singură foaie, apoi deschide doar foaia:
 
 ```bash
 cd video
-npx remotion still Prezentare out/c1.png --props=out/proiect.json --frame=60 --scale=0.4 --log=error
-# ... câte un cadru la mijlocul fiecărei scene, apoi:
-convert out/c1.png out/c2.png out/c3.png +append out/foaie.png
+node scripts/foaie.mjs out/proiect.json Prezentare --scala=0.4            # out/foaie-Prezentare.jpg
+node scripts/foaie.mjs out/proiect.json PrezentareVerticala --scala=0.3   # out/foaie-PrezentareVerticala.jpg
 ```
+
+Scriptul randează câte un cadru din mijlocul fiecărei scene (cu `--tranzitii`, și din
+mijlocul fiecărei tranziții) dintr-un singur bundle, în ~20 s, și le pune pe o foaie.
 
 O singură scenă se poate încerca separat cu compozițiile `Scena` / `ScenaVerticala`
 (`--props='{"scena": {...}}'`). Verifică: textul încape și se citește peste fotografie,
@@ -109,8 +112,17 @@ Trimite MP4-ul cu `SendUserFile` (și foaia de cadre, dacă ajută). Ajustările
 
 ## Personalizare
 
+- **Identitatea vizuală a proiectului**: dacă există materiale de brand (broșură, logo,
+  mockup-uri), ia paleta din ele (eșantionează culorile din imagini cu Pillow) și
+  potrivește tipografia. Video-ul trebuie să arate ca o continuare a lor.
 - Culorile: `culori` în JSON (`principala`, `accent`, `fundal`, `text`, `textSecundar`,
-  `suprafata`). Fonturile (Unbounded, Inter, cu diacritice) sunt locale, în `public/fonturi/`.
+  `suprafata` și, opțional, `lumina` = a doua lumină difuză din fundal; implicit un turcoaz
+  rece, potrivit cu albastrul, dar nu cu paletele calde: acolo pune accentul).
+  Accentul apare în texte mici, deci trebuie să aibă contrast bun pe `fundal`.
+- Tipografia: `"stil": "modern"` (implicit, titluri în Unbounded) sau `"clasic"` (titluri
+  serif în Playfair Display, la grosimea 600, cu cifre aliniate), pentru patrimoniu,
+  istorie, carte, cultură. Textul mărunt rămâne în Inter. Fonturile sunt locale, în
+  `public/fonturi/`, cu diacritice.
 - Scenă nouă: tipul în `src/date/tipuri.ts`, componenta în `src/scene/`, cazul în
   `ScenaRandata` din `src/Prezentare.tsx`. Folosește `useFormat()` (merge în ambele
   formate), `useCulori()`, `TextAnimat`, `ImagineMiscare`, `Fundal`.
@@ -118,7 +130,13 @@ Trimite MP4-ul cu `SendUserFile` (și foaia de cadre, dacă ajută). Ajustările
   cortină cu muchie de accent, glisare cu paralaxă și o lumină caldă de film după intro.
   Granulația de film se pune o singură dată peste tot filmul (în `Prezentare.tsx`), nu în scene.
 - Textul se măsoară cu tabelele de glife din `src/componente/masuraText.ts` (nu cu
-  `measureText`); dacă schimbi fonturile, regenerează tabelele.
+  `measureText`): Unbounded 800, Playfair Display 600, Inter 500/600. Dacă adaugi un font
+  sau schimbi o grosime, regenerează tabelul cu fontTools (`instantiateVariableFont` la
+  grosimea folosită, apoi `hmtx` pentru caracterele din `CARACTERE`).
+- **Mockup-uri de carte sau de produs**: alege pentru 9:16 variantele verticale, dacă
+  există (o pagină dublă orizontală se taie în 9:16). Pentru intro, o imagine în care
+  produsul stă în dreapta (16:9) sau sus (9:16), ca titlul să nu se suprapună cu titlul
+  de pe copertă.
 - După modificări de cod: `npx tsc --noEmit && npx eslint src`.
 
 ## Reguli

@@ -4,16 +4,7 @@ import { ImagineMiscare } from "../componente/ImagineMiscare";
 import { incapePeRand, latimeEchilibrata, potrivesteTitlu } from "../componente/masuraText";
 import { TextAnimat } from "../componente/TextAnimat";
 import type { ScenaIntro } from "../date/tipuri";
-import {
-  EASE_IESIRE,
-  EASE_INTRARE_IESIRE,
-  FONT_TEXT,
-  FONT_TITLU,
-  inaltimeRandTitlu,
-  transparenta,
-  useCulori,
-  useFormat,
-} from "../tema";
+import { EASE_IESIRE, EASE_INTRARE_IESIRE, FONT_TEXT, FONT_TITLU, greutateTitlu, inaltimeRandTitlu, transparenta, useCulori, useFormat } from "../tema";
 
 // Ieșirea din întuneric: pornește imediat, dar se așază lent.
 const EASE_LUMINA = Easing.bezier(0.3, 0, 0.2, 1);
@@ -382,7 +373,7 @@ export const Intro: React.FC<{ scena: ScenaIntro }> = ({ scena }) => {
           durata={0.95 * Math.max(k, 0.7)}
           style={{
             fontFamily: FONT_TITLU,
-            fontWeight: 800,
+            fontWeight: greutateTitlu(800),
             fontSize: titlu.marime,
             lineHeight: inaltimeRand,
             letterSpacing: "-0.02em",

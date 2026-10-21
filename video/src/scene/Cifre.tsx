@@ -10,16 +10,7 @@ import { formateazaFinal, formateazaPartial } from "../componente/numere";
 import { Fundal } from "../componente/Fundal";
 import { TextAnimat } from "../componente/TextAnimat";
 import { type Cifra, type ScenaCifre, sfarsitUtil } from "../date/tipuri";
-import {
-  EASE_IESIRE,
-  EASE_INTRARE_IESIRE,
-  FONT_TEXT,
-  FONT_TITLU,
-  inaltimeRandTitlu,
-  transparenta,
-  useCulori,
-  useFormat,
-} from "../tema";
+import { CIFRE_TITLU, EASE_IESIRE, EASE_INTRARE_IESIRE, FONT_TEXT, FONT_TITLU, greutateTitlu, inaltimeRandTitlu, transparenta, useCulori, useFormat } from "../tema";
 
 // Sufixul (de ex. „ m²”, „ lei”) stă pe aceeași linie de bază, mai mic. Prefixul
 // („€”, „+”) e puțin mai mare și centrat optic pe înălțimea cifrelor, ca să nu
@@ -236,7 +227,7 @@ export const Cifre: React.FC<{ scena: ScenaCifre }> = ({ scena }) => {
               durata={0.9 * Math.max(k, 0.7)}
               style={{
                 fontFamily: FONT_TITLU,
-                fontWeight: 800,
+                fontWeight: greutateTitlu(800),
                 fontSize: titlu.marime,
                 lineHeight: inaltimeRand,
                 letterSpacing: "-0.02em",
@@ -313,7 +304,7 @@ export const Cifre: React.FC<{ scena: ScenaCifre }> = ({ scena }) => {
                           fontWeight: 600,
                           fontSize: marimeIndice,
                           letterSpacing: "0.12em",
-                          fontVariantNumeric: "tabular-nums",
+                          fontVariantNumeric: CIFRE_TITLU,
                           color: c.accent,
                           lineHeight: 1,
                           translate: `${-10 * u * (1 - antet)}px 0`,
@@ -381,10 +372,10 @@ export const Cifre: React.FC<{ scena: ScenaCifre }> = ({ scena }) => {
                         alignItems: "baseline",
                         whiteSpace: "nowrap",
                         fontFamily: FONT_TITLU,
-                        fontWeight: 800,
+                        fontWeight: greutateTitlu(800),
                         lineHeight: INALTIME_RAND_CIFRA,
                         letterSpacing: "-0.01em",
-                        fontVariantNumeric: "tabular-nums",
+                        fontVariantNumeric: CIFRE_TITLU,
                         fontFeatureSettings: '"tnum" 1',
                         color: c.text,
                         translate: `0 ${(1 - intrare) * 105}%`,
@@ -397,7 +388,7 @@ export const Cifre: React.FC<{ scena: ScenaCifre }> = ({ scena }) => {
                         <span
                           style={{
                             fontSize: `${SCARA_PREFIX}em`,
-                            fontWeight: 700,
+                            fontWeight: greutateTitlu(700),
                             letterSpacing: 0,
                             marginRight: `${SPATIU_UNITATE / SCARA_PREFIX}em`,
                             color: c.textSecundar,
@@ -420,7 +411,7 @@ export const Cifre: React.FC<{ scena: ScenaCifre }> = ({ scena }) => {
                         <span
                           style={{
                             fontSize: `${SCARA_UNITATE}em`,
-                            fontWeight: 700,
+                            fontWeight: greutateTitlu(700),
                             letterSpacing: 0,
                             marginLeft: `${SPATIU_UNITATE / SCARA_UNITATE}em`,
                             color: c.accent,

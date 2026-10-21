@@ -1,4 +1,4 @@
-import type { Culori } from "../tema";
+import type { Culori, Stil } from "../tema";
 
 // `imagine` = cale în public/ (de ex. "media/foto1.jpg"). `durata` în secunde.
 
@@ -74,6 +74,7 @@ export type Scena =
 
 export type Proiect = {
   culori?: Partial<Culori>;
+  stil?: Stil; // „modern” (implicit) sau „clasic” (titluri serif); vezi tema.ts
   muzica?: string; // cale în public/ sau URL http(s), opțional
   scene: Scena[];
   /** Completat automat (calculateMetadata): lungimea pistei muzicale, în secunde. */

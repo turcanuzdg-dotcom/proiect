@@ -1,6 +1,15 @@
 import { loadFont } from "@remotion/fonts";
 import { createContext, useContext } from "react";
-import { Easing, staticFile, useVideoConfig } from "remotion";
+import { Easing, getInputProps, staticFile, useVideoConfig } from "remotion";
+
+/**
+ * Stilul tipografic, ales din `stil` al proiectului (`--props`): „modern” =
+ * titluri în Unbounded, „clasic” = titluri serif în Playfair Display (pentru
+ * proiecte de patrimoniu, carte, istorie). Se citește o dată, la încărcare,
+ * fiindcă fontul și tabelele de măsurare din masuraText.ts depind de el.
+ */
+export type Stil = "modern" | "clasic";
+export const STIL: Stil = (getInputProps() as { stil?: string }).stil === "clasic" ? "clasic" : "modern";
 
 // Fonturile sunt locale (public/fonturi), cu subsetul latin-ext pentru ă, ș, ț.
 const LATIN =
@@ -24,11 +33,26 @@ const incarca = (family: string, fisier: string) =>
     }),
   ]);
 
-incarca("Unbounded", "unbounded");
+if (STIL === "clasic") {
+  incarca("Playfair Display", "playfair-display");
+} else {
+  incarca("Unbounded", "unbounded");
+}
 incarca("Inter", "inter");
 
-export const FONT_TITLU = "Unbounded, Inter, sans-serif";
+export const FONT_TITLU =
+  STIL === "clasic" ? "'Playfair Display', Georgia, serif" : "Unbounded, Inter, sans-serif";
 export const FONT_TEXT = "Inter, sans-serif";
+
+/**
+ * Grosimea titlurilor: Unbounded e gândit gros (700–800); serif-ul clasic arată
+ * elegant la 600, iar la 800 devine apăsat. Tabelele din masuraText.ts sunt
+ * măsurate exact pentru aceste grosimi.
+ */
+export const greutateTitlu = (modern: 700 | 800) => (STIL === "clasic" ? 600 : modern);
+
+/** Cifre aliniate pe aceeași linie: Playfair are implicit cifre „vechi”, de înălțimi diferite. */
+export const CIFRE_TITLU = "lining-nums tabular-nums";
 
 // Paleta implicită; proiectul o poate suprascrie prin `culori`.
 export const CULORI_IMPLICITE = {
@@ -40,7 +64,8 @@ export const CULORI_IMPLICITE = {
   accent: "#FFC23D",
 };
 
-export type Culori = typeof CULORI_IMPLICITE;
+// `lumina` (opțional): culoarea celei de-a doua lumini din fundal; implicit, un turcoaz rece derivat din `principala`.
+export type Culori = typeof CULORI_IMPLICITE & { lumina?: string };
 
 export const CuloriContext = createContext<Culori>(CULORI_IMPLICITE);
 export const useCulori = () => useContext(CuloriContext);

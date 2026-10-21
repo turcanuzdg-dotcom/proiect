@@ -1,3 +1,5 @@
+import { STIL } from "../tema";
+
 /**
  * Măsurarea textului fără DOM, comună tuturor scenelor.
  *
@@ -5,7 +7,8 @@
  * rezultatul; la primul cadru fonturile locale încă se pot încărca, iar
  * lățimile greșite ar rămâne în cache. Folosim avansul real al glifelor, în
  * miimi de em, extras o singură dată cu fontTools din fișierele woff2 din
- * public/fonturi: Unbounded 800 (sigur și pentru 700), Inter 500 și 600.
+ * public/fonturi: Unbounded 800 (sigur și pentru 700), Playfair Display 600
+ * (stilul „clasic”, cu cifrele `lnum`), Inter 500 și 600.
  * Rezultatul e determinist și identic la fiecare randare.
  *
  * Dacă se schimbă fonturile sau greutățile din tema.ts, tabelele de mai jos se
@@ -30,6 +33,10 @@ const UNBOUNDED_800 = tabel(
   "242,338,534,867,827,1321,961,291,410,410,542,620,316,377,314,472,935,536,850,850,880,817,867,769,905,867,339,340,620,620,620,722,1056,977,895,942,936,803,781,970,947,362,815,882,772,1255,983,970,825,971,863,857,829,884,951,1375,896,940,819,451,472,451,620,482,393,839,824,774,842,742,606,825,793,334,334,763,334,1226,805,801,824,824,569,767,619,792,788,1154,743,797,708,493,322,493,620,839,839,334,767,619,977,977,362,857,829,767,619,857,829,598,595,591,310,306,665,1216,320,902,769,769,545,591,487,878,742,742,801,792,839,803,620",
 );
 
+const PLAYFAIR_600 = tabel(
+  "239,280,346,626,557,733,877,202,310,310,484,578,268,487,264,370,637,379,525,551,547,521,591,495,580,591,282,293,604,639,604,491,882,655,655,700,758,625,585,724,786,364,352,695,603,909,716,775,622,775,677,569,652,686,655,947,672,612,599,314,370,314,531,591,291,511,578,493,592,505,345,545,602,308,287,574,303,899,608,559,593,578,459,457,352,597,501,781,530,514,474,324,243,324,662,511,511,308,457,352,655,655,364,569,652,457,352,569,652,462,444,449,250,255,592,884,274,825,547,546,346,328,319,621,505,505,559,597,511,625,499",
+);
+
 const INTER_500 = tabel(
   "267,304,494,639,646,993,653,313,369,369,521,667,303,462,303,370,646,415,616,627,656,603,630,571,629,630,303,315,667,667,667,527,982,709,657,733,722,603,589,748,745,272,575,688,565,913,756,767,642,769,648,646,653,740,709,1003,701,696,641,369,370,369,477,463,337,568,618,577,618,587,379,620,602,252,252,559,252,888,602,604,618,618,387,539,340,602,575,829,557,575,559,440,346,440,667,568,568,252,539,340,709,709,272,646,653,539,340,646,653,451,471,474,277,277,500,1000,303,910,608,608,448,455,457,672,587,587,604,602,568,603,667",
 );
@@ -41,13 +48,16 @@ const INTER_600 = tabel(
 export type FontMasura = "titlu" | "text" | "textSemibold";
 
 const TABELE: Record<FontMasura, { t: Map<string, number>; implicit: number }> = {
-  titlu: { t: UNBOUNDED_800, implicit: 0.9 },
+  titlu: STIL === "clasic" ? { t: PLAYFAIR_600, implicit: 0.65 } : { t: UNBOUNDED_800, implicit: 0.9 },
   text: { t: INTER_500, implicit: 0.65 },
   textSemibold: { t: INTER_600, implicit: 0.68 },
 };
 
-/** Avansul cifrelor tabulare din Unbounded (`tnum`), identic pentru 0–9. */
-export const CIFRA_TABULARA_EM = 0.78;
+/**
+ * Avansul cifrelor tabulare din Unbounded (`tnum`), identic pentru 0–9.
+ * Playfair nu are `tnum`: luăm cea mai lată cifră `lnum` (0), ca măsura să nu fie depășită.
+ */
+export const CIFRA_TABULARA_EM = STIL === "clasic" ? 0.637 : 0.78;
 
 /** Spațiul dintre cuvinte din TextAnimat, în em. */
 export const SPATIU_CUVINTE = 0.28;

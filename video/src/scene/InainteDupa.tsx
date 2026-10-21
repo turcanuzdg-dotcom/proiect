@@ -4,7 +4,7 @@ import { ImagineMiscare } from "../componente/ImagineMiscare";
 import { latimeEchilibrata, latimeEm, potrivesteTitlu } from "../componente/masuraText";
 import { TextAnimat } from "../componente/TextAnimat";
 import { sfarsitUtil, type ScenaInainteDupa } from "../date/tipuri";
-import { EASE_IESIRE, FONT_TEXT, FONT_TITLU, inaltimeRandTitlu, transparenta, useCulori, useFormat } from "../tema";
+import { EASE_IESIRE, FONT_TEXT, FONT_TITLU, greutateTitlu, inaltimeRandTitlu, transparenta, useCulori, useFormat } from "../tema";
 
 /*
  * Scena „înainte / după”.
@@ -445,7 +445,7 @@ export const InainteDupa: React.FC<{ scena: ScenaInainteDupa }> = ({ scena }) =>
             style={{
               maxWidth: latimeTitluEchilibrata,
               fontFamily: FONT_TITLU,
-              fontWeight: 800,
+              fontWeight: greutateTitlu(800),
               fontSize: asezare.marime,
               lineHeight: inaltimeRand,
               letterSpacing: "-0.02em",

@@ -11,7 +11,7 @@ import { type Directie, ImagineMiscare } from "../componente/ImagineMiscare";
 import { latimeEchilibrata, randuriText } from "../componente/masuraText";
 import { TextAnimat } from "../componente/TextAnimat";
 import type { ScenaFoto } from "../date/tipuri";
-import { EASE_IESIRE, FONT_TEXT, FONT_TITLU, inaltimeRandTitlu, sursa, useCulori, useFormat } from "../tema";
+import { EASE_IESIRE, FONT_TEXT, FONT_TITLU, greutateTitlu, inaltimeRandTitlu, sursa, useCulori, useFormat } from "../tema";
 
 /* ------------------------------------------------------------------ */
 /* Mișcarea camerei                                                    */
@@ -279,7 +279,7 @@ const Legenda: React.FC<{ titlu?: string; text?: string; k: number }> = ({ titlu
               style={{
                 maxWidth: titluAsezat.latime,
                 fontFamily: FONT_TITLU,
-                fontWeight: 700,
+                fontWeight: greutateTitlu(700),
                 fontSize: marime,
                 lineHeight: inaltimeRand,
                 letterSpacing: "-0.02em",

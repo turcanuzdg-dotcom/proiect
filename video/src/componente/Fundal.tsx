@@ -18,7 +18,7 @@ export const Fundal: React.FC = () => {
     extrapolateLeft: "clamp",
     extrapolateRight: "clamp",
   });
-  const secundara = `color-mix(in srgb, ${c.principala} 60%, #3FE0D0)`;
+  const secundara = c.lumina ?? `color-mix(in srgb, ${c.principala} 60%, #3FE0D0)`;
 
   return (
     <AbsoluteFill style={{ backgroundColor: c.fundal, overflow: "hidden" }}>

@@ -10,16 +10,7 @@ import { latimeEm, potrivesteTitlu, randuriText } from "../componente/masuraText
 import { Fundal } from "../componente/Fundal";
 import { TextAnimat } from "../componente/TextAnimat";
 import { type ScenaEtape, sfarsitUtil } from "../date/tipuri";
-import {
-  EASE_IESIRE,
-  EASE_INTRARE_IESIRE,
-  FONT_TEXT,
-  FONT_TITLU,
-  inaltimeRandTitlu,
-  transparenta,
-  useCulori,
-  useFormat,
-} from "../tema";
+import { CIFRE_TITLU, EASE_IESIRE, EASE_INTRARE_IESIRE, FONT_TEXT, FONT_TITLU, greutateTitlu, inaltimeRandTitlu, transparenta, useCulori, useFormat } from "../tema";
 
 const INALTIME_RAND_TEXT = 1.3;
 const INALTIME_RAND_DATA = 1.25;
@@ -471,11 +462,11 @@ export const Etape: React.FC<{ scena: ScenaEtape }> = ({ scena }) => {
       style={{
         display: "inline-block",
         fontFamily: FONT_TITLU,
-        fontWeight: 800,
+        fontWeight: greutateTitlu(800),
         fontSize: marime,
         lineHeight: 1,
         letterSpacing: "-0.02em",
-        fontVariantNumeric: "tabular-nums",
+        fontVariantNumeric: CIFRE_TITLU,
         backgroundImage: `linear-gradient(180deg, ${transparenta(c.text, opacitate)} 0%, ${transparenta(c.text, opacitate * 0.15)} 100%)`,
         backgroundClip: "text",
         WebkitBackgroundClip: "text",
@@ -573,7 +564,7 @@ export const Etape: React.FC<{ scena: ScenaEtape }> = ({ scena }) => {
               durata={0.9 * Math.max(k, 0.7)}
               style={{
                 fontFamily: FONT_TITLU,
-                fontWeight: 800,
+                fontWeight: greutateTitlu(800),
                 fontSize: titlu.marime,
                 lineHeight: inaltimeRand,
                 letterSpacing: "-0.02em",

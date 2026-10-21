@@ -11,21 +11,19 @@ import {
 import { FinalOrbita } from "../componente/FinalOrbita";
 import { TextAnimat } from "../componente/TextAnimat";
 import type { ScenaFinal } from "../date/tipuri";
-import {
-  EASE_IESIRE,
-  EASE_INTRARE_IESIRE,
-  FONT_TEXT,
-  FONT_TITLU,
-  inaltimeRandTitlu,
-  transparenta,
-  useCulori,
-  useFormat,
-} from "../tema";
+import { EASE_IESIRE, EASE_INTRARE_IESIRE, FONT_TEXT, FONT_TITLU, greutateTitlu, inaltimeRandTitlu, transparenta, useCulori, useFormat } from "../tema";
 
-type TipContact = "web" | "email" | "telefon";
+type TipContact = "web" | "email" | "telefon" | "loc";
 
+// „loc” = orice alt text (o instituție, o adresă poștală): fără pictograma de site.
 const tipContact = (s: string): TipContact =>
-  s.includes("@") ? "email" : /^[+\d][\d\s().\-/]{5,}$/.test(s) ? "telefon" : "web";
+  s.includes("@")
+    ? "email"
+    : /^[+\d][\d\s().\-/]{5,}$/.test(s)
+      ? "telefon"
+      : /^(https?:\/\/)?[\w-]+(\.[\w-]+)+(\/\S*)?$/i.test(s.trim())
+        ? "web"
+        : "loc";
 
 /** Adresa așa cum se citește: fără „https://” și fără bara de la sfârșit. */
 const curataContact = (s: string) => s.trim().replace(/^https?:\/\//i, "").replace(/\/$/, "");
@@ -86,6 +84,11 @@ const Pictograma: React.FC<{ tip: TipContact; marime: number; culoare: string }>
       <>
         <rect x="3" y="5.5" width="18" height="13" rx="2.5" />
         <path d="M3.8 7l8.2 6 8.2-6" />
+      </>
+    ) : tip === "loc" ? (
+      <>
+        <path d="M12 21s-6.5-5.6-6.5-11a6.5 6.5 0 0 1 13 0c0 5.4-6.5 11-6.5 11z" />
+        <circle cx="12" cy="10" r="2.3" />
       </>
     ) : (
       <path d="M6.7 3.5h2.4l1.5 4.1-2 1.3a11.5 11.5 0 0 0 6.5 6.5l1.3-2 4.1 1.5v2.4a2 2 0 0 1-2.1 2A16.7 16.7 0 0 1 4.7 5.6a2 2 0 0 1 2-2.1z" />
@@ -358,7 +361,7 @@ export const Final: React.FC<{ scena: ScenaFinal }> = ({ scena }) => {
         <div
           style={{
             fontFamily: FONT_TITLU,
-            fontWeight: 800,
+            fontWeight: greutateTitlu(800),
             fontSize: titlu.marime,
             lineHeight: inaltimeRand,
             letterSpacing: "-0.02em",
