@@ -12,28 +12,9 @@ import { insereaza, type Db } from '../db';
 import { EroareUtilizator } from '../erori';
 import { incarcaDefinitii } from './catalog';
 import { costuriMedii, inregistreazaMiscari } from './stoc';
+import { actualizeazaTuraInchisa, asiguraTura, corecteazaNumarariUlterioare, type ContextPOS } from './ture';
 
-export interface ContextPOS {
-  locatie_id: number;
-  dispozitiv_id: number | null;
-}
-
-/**
- * Tura e creată de evenimentul „tura_deschisa”; dacă acela s-a pierdut sau a fost respins,
- * o creăm aici ca vânzările să nu rămână fără tură. Adminul o vede marcată „creată automat”.
- */
-export async function asiguraTura(db: Db, ctx: ContextPOS, turaId: string, la: string, utilizatorId: number) {
-  const r = await db.query<{ locatie_id: number }>('SELECT locatie_id FROM ture WHERE id = $1', [turaId]);
-  if (r[0]) {
-    if (r[0].locatie_id !== ctx.locatie_id) throw new EroareUtilizator('Tura aparține altei locații');
-    return;
-  }
-  await db.query(
-    `INSERT INTO ture (id, locatie_id, dispozitiv_id, utilizator_id, deschisa_la, creata_automat)
-     VALUES ($1, $2, $3, $4, $5, true)`,
-    [turaId, ctx.locatie_id, ctx.dispozitiv_id, utilizatorId, la],
-  );
-}
+export { asiguraTura, type ContextPOS } from './ture';
 
 /** O vânzare sau o casare: salvează comanda, scade ingredientele din rețetar, înregistrează banii. */
 export async function inregistreazaComanda(db: Db, ctx: ContextPOS, la: string, d: DateComanda): Promise<void> {
@@ -112,7 +93,9 @@ export async function inregistreazaComanda(db: Db, ctx: ContextPOS, la: string, 
        VALUES ($1, $2, $3, 'incasare', $4, 'comanda', $5, $6, $7)`,
       [ctx.locatie_id, d.metoda, total, d.tura_id, d.comanda_id, d.utilizator_id, la],
     );
+    if (d.metoda === 'numerar') await corecteazaNumarariUlterioare(db, ctx.locatie_id, la, total, d.utilizator_id);
   }
+  await actualizeazaTuraInchisa(db, d.tura_id);
 }
 
 /**
@@ -121,8 +104,8 @@ export async function inregistreazaComanda(db: Db, ctx: ContextPOS, la: string, 
  */
 export async function anuleazaComanda(db: Db, ctx: ContextPOS, la: string, d: DateAnulare): Promise<void> {
   const c = (
-    await db.query<{ locatie_id: number; metoda: string; total: number; stare: string }>(
-      'SELECT locatie_id, metoda, total, stare FROM comenzi WHERE id = $1 FOR UPDATE',
+    await db.query<{ locatie_id: number; metoda: string; total: number; stare: string; tura_id: string }>(
+      'SELECT locatie_id, metoda, total, stare, tura_id FROM comenzi WHERE id = $1 FOR UPDATE',
       [d.comanda_id],
     )
   )[0];
@@ -143,6 +126,7 @@ export async function anuleazaComanda(db: Db, ctx: ContextPOS, la: string, d: Da
        VALUES ($1, $2, $3, 'restituire', $4, $5, 'anulare', $6, $7, $8)`,
       [ctx.locatie_id, c.metoda, -c.total, d.motiv, d.tura_id, d.comanda_id, d.utilizator_id, la],
     );
+    if (c.metoda === 'numerar') await corecteazaNumarariUlterioare(db, ctx.locatie_id, la, -c.total, d.utilizator_id);
   }
 
   if (d.restituie_stoc) {
@@ -164,6 +148,8 @@ export async function anuleazaComanda(db: Db, ctx: ContextPOS, la: string, d: Da
       })),
     );
   }
+  await actualizeazaTuraInchisa(db, d.tura_id);
+  if (c.tura_id !== d.tura_id) await actualizeazaTuraInchisa(db, c.tura_id);
 }
 
 export interface FiltruComenzi {

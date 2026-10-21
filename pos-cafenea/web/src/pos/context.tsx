@@ -2,7 +2,7 @@ import { createContext, useContext } from 'react';
 import type { CatalogPOS, EvenimentPOS } from '@cafenea/shared';
 import type { Echipamente } from './echipamente';
 import type { StareSync } from './sincronizare';
-import type { BaristaActiv, ComandaLocala, ConfigTableta, TuraLocala } from './stocare';
+import type { BaristaActiv, ComandaLocala, ConfigTableta, OptiuniInregistrare, TuraLocala } from './stocare';
 
 export interface Aplicatie {
   config: ConfigTableta;
@@ -12,7 +12,7 @@ export interface Aplicatie {
   echipamente: Echipamente;
   sync: StareSync;
   /** Salvează local evenimentul (și comanda) și pornește sincronizarea. */
-  inregistreaza(ev: EvenimentPOS, comanda?: ComandaLocala): Promise<void>;
+  inregistreaza(ev: EvenimentPOS, comanda?: ComandaLocala, opt?: OptiuniInregistrare): Promise<void>;
   /** Construiește un eveniment cu id și moment proprii. */
   eveniment<T extends EvenimentPOS['tip']>(tip: T, date: Extract<EvenimentPOS, { tip: T }>['date']): Extract<EvenimentPOS, { tip: T }>;
   anunta(mesaj: string, pericol?: boolean): void;

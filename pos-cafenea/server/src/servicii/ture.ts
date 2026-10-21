@@ -2,7 +2,28 @@ import { rotunjeste, type DatePlataMarunta, type DateTuraDeschisa, type DateTura
 import type { Db } from '../db';
 import { EroareNegasit, EroareUtilizator } from '../erori';
 import { citesteTolerante } from './setari';
-import { asiguraTura, type ContextPOS } from './vanzari';
+
+export interface ContextPOS {
+  locatie_id: number;
+  dispozitiv_id: number | null;
+}
+
+/**
+ * Tura e creată de evenimentul „tura_deschisa”; dacă acela s-a pierdut sau a fost respins,
+ * o creăm aici ca vânzările să nu rămână fără tură. Adminul o vede marcată „creată automat”.
+ */
+export async function asiguraTura(db: Db, ctx: ContextPOS, turaId: string, la: string, utilizatorId: number) {
+  const r = await db.query<{ locatie_id: number }>('SELECT locatie_id FROM ture WHERE id = $1', [turaId]);
+  if (r[0]) {
+    if (r[0].locatie_id !== ctx.locatie_id) throw new EroareUtilizator('Tura aparține altei locații');
+    return;
+  }
+  await db.query(
+    `INSERT INTO ture (id, locatie_id, dispozitiv_id, utilizator_id, deschisa_la, creata_automat)
+     VALUES ($1, $2, $3, $4, $5, true)`,
+    [turaId, ctx.locatie_id, ctx.dispozitiv_id, utilizatorId, la],
+  );
+}
 
 /** Numerarul care ar trebui să fie în sertar (registrul de bani al locației). */
 export async function soldNumerar(db: Db, locatieId: number, pana?: string | Date): Promise<number> {
@@ -71,11 +92,78 @@ export async function deschideTura(db: Db, ctx: ContextPOS, la: string, d: DateT
 export async function plataMarunta(db: Db, ctx: ContextPOS, la: string, d: DatePlataMarunta): Promise<void> {
   if (!(d.suma > 0)) throw new EroareUtilizator('Suma plății trebuie să fie pozitivă');
   await asiguraTura(db, ctx, d.tura_id, la, d.utilizator_id);
+  const suma = -rotunjeste(d.suma);
   await db.query(
     `INSERT INTO miscari_bani (locatie_id, cont, suma, tip, descriere, tura_id, utilizator_id, creata_la)
      VALUES ($1, 'numerar', $2, 'plata_marunta', $3, $4, $5, $6)`,
-    [ctx.locatie_id, -rotunjeste(d.suma), d.descriere, d.tura_id, d.utilizator_id, la],
+    [ctx.locatie_id, suma, d.descriere, d.tura_id, d.utilizator_id, la],
   );
+  await corecteazaNumarariUlterioare(db, ctx.locatie_id, la, suma, d.utilizator_id);
+}
+
+/**
+ * O mișcare de numerar datată înaintea unei numărări deja aplicate (vânzare offline ajunsă
+ * după închiderea turei, eveniment reaplicat de admin): banii erau fizic în sertar la numărare,
+ * deci alinierea de atunci a fost greșită exact cu această sumă. Corectăm prima numărare de după
+ * mișcare, scripticul turei ei și semnalarea discrepanțelor; numărările următoare au pornit de la
+ * un registru deja aliniat, deci rămân corecte.
+ */
+export async function corecteazaNumarariUlterioare(db: Db, locatieId: number, la: string, suma: number, utilizatorId: number | null): Promise<void> {
+  if (suma === 0) return;
+  const n = (
+    await db.query<{ id: string; fel: 'deschidere' | 'inchidere'; cand: string }>(
+      `SELECT id, fel, cand FROM (
+         SELECT id, 'deschidere' AS fel, deschisa_la AS cand FROM ture WHERE locatie_id = $1 AND scriptic_fond IS NOT NULL AND deschisa_la > $2::timestamptz
+         UNION ALL
+         SELECT id, 'inchidere' AS fel, inchisa_la AS cand FROM ture WHERE locatie_id = $1 AND inchisa_la > $2::timestamptz
+       ) x ORDER BY cand LIMIT 1`,
+      [locatieId, la],
+    )
+  )[0];
+  if (!n) return;
+  await db.query(
+    `INSERT INTO miscari_bani (locatie_id, cont, suma, tip, descriere, tura_id, document_tip, document_id, utilizator_id, creata_la)
+     VALUES ($1, 'numerar', $2, 'diferenta_casa', 'Corecție: mișcare de numerar sincronizată după numărare', $3, 'tura', $4, $5, $6)`,
+    [locatieId, -suma, n.id, n.id, utilizatorId, n.cand],
+  );
+  if (n.fel === 'deschidere') await db.query('UPDATE ture SET scriptic_fond = scriptic_fond + $2 WHERE id = $1', [n.id, suma]);
+  else await db.query('UPDATE ture SET scriptic_numerar = scriptic_numerar + $2 WHERE id = $1', [n.id, suma]);
+  await reevalueazaDiscrepante(db, n.id);
+}
+
+/** Recalculează semnalarea discrepanțelor din valorile declarate și scriptice ale turei. */
+export async function reevalueazaDiscrepante(db: Db, turaId: string): Promise<void> {
+  const t = (await db.query<any>('SELECT * FROM ture WHERE id = $1', [turaId]))[0];
+  if (!t) return;
+  const tol = await citesteTolerante(db);
+  const primaTura = !(await db.query('SELECT 1 FROM ture WHERE locatie_id = $1 AND id <> $2 AND deschisa_la < $3 LIMIT 1', [t.locatie_id, turaId, t.deschisa_la])).length;
+  let d = !primaTura && t.scriptic_fond != null && Math.abs(t.fond_initial - t.scriptic_fond) > tol.numerar;
+  if (t.inchisa_la) {
+    d =
+      d ||
+      Math.abs(t.declarat_numerar - t.scriptic_numerar) > tol.numerar ||
+      Math.abs(t.declarat_card - t.scriptic_card) > tol.card ||
+      Math.abs(t.declarat_doze - t.scriptic_doze) > tol.doze ||
+      t.declarat_anulari !== t.scriptic_anulari ||
+      t.declarat_casari !== t.scriptic_casari;
+  }
+  await db.query('UPDATE ture SET are_discrepante = $2 WHERE id = $1', [turaId, d]);
+}
+
+/**
+ * O comandă sau o anulare ajunsă într-o tură deja închisă (tableta a rămas pe tura veche,
+ * sincronizare târzie): refacem cifrele scriptice ale turei și semnalarea discrepanțelor.
+ * Numerarul e tratat separat, prin corecteazaNumarariUlterioare.
+ */
+export async function actualizeazaTuraInchisa(db: Db, turaId: string): Promise<void> {
+  const t = (await db.query<{ inchisa_la: string | null }>('SELECT inchisa_la FROM ture WHERE id = $1', [turaId]))[0];
+  if (!t?.inchisa_la) return;
+  const s = await scripticFaraNumerar(db, turaId);
+  await db.query(
+    'UPDATE ture SET scriptic_card = $2, scriptic_doze = $3, scriptic_anulari = $4, scriptic_casari = $5 WHERE id = $1',
+    [turaId, s.scriptic_card, s.scriptic_doze, s.scriptic_anulari, s.scriptic_casari],
+  );
+  await reevalueazaDiscrepante(db, turaId);
 }
 
 export interface CalculTura {
@@ -86,8 +174,7 @@ export interface CalculTura {
   scriptic_casari: number;
 }
 
-/** Ce „trebuia să fie” conform sistemului pentru o tură, până la momentul `la`. */
-export async function calculeazaScriptic(db: Db, turaId: string, locatieId: number, la: string): Promise<CalculTura> {
+async function scripticFaraNumerar(db: Db, turaId: string): Promise<Omit<CalculTura, 'scriptic_numerar'>> {
   const card = await db.query<{ s: number }>(
     `SELECT COALESCE(SUM(suma), 0)::numeric AS s FROM miscari_bani WHERE tura_id = $1 AND cont = 'card'`,
     [turaId],
@@ -109,12 +196,16 @@ export async function calculeazaScriptic(db: Db, turaId: string, locatieId: numb
     [turaId],
   );
   return {
-    scriptic_numerar: await soldNumerar(db, locatieId, la),
     scriptic_card: rotunjeste(card[0].s),
     scriptic_doze: rotunjeste(doze[0].s),
     scriptic_anulari: anulari[0].s,
     scriptic_casari: casari[0].s,
   };
+}
+
+/** Ce „trebuia să fie” conform sistemului pentru o tură, până la momentul `la`. */
+export async function calculeazaScriptic(db: Db, turaId: string, locatieId: number, la: string): Promise<CalculTura> {
+  return { scriptic_numerar: await soldNumerar(db, locatieId, la), ...(await scripticFaraNumerar(db, turaId)) };
 }
 
 /**

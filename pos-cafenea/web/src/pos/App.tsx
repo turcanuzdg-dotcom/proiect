@@ -101,8 +101,8 @@ export function App() {
     if (!config || !catalog || !barista || !tura) return null;
     return {
       config, catalog, barista, tura, echipamente, sync, anunta, reincarcaEchipamente,
-      async inregistreaza(ev: EvenimentPOS, comanda?: stocare.ComandaLocala) {
-        await stocare.inregistreaza(ev, comanda);
+      async inregistreaza(ev: EvenimentPOS, comanda?: stocare.ComandaLocala, opt?: stocare.OptiuniInregistrare) {
+        await stocare.inregistreaza(ev, comanda, opt);
         await sincronizator.current?.actualizeazaNumar();
         sincronizator.current?.acum();
       },

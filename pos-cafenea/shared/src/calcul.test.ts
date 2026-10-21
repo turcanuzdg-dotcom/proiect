@@ -46,6 +46,20 @@ describe('rețetar', () => {
     expect(c.get(CAFEA)).toBe(27);
   });
 
+  it('adaosurile pe ingredientul înlocuit urmează înlocuirea', () => {
+    const extraLapte: DefinitieModificator = {
+      id: 4, nume: 'Extra lapte', pret: 5, doze_cafea: 0,
+      inlocuieste_articol_id: null, inlocuitor_articol_id: null, adauga: [{ articol_id: LAPTE, cantitate: 50 }],
+    };
+    const maiPutinLapte: DefinitieModificator = { ...extraLapte, id: 5, nume: 'Mai puțin lapte', adauga: [{ articol_id: LAPTE, cantitate: -100 }] };
+    const plus = expandeazaReteta(cappuccino, [lapteOvaz, extraLapte]);
+    expect(plus.get(LAPTE)).toBeUndefined();
+    expect(plus.get(OVAZ)).toBe(200);
+    const minus = expandeazaReteta(cappuccino, [maiPutinLapte, lapteOvaz]);
+    expect(minus.get(LAPTE)).toBeUndefined();
+    expect(minus.get(OVAZ)).toBe(50);
+  });
+
   it('un modificator negativ nu coboară sub zero', () => {
     const c = expandeazaReteta(cappuccino, [faraZahar, faraZahar]);
     expect(c.has(ZAHAR)).toBe(false);

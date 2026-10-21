@@ -24,10 +24,11 @@ describe('vânzare și descărcare din stoc pe bază de rețetar', () => {
     };
     const tura = randomUUID();
     const cap = t.produs('Cappuccino');
+    const deschidere = evTuraDeschisa(tura, t.barista);
     const ev = evComanda(tura, t.barista, [
       { produs_id: cap.id, cantitate: 2, pret_unitar: cap.pret, modificatori: [{ id: t.modificator('Lapte de ovăz').id, pret: 10 }, { id: t.modificator('Extra shot').id, pret: 10 }] },
     ], 'numerar', { primit: 200 });
-    const r = await t.tableta.sync([evTuraDeschisa(tura, t.barista), ev]);
+    const r = await t.tableta.sync([deschidere, ev]);
     expect(r.cu_eroare).toEqual([]);
     expect(r.acceptate).toHaveLength(2);
 
@@ -105,10 +106,11 @@ describe('închiderea turei', () => {
     const cap = t.produs('Cappuccino');
     const esp = t.produs('Espresso');
     const linieCap = { produs_id: cap.id, cantitate: 1, pret_unitar: cap.pret, modificatori: [] };
+    const deschidere = evTuraDeschisa(tura, t.barista, 0);
     const vanzare = evComanda(tura, t.barista, [linieCap], 'numerar', { primit: 50 });
     const deAnulat = evComanda(tura, t.barista, [{ produs_id: esp.id, cantitate: 1, pret_unitar: esp.pret, modificatori: [] }], 'card');
     await t.tableta.sync([
-      evTuraDeschisa(tura, t.barista, 0),
+      deschidere,
       vanzare,
       deAnulat,
       evComanda(tura, t.barista, [linieCap], 'card'),

@@ -31,17 +31,26 @@ export function expandeazaReteta(
   const consum = new Map<number, number>();
   for (const l of reteta) consum.set(l.articol_id, (consum.get(l.articol_id) ?? 0) + l.cantitate);
 
+  // Înlocuirile liniei (lapte → lapte de ovăz) se aplică și adaosurilor: „extra lapte” la un
+  // latte cu ovăz înseamnă mai mult lapte de ovăz, iar „mai puțin lapte” scade tot din ovăz.
+  const inlocuiri = new Map<number, number>();
   for (const m of modificatori) {
     if (m.inlocuieste_articol_id != null && m.inlocuitor_articol_id != null) {
-      const cant = consum.get(m.inlocuieste_articol_id);
-      if (cant) {
-        consum.delete(m.inlocuieste_articol_id);
-        consum.set(m.inlocuitor_articol_id, (consum.get(m.inlocuitor_articol_id) ?? 0) + cant);
-      }
+      inlocuiri.set(m.inlocuieste_articol_id, m.inlocuitor_articol_id);
+    }
+  }
+  for (const [de, cu] of inlocuiri) {
+    const cant = consum.get(de);
+    if (cant) {
+      consum.delete(de);
+      consum.set(cu, (consum.get(cu) ?? 0) + cant);
     }
   }
   for (const m of modificatori) {
-    for (const l of m.adauga) consum.set(l.articol_id, (consum.get(l.articol_id) ?? 0) + l.cantitate);
+    for (const l of m.adauga) {
+      const id = inlocuiri.get(l.articol_id) ?? l.articol_id;
+      consum.set(id, (consum.get(id) ?? 0) + l.cantitate);
+    }
   }
 
   for (const [id, cant] of consum) {

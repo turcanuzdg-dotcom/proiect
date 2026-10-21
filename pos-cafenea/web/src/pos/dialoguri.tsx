@@ -492,6 +492,7 @@ export function InchidereTura({ onInchide }: { onInchide: () => void }) {
   const app = useAplicatie();
   const [v, setV] = useState({ doze: '', numerar: '', card: '', anulari: '0', casari: '0', observatii: '' });
   const [confirmare, setConfirmare] = useState(false);
+  const [lucreaza, setLucreaza] = useState(false);
   const [gata, setGata] = useState<string | null>(null);
   const camp = (k: keyof typeof v) => ({ value: v[k], onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => setV({ ...v, [k]: e.target.value }) });
   const valori = { doze: numar(v.doze), numerar: numar(v.numerar), card: numar(v.card), anulari: numar(v.anulari), casari: numar(v.casari) };
@@ -508,6 +509,10 @@ export function InchidereTura({ onInchide }: { onInchide: () => void }) {
     );
 
   const inchide = async () => {
+    if (lucreaza) return;
+    setLucreaza(true);
+    // Evenimentul și ștergerea turei locale se fac împreună: de aici încolo tableta nu mai
+    // poate vinde pe tura închisă, chiar dacă e oprită înainte de „Gata”.
     await app.inregistreaza(
       app.eveniment('tura_inchisa', {
         tura_id: app.tura.id,
@@ -519,6 +524,8 @@ export function InchidereTura({ onInchide }: { onInchide: () => void }) {
         casari: valori.casari,
         observatii: v.observatii.trim() || null,
       }),
+      undefined,
+      { inchideTura: true },
     );
     const z = await app.echipamente.raportZ().catch((e: Error) => ({ ok: false, mesaj: e.message }));
     setGata(z.ok ? 'ok' : `Raportul Z al casei de marcat nu s-a tipărit: ${z.mesaj ?? ''}. Tipăriți-l manual.`);
@@ -527,14 +534,16 @@ export function InchidereTura({ onInchide }: { onInchide: () => void }) {
   return (
     <Modal
       titlu="Închiderea turei"
-      onInchide={onInchide}
+      onInchide={lucreaza ? undefined : onInchide}
       lat
       subsol={
         confirmare ? (
           <>
             <span className="slab">Datele nu mai pot fi modificate după închidere.</span>
-            <button className="buton-secundar" onClick={() => setConfirmare(false)}>Corectez</button>
-            <button className="buton" onClick={inchide}>Confirm și închid tura</button>
+            <button className="buton-secundar" disabled={lucreaza} onClick={() => setConfirmare(false)}>Corectez</button>
+            <button className="buton" disabled={lucreaza} onClick={inchide}>
+              {lucreaza ? 'Se închide…' : 'Confirm și închid tura'}
+            </button>
           </>
         ) : (
           <button className="buton buton-mare" disabled={!valid} onClick={() => setConfirmare(true)}>

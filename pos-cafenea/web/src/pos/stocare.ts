@@ -106,15 +106,25 @@ export async function urmatorulNumar(): Promise<number> {
   return nr;
 }
 
+export interface OptiuniInregistrare {
+  /** Închiderea turei: tura și barista dispar din memorie odată cu punerea evenimentului în coadă. */
+  inchideTura?: boolean;
+}
+
 /**
  * Pune evenimentul în coadă și, dacă e cazul, salvează sau actualizează comanda locală,
- * în aceeași tranzacție: ori se salvează amândouă, ori niciuna.
+ * în aceeași tranzacție: ori se salvează amândouă, ori niciuna. La închiderea turei, tot
+ * aici se șterge tura locală, ca o repornire a tabletei să nu mai poată vinde pe tura închisă.
  */
-export async function inregistreaza(ev: EvenimentPOS, comanda?: ComandaLocala): Promise<void> {
+export async function inregistreaza(ev: EvenimentPOS, comanda?: ComandaLocala, opt: OptiuniInregistrare = {}): Promise<void> {
   const d = await db();
-  const tx = d.transaction(['coada', 'comenzi'], 'readwrite');
+  const tx = d.transaction(['coada', 'comenzi', 'kv'], 'readwrite');
   await tx.objectStore('coada').add({ ev });
   if (comanda) await tx.objectStore('comenzi').put(comanda);
+  if (opt.inchideTura) {
+    await tx.objectStore('kv').delete('tura');
+    await tx.objectStore('kv').delete('barista');
+  }
   await tx.done;
 }
 

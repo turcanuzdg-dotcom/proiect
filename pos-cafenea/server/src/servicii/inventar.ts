@@ -3,17 +3,19 @@ import type { Db } from '../db';
 import { EroareNegasit, EroareUtilizator } from '../erori';
 import { inregistreazaMiscari, stocLocatie } from './stoc';
 
+/** Pe o locație există o singură inventariere deschisă; tableta și panoul lucrează pe aceeași foaie. */
 export async function creeazaInventariere(db: Db, d: { locatie_id: number; utilizator_id?: number | null; dispozitiv_id?: number | null }) {
-  const deschisa = await db.query<{ id: number }>(
-    `SELECT id FROM inventarieri WHERE locatie_id = $1 AND stare = 'deschisa' ORDER BY id DESC LIMIT 1`,
-    [d.locatie_id],
-  );
-  if (deschisa[0]) return { id: deschisa[0].id };
-  const r = await db.query<{ id: number }>(
-    'INSERT INTO inventarieri (locatie_id, utilizator_id, dispozitiv_id) VALUES ($1, $2, $3) RETURNING id',
-    [d.locatie_id, d.utilizator_id ?? null, d.dispozitiv_id ?? null],
-  );
-  return { id: r[0].id };
+  return db.tx(async (t) => {
+    const noua = await t.query<{ id: number }>(
+      `INSERT INTO inventarieri (locatie_id, utilizator_id, dispozitiv_id) VALUES ($1, $2, $3)
+       ON CONFLICT (locatie_id) WHERE stare = 'deschisa' DO NOTHING RETURNING id`,
+      [d.locatie_id, d.utilizator_id ?? null, d.dispozitiv_id ?? null],
+    );
+    if (noua[0]) return { id: noua[0].id };
+    const deschisa = await t.query<{ id: number }>(`SELECT id FROM inventarieri WHERE locatie_id = $1 AND stare = 'deschisa'`, [d.locatie_id]);
+    if (!deschisa[0]) throw new EroareNegasit('Locația');
+    return { id: deschisa[0].id };
+  });
 }
 
 async function inventariere(db: Db, id: number) {
@@ -22,19 +24,26 @@ async function inventariere(db: Db, id: number) {
   return inv;
 }
 
-/** Salvează cantitățile numărate (se poate număra pe bucăți, în mai multe trimiteri). */
+/**
+ * Salvează cantitățile numărate (se poate număra pe bucăți, în mai multe trimiteri).
+ * Momentul numărării se schimbă doar când se schimbă cantitatea: retrimiterea aceleiași
+ * valori nu mută scripticul.
+ */
 export async function salveazaNumaratori(db: Db, id: number, linii: { articol_id: number; faptic: number | null }[]) {
-  const inv = await inventariere(db, id);
-  if (inv.stare !== 'deschisa') throw new EroareUtilizator('Inventarierea este deja finalizată');
+  if (linii.some((l) => l.faptic != null && l.faptic < 0)) throw new EroareUtilizator('Cantitatea numărată nu poate fi negativă');
   await db.tx(async (t) => {
+    // Blocăm rândul inventarierii: o finalizare simultană așteaptă sau e văzută aici.
+    const inv = (await t.query<{ stare: string }>('SELECT stare FROM inventarieri WHERE id = $1 FOR UPDATE', [id]))[0];
+    if (!inv) throw new EroareNegasit('Inventarierea');
+    if (inv.stare !== 'deschisa') throw new EroareUtilizator('Inventarierea este deja finalizată');
     const sterse = linii.filter((l) => l.faptic == null).map((l) => l.articol_id);
     if (sterse.length) await t.query('DELETE FROM inventarieri_linii WHERE inventariere_id = $1 AND articol_id = ANY($2::int[])', [id, sterse]);
-    const puse = linii.filter((l) => l.faptic != null);
-    if (puse.some((l) => l.faptic! < 0)) throw new EroareUtilizator('Cantitatea numărată nu poate fi negativă');
-    for (const l of puse) {
+    for (const l of linii.filter((l) => l.faptic != null)) {
       await t.query(
         `INSERT INTO inventarieri_linii (inventariere_id, articol_id, faptic) VALUES ($1, $2, $3)
-         ON CONFLICT (inventariere_id, articol_id) DO UPDATE SET faptic = EXCLUDED.faptic, numarat_la = now()`,
+         ON CONFLICT (inventariere_id, articol_id) DO UPDATE
+           SET faptic = EXCLUDED.faptic,
+               numarat_la = CASE WHEN inventarieri_linii.faptic = EXCLUDED.faptic THEN inventarieri_linii.numarat_la ELSE now() END`,
         [id, l.articol_id, l.faptic],
       );
     }
@@ -57,39 +66,70 @@ async function liniiNumarate(db: Db, id: number, locatieId: number) {
   );
 }
 
+export interface LinieRaportInventar {
+  articol_id: number;
+  nume: string;
+  um: string;
+  tip: string;
+  activ: boolean;
+  scriptic: number;
+  faptic: number | null;
+  diferenta: number | null;
+  valoare: number | null;
+  numarat_la: string | null;
+}
+
+function totaluri(linii: LinieRaportInventar[]) {
+  let plus = 0;
+  let minus = 0;
+  for (const l of linii) {
+    if (l.valoare != null && l.valoare > 0) plus += l.valoare;
+    if (l.valoare != null && l.valoare < 0) minus += l.valoare;
+  }
+  return { total_plus: rotunjeste(plus), total_minus: rotunjeste(minus), total_net: rotunjeste(plus + minus) };
+}
+
 /**
- * Raportul Scriptic vs. Faptic, generat pe loc. Articolele încă nenumărate arată stocul de acum
- * (se schimbă la fiecare vânzare); cele numărate, stocul din momentul numărării.
+ * Raportul Scriptic vs. Faptic. Deschisă: articolele nenumărate arată stocul de acum, cele numărate
+ * stocul din momentul numărării. Finalizată: raportul e cel înghețat, citit din ajustările de stoc
+ * (inclusiv compensările pentru mișcări sincronizate după numărare), deci coincide cu registrul.
  */
 export async function raportInventariere(db: Db, id: number) {
   const inv = await inventariere(db, id);
-  const numarate = new Map((await liniiNumarate(db, id, inv.locatie_id)).map((l) => [l.articol_id, l]));
-  const stoc = await stocLocatie(db, inv.locatie_id);
-  let plus = 0;
-  let minus = 0;
-  const randuri = stoc
-    .filter((a) => inv.stare === 'deschisa' || numarate.has(a.articol_id))
-    .map((a) => {
+  let linii: LinieRaportInventar[];
+  if (inv.stare === 'finalizata') {
+    const r = await db.query<any>(
+      `SELECT il.articol_id, a.nume, a.um, a.tip, a.activ, il.faptic, il.numarat_la,
+              COALESCE(m.dif, 0)::numeric AS diferenta, COALESCE(m.val, 0)::numeric AS valoare
+         FROM inventarieri_linii il
+         JOIN articole a ON a.id = il.articol_id
+         LEFT JOIN (SELECT articol_id, SUM(cantitate) AS dif, SUM(cantitate * cost_unitar) AS val
+                      FROM miscari_stoc WHERE document_tip = 'inventariere' AND document_id = $2 GROUP BY articol_id) m
+           ON m.articol_id = il.articol_id
+        WHERE il.inventariere_id = $1
+        ORDER BY a.tip, a.nume`,
+      [id, String(id)],
+    );
+    linii = r.map((x) => ({
+      articol_id: x.articol_id, nume: x.nume, um: x.um, tip: x.tip, activ: x.activ,
+      scriptic: rotunjeste(x.faptic - x.diferenta, 3), faptic: x.faptic,
+      diferenta: rotunjeste(x.diferenta, 3), valoare: rotunjeste(x.valoare), numarat_la: x.numarat_la,
+    }));
+  } else {
+    const numarate = new Map((await liniiNumarate(db, id, inv.locatie_id)).map((l) => [l.articol_id, l]));
+    linii = (await stocLocatie(db, inv.locatie_id)).map((a) => {
       const n = numarate.get(a.articol_id);
       const scriptic = n ? n.scriptic : a.stoc;
       const faptic = n ? n.faptic : null;
       const diferenta = faptic == null ? null : rotunjeste(faptic - scriptic, 3);
-      const valoare = diferenta == null ? null : rotunjeste(diferenta * a.cost_mediu);
-      if (valoare != null && valoare > 0) plus += valoare;
-      if (valoare != null && valoare < 0) minus += valoare;
       return {
-        articol_id: a.articol_id, nume: a.nume, um: a.um, tip: a.tip,
-        scriptic: rotunjeste(scriptic, 3), faptic, diferenta, valoare, numarat_la: n?.numarat_la ?? null,
+        articol_id: a.articol_id, nume: a.nume, um: a.um, tip: a.tip, activ: a.activ,
+        scriptic: rotunjeste(scriptic, 3), faptic, diferenta,
+        valoare: diferenta == null ? null : rotunjeste(diferenta * a.cost_mediu), numarat_la: n?.numarat_la ?? null,
       };
     });
-  return {
-    ...inv,
-    linii: randuri,
-    numarate: numarate.size,
-    total_plus: rotunjeste(plus),
-    total_minus: rotunjeste(minus),
-    total_net: rotunjeste(plus + minus),
-  };
+  }
+  return { ...inv, linii, numarate: linii.filter((l) => l.faptic != null).length, ...totaluri(linii) };
 }
 
 /** Îngheață scripticul, înregistrează diferențele ca mișcări de stoc și închide inventarierea. */
