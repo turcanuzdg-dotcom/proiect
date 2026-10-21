@@ -82,6 +82,7 @@ class Plan:
     durata: float
     cfg: dict
     pivot: float
+    siguranta: float = 1.0  # zoom suplimentar constant, ca camera să nu iasă din fotografie
 
     @staticmethod
     def incarca(cfg: dict, dir_img: Path, dir_ad: Path) -> "Plan":
@@ -106,7 +107,7 @@ class Plan:
         pan = c.get("pan") or [[0, 0], [0, 0]]
         return {
             # zoom-ul crește geometric, ca viteza aparentă să fie constantă
-            "zoom": z0 * (z1 / z0) ** t,
+            "zoom": z0 * (z1 / z0) ** t * self.siguranta,
             "dolly": lin(*pereche(c.get("dolly"), 0.0), t),
             "orbita": lin(*pereche(c.get("orbita"), 0.0), t),
             "macara": lin(*pereche(c.get("macara"), 0.0), t),
@@ -129,8 +130,8 @@ class Randator:
         r = np.sqrt((self.X / (latime / 2)) ** 2 + (self.Y / (inaltime / 2)) ** 2) / math.sqrt(2)
         self.vineta_baza = np.clip(r, 0, 1) ** 2.2
 
-    def cadru(self, plan: Plan, tau: float, extra: dict | None = None) -> np.ndarray:
-        """Randează planul la timpul local tau. `extra` adaugă mișcări de tranziție."""
+    def coordonate(self, plan: Plan, tau: float, extra: dict | None = None):
+        """Pentru fiecare pixel al cadrului: punctul din fotografie (qx, qy) și adâncimea lui."""
         p = plan.parametri(tau)
         if extra:
             p["zoom"] *= extra.get("zoom", 1.0)
@@ -167,6 +168,12 @@ class Randator:
             qx = cx + (rx - W * p["orbita"] * dd) / scala
             qy = cy + (ry - W * p["macara"] * dd) / scala
             d = cv2.remap(plan.adancime, qx, qy, cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT101)
+        return qx, qy, d, p, (cx, cy)
+
+    def cadru(self, plan: Plan, tau: float, extra: dict | None = None) -> np.ndarray:
+        """Randează planul la timpul local tau. `extra` adaugă mișcări de tranziție."""
+        qx, qy, d, p, _ = self.coordonate(plan, tau, extra)
+        W, dp, cfg = self.W, plan.pivot, plan.cfg
         img = cv2.remap(plan.imagine, qx, qy, cv2.INTER_CUBIC, borderMode=cv2.BORDER_REFLECT101)
 
         # 4. reflexul de lumină peste produs (doar pe zonele apropiate)
@@ -179,6 +186,28 @@ class Randator:
             k = (0.16 * lumina * masca)[..., None]
             img = img + k * (1.0 - img)
         return np.clip(img, 0, 1)
+
+
+def calculeaza_siguranta(rand: Randator, plan: Plan, de_la: float, pana_la: float, pasi: int = 9) -> float:
+    """Zoom-ul suplimentar constant care ține camera în fotografie pe tot intervalul.
+
+    Distanța unui punct-sursă față de centrul de interes scade exact cu 1/zoom, deci
+    raportul dintre cât iese și cât e loc dă direct mărirea necesară."""
+    Hs, Ws = plan.adancime.shape
+    m = 1.0
+    for _ in range(2):  # a doua trecere corectează efectul adâncimii eșantionate
+        for k in range(pasi):
+            tau = de_la + (pana_la - de_la) * k / (pasi - 1)
+            qx, qy, _, _, (cx, cy) = rand.coordonate(plan, tau)
+            lim = [
+                -(qx.min() - cx) / max(1.0, cx),
+                (qx.max() - cx) / max(1.0, Ws - 1 - cx),
+                -(qy.min() - cy) / max(1.0, cy),
+                (qy.max() - cy) / max(1.0, Hs - 1 - cy),
+            ]
+            m = max(m, max(lim) * plan.siguranta)
+        plan.siguranta = m * 1.005
+    return plan.siguranta
 
 
 def blur_directional(img: np.ndarray, lungime: float, unghi: float = 0.0) -> np.ndarray:
@@ -327,6 +356,13 @@ def main() -> None:
     dir_ad = (baza / sc["adancime"]).resolve()
     planuri = [Plan.incarca(p, dir_img, dir_ad) for p in sc["planuri"]]
     rand = Randator(W, H)
+    # zoom de siguranță pe fiecare plan, pe toată durata lui plus jumătățile trecerilor
+    for i, plan in enumerate(planuri):
+        t_in = float(planuri[i - 1].cfg.get("tranzitie", {}).get("durata", 0.6)) / 2
+        t_out = float(plan.cfg.get("tranzitie", {}).get("durata", 0.6)) / 2
+        m = calculeaza_siguranta(rand, plan, -t_in, plan.durata + t_out)
+        if m > 1.01:
+            print(f"planul {i + 1}: zoom +{(m - 1) * 100:.0f}% ca să nu iasă din fotografie", file=sys.stderr)
     starts, total = cronologie(planuri)
     nr = int(round(total * fps))
     gr = sc.get("gradare", {})
