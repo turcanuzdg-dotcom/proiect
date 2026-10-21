@@ -83,7 +83,8 @@ flowchart LR
 - Un eveniment respins de server pentru format invalid nu poate fi corectat din panou; se marchează
   rezolvat, iar operațiunea se reface manual. Tableta verifică aceleași limite înainte de a salva, deci
   cazul apare doar la date corupte.
-- Operațiunile de casă introduse din panou (depuneri, alimentări) au data introducerii, nu una aleasă.
+- Operațiunile de casă introduse din panou (depuneri, alimentări) se pot data în trecut, dar nu
+  se pot lega explicit de o tură; momentul ales decide tura căreia îi corectează numărarea.
 - Inventarierea cere internet (scripticul vine de pe server). Vânzarea merge în continuare offline.
 - Momentul vânzării vine de la ceasul tabletei; tabletele trebuie să aibă ora setată automat.
 - Același preț în toate locațiile; fără reduceri, carduri de fidelitate sau mese/comenzi deschise.

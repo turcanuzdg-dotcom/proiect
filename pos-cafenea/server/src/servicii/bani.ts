@@ -1,6 +1,7 @@
 import { rotunjeste, type Cont } from '@cafenea/shared';
 import type { Db } from '../db';
 import { EroareUtilizator } from '../erori';
+import { corecteazaNumarariUlterioare } from './ture';
 
 /** Soldul de numerar al fiecărei locații și încasările pe card dintr-un interval. */
 export async function rezumatBani(db: Db, de: string, pana: string) {
@@ -47,16 +48,28 @@ export interface DateMiscareAdmin {
   tip: 'depunere' | 'alimentare' | 'plata_marunta';
   suma: number;
   descriere: string;
+  /** Momentul real al operațiunii (ISO); lipsă = acum. */
+  la?: string | null;
 }
 
-/** Operațiuni de casă introduse din panou: depuneri la bancă/ridicări, alimentări, plăți mărunte. */
+/**
+ * Operațiuni de casă introduse din panou: depuneri la bancă/ridicări, alimentări, plăți mărunte.
+ * Se înregistrează la momentul real: o depunere făcută aseară și introdusă azi intră în ziua de
+ * ieri, iar numărarea de la închiderea turei de aseară e corectată, nu pe cea de azi.
+ */
 export async function adaugaMiscareBani(db: Db, d: DateMiscareAdmin, utilizatorId: number) {
   if (!(d.suma > 0)) throw new EroareUtilizator('Suma trebuie să fie pozitivă');
-  const semn = d.tip === 'alimentare' ? 1 : -1;
-  const r = await db.query(
-    `INSERT INTO miscari_bani (locatie_id, cont, suma, tip, descriere, utilizator_id)
-     VALUES ($1, 'numerar', $2, $3, $4, $5) RETURNING *`,
-    [d.locatie_id, semn * rotunjeste(d.suma), d.tip, d.descriere, utilizatorId],
-  );
-  return r[0];
+  const la = d.la ? new Date(d.la) : new Date();
+  if (Number.isNaN(la.getTime())) throw new EroareUtilizator('Momentul operațiunii nu e valid');
+  if (la.getTime() > Date.now() + 5 * 60_000) throw new EroareUtilizator('Momentul operațiunii nu poate fi în viitor');
+  const suma = (d.tip === 'alimentare' ? 1 : -1) * rotunjeste(d.suma);
+  return db.tx(async (t) => {
+    const r = await t.query(
+      `INSERT INTO miscari_bani (locatie_id, cont, suma, tip, descriere, utilizator_id, creata_la)
+       VALUES ($1, 'numerar', $2, $3, $4, $5, $6) RETURNING *`,
+      [d.locatie_id, suma, d.tip, d.descriere, utilizatorId, la.toISOString()],
+    );
+    await corecteazaNumarariUlterioare(t, d.locatie_id, la.toISOString(), suma, utilizatorId);
+    return r[0];
+  });
 }

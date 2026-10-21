@@ -138,3 +138,41 @@ describe('bani sincronizați după închiderea turei', () => {
     expect(rezumat.find((x: any) => x.locatie_id === botanica).sold_numerar).toBe(60);
   });
 });
+
+describe('operațiuni de casă introduse din panou', () => {
+  it('o depunere introdusă a doua zi, cu ora reală, corectează numărarea turei de aseară', async () => {
+    const loc = await t.admin.post('/api/locatii', { nume: 'Cafenea Seara', tip: 'punct' });
+    const tableta = await t.admin.post('/api/dispozitive', { nume: 'Tabletă Seara', locatie_id: loc.id });
+    const token = (await t.app.inject({ method: 'POST', url: '/api/pos/asociere', payload: { cod: tableta.cod_asociere } })).json().token;
+    const sync = async (evenimente: unknown[]) =>
+      (await t.app.inject({ method: 'POST', url: '/api/pos/sync', payload: { evenimente }, headers: { authorization: `Bearer ${token}` } })).json();
+    const maria = t.catalog.baristi.find((b) => b.nume === 'Maria Popa')!.id;
+    const cap = t.produs('Cappuccino');
+    const tura = randomUUID();
+    // Aseară: fond 500, un cappuccino, adminul a ridicat 300 lei din sertar la 19:00, barista a numărat corect 235.
+    const r = await sync([
+      evTuraDeschisa(tura, maria, 500, ora(7)),
+      evComanda(tura, maria, [{ produs_id: cap.id, cantitate: 1, pret_unitar: cap.pret, modificatori: [] }], 'numerar', { primit: 50, la: ora(10) }),
+      { id: randomUUID(), tip: 'tura_inchisa', la: ora(20), date: { tura_id: tura, utilizator_id: maria, doze: 2, numerar: 235, card: 0, anulari: 0, casari: 0 } },
+    ]);
+    expect(r.cu_eroare).toEqual([]);
+    let d = await t.admin.get(`/api/ture/${tura}`);
+    expect(d.dif_numerar).toBe(-300); // serverul nu știa încă de ridicarea banilor
+    expect(d.are_discrepante).toBe(true);
+
+    // Azi adminul introduce depunerea, cu ora de aseară.
+    await t.admin.post('/api/bani/miscari', { locatie_id: loc.id, tip: 'depunere', suma: 300, descriere: 'Ridicat pentru bancă', la: ora(19) });
+    d = await t.admin.get(`/api/ture/${tura}`);
+    expect(d.scriptic_numerar).toBe(235);
+    expect(d.dif_numerar).toBe(0);
+    expect(d.are_discrepante).toBe(false);
+    const rezumat = await t.admin.get(`/api/bani/rezumat?de=${ora(0)}&pana=${ora(23)}`);
+    expect(rezumat.find((x: any) => x.locatie_id === loc.id).sold_numerar).toBe(235);
+    // O operațiune din viitor e refuzată.
+    const viitor = await t.app.inject({
+      method: 'POST', url: '/api/bani/miscari', headers: { authorization: `Bearer ${t.tokenAdmin}` },
+      payload: { locatie_id: loc.id, tip: 'depunere', suma: 10, descriere: 'x', la: new Date(Date.now() + 3_600_000).toISOString() },
+    });
+    expect(viitor.statusCode).toBe(400);
+  });
+});

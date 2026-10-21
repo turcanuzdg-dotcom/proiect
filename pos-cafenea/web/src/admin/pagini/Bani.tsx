@@ -157,6 +157,12 @@ function FormularOperatiune({ locatieImplicita, onInchide, onSalvat }: { locatie
   const [tip, setTip] = useState<(typeof TIPURI)[number]['tip']>('depunere');
   const [suma, setSuma] = useState('');
   const [descriere, setDescriere] = useState('');
+  // Momentul real al operațiunii: o depunere făcută aseară intră în ziua de ieri.
+  const [la, setLa] = useState(() => {
+    const d = new Date();
+    d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+    return d.toISOString().slice(0, 16);
+  });
   const [eroare, setEroare] = useState<string | null>(null);
   const [lucreaza, setLucreaza] = useState(false);
 
@@ -167,7 +173,7 @@ function FormularOperatiune({ locatieImplicita, onInchide, onSalvat }: { locatie
     if (!(s > 0)) return setEroare('Suma trebuie să fie pozitivă');
     setLucreaza(true);
     try {
-      await api.post('/api/bani/miscari', { locatie_id: locatie, tip, suma: s, descriere: descriere.trim() || TIPURI.find((t) => t.tip === tip)!.titlu });
+      await api.post('/api/bani/miscari', { locatie_id: locatie, tip, suma: s, descriere: descriere.trim() || TIPURI.find((t) => t.tip === tip)!.titlu, la: new Date(la).toISOString() });
       arata('Operațiunea a fost înregistrată');
       onSalvat();
     } catch (err) {
@@ -216,6 +222,10 @@ function FormularOperatiune({ locatieImplicita, onInchide, onSalvat }: { locatie
         <label className="camp">
           <span>Descriere</span>
           <input value={descriere} onChange={(e) => setDescriere(e.target.value)} placeholder="de ex. depus la MAIB, chitanța nr. 123" />
+        </label>
+        <label className="camp">
+          <span>Când a avut loc</span>
+          <input type="datetime-local" value={la} onChange={(e) => setLa(e.target.value)} max={new Date(Date.now() - new Date().getTimezoneOffset() * 60_000).toISOString().slice(0, 16)} required />
         </label>
       </form>
     </Modal>

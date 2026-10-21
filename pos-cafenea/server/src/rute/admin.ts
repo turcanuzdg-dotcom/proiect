@@ -255,6 +255,7 @@ export async function ruteAdmin(app: FastifyInstance, db: Db, doarAdmin: preHand
           tip: z.enum(['depunere', 'alimentare', 'plata_marunta']),
           suma: z.number().finite().positive().max(10_000_000),
           descriere: z.string().trim().min(1).max(300),
+          la: z.string().datetime({ offset: true }).nullish(),
         })
         .parse(req.body);
       const r = await adaugaMiscareBani(db, d, req.utilizator!.id);
