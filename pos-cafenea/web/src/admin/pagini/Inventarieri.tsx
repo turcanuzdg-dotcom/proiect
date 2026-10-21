@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Modal } from '../../comun/Modal';
 import { formatCantitate, formatDataOra, formatLei } from '../../comun/format';
 import type { PropsPagina } from '../App';
@@ -141,27 +141,27 @@ function IncepeInventariere(props: { locatii: { id: number; nume: string }[]; on
 function FoaieInventar({ id, onInchide }: { id: number; onInchide: () => void }) {
   const { arata } = useAdmin();
   const r = useDate(() => api.get<Raport>(`/api/inventarieri/${id}`), [id]);
-  const [valori, setValori] = useState<Record<number, string>>({});
+  // Doar câmpurile atinse de admin; restul urmează mereu serverul (tableta poate număra în paralel).
+  const [editate, setEditate] = useState<Record<number, string>>({});
   const [cauta, setCauta] = useState('');
   const [lucreaza, setLucreaza] = useState(false);
 
-  // Valorile deja salvate pe server apar în câmpuri; ce tastează adminul are prioritate.
-  useEffect(() => {
-    if (!r.date) return;
-    setValori((v) => {
-      const nou: Record<number, string> = {};
-      for (const l of r.date!.linii) nou[l.articol_id] = v[l.articol_id] ?? (l.faptic != null ? String(l.faptic) : '');
-      return nou;
-    });
-  }, [r.date]);
+  const afisat = (l: Raport['linii'][number]) => editate[l.articol_id] ?? (l.faptic != null ? String(l.faptic) : '');
 
-  const modificate = () =>
-    (r.date?.linii ?? [])
-      .filter((l) => (valori[l.articol_id] ?? '') !== (l.faptic != null ? String(l.faptic) : ''))
-      .map((l) => {
-        const s = (valori[l.articol_id] ?? '').trim().replace(',', '.');
-        return { articol_id: l.articol_id, faptic: s === '' ? null : Number(s) };
-      });
+  /** Liniile tastate a căror valoare diferă numeric de cea de pe server. */
+  const modificate = () => {
+    const linii: { articol_id: number; faptic: number | null }[] = [];
+    for (const [cheie, text] of Object.entries(editate)) {
+      const articolId = Number(cheie);
+      const l = r.date?.linii.find((x) => x.articol_id === articolId);
+      if (!l) continue;
+      const s = text.trim().replace(',', '.');
+      const faptic = s === '' ? null : Number(s);
+      if (faptic === l.faptic) continue;
+      linii.push({ articol_id: articolId, faptic });
+    }
+    return linii;
+  };
 
   const salveaza = async () => {
     const linii = modificate();
@@ -169,10 +169,14 @@ function FoaieInventar({ id, onInchide }: { id: number; onInchide: () => void })
       arata('Cantitățile numărate trebuie să fie numere pozitive', 'pericol');
       return false;
     }
-    if (!linii.length) return true;
+    if (!linii.length) {
+      setEditate({});
+      return true;
+    }
     setLucreaza(true);
     try {
       await api.put(`/api/inventarieri/${id}/linii`, { linii });
+      setEditate({});
       r.reincarca();
       arata('Numărătoarea a fost salvată');
       return true;
@@ -185,8 +189,10 @@ function FoaieInventar({ id, onInchide }: { id: number; onInchide: () => void })
   };
 
   const finalizeaza = async () => {
+    const nesalvate = modificate().length;
+    const mesaj = `Finalizați inventarierea?${nesalvate ? ` Se salvează întâi cele ${nesalvate} cantități tastate.` : ''} Diferențele se înregistrează în stoc și foaia nu mai poate fi modificată.`;
+    if (!window.confirm(mesaj)) return;
     if (!(await salveaza())) return;
-    if (!window.confirm('Finalizați inventarierea? Diferențele se înregistrează în stoc și foaia nu mai poate fi modificată.')) return;
     setLucreaza(true);
     try {
       await api.post(`/api/inventarieri/${id}/finalizeaza`);
@@ -278,8 +284,8 @@ function FoaieInventar({ id, onInchide }: { id: number; onInchide: () => void })
                                 className="input-mic"
                                 inputMode="decimal"
                                 aria-label={`Faptic ${l.nume}`}
-                                value={valori[l.articol_id] ?? ''}
-                                onChange={(e) => setValori((v) => ({ ...v, [l.articol_id]: e.target.value }))}
+                                value={afisat(l)}
+                                onChange={(e) => setEditate((v) => ({ ...v, [l.articol_id]: e.target.value }))}
                               />
                               <span className="um">{l.um}</span>
                             </span>
