@@ -397,7 +397,9 @@ def main() -> None:
     gr = sc.get("gradare", {})
     # Filmul începe imediat după trecerea de la ultimul plan la primul, ca prima
     # imagine să fie curată; bucla rămâne perfectă (ultimul cadru duce în primul).
-    decalaj = float(planuri[-1].cfg.get("tranzitie", {}).get("durata", 0.6)) / 2
+    tz_bucla = planuri[-1].cfg.get("tranzitie", {})
+    # (la o tăietură, filmul începe exact pe ea: ultimul cadru e ultimul plan, primul e primul plan)
+    decalaj = 0.0 if tz_bucla.get("tip") == "taietura" else float(tz_bucla.get("durata", 0.6)) / 2
 
     if "cadre" in optiuni:  # doar câteva cadre, pe o foaie de verificare
         mod = optiuni["cadre"]
