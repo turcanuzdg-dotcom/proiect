@@ -26,8 +26,8 @@ export function Stare<T>(props: {
   if (props.eroare && props.date == null) return <div className="alerta pericol">{props.eroare}</div>;
   if (props.date == null) return <div className="gol">Se încarcă…</div>;
   return (
-    <div className={props.incarcare ? 'reincarcare' : undefined}>
-      {props.eroare && <div className="alerta pericol" style={{ marginBottom: 12 }}>{props.eroare}</div>}
+    <div className={props.incarcare ? 'stare reincarcare' : 'stare'}>
+      {props.eroare && <div className="alerta pericol">{props.eroare}</div>}
       {props.gol?.(props.date) ? <div className="gol card">{props.mesajGol ?? 'Nimic de afișat.'}</div> : props.children(props.date)}
     </div>
   );

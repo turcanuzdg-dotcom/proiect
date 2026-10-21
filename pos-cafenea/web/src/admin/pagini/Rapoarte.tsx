@@ -181,6 +181,8 @@ function presetariComparatie(): { titlu: string; a: IntervalZile; b: IntervalZil
   ];
 }
 
+const nrZile = (i: IntervalZile) => Math.round((Date.parse(`${i.pana}T12:00:00`) - Date.parse(`${i.de}T12:00:00`)) / 86_400_000) + 1;
+
 function RaportComparatie() {
   const preset = presetariComparatie();
   const [a, setA] = useState<IntervalZile>(preset[0].a);
@@ -239,6 +241,8 @@ function RaportComparatie() {
           const randuri = d.randuri.filter((x) => x.nume.toLowerCase().includes(cauta.trim().toLowerCase()));
           const max = Math.max(0, ...randuri.map((x) => Math.max(x.a_cantitate, x.b_cantitate)));
           const difTotal = d.total_b - d.total_a;
+          const zileA = nrZile(a);
+          const zileB = nrZile(b);
           return (
             <>
               <div className="card grila-kpi">
@@ -250,6 +254,11 @@ function RaportComparatie() {
                   nota={d.total_a ? `${difTotal >= 0 ? '+' : ''}${formatNumar((difTotal / d.total_a) * 100)}%` : undefined}
                 />
               </div>
+              {zileA !== zileB && (
+                <div className="alerta">
+                  Perioadele au lungimi diferite (A: {zileA} zile, B: {zileB} zile). Media pe zi: A {formatLei(d.total_a / zileA)}, B {formatLei(d.total_b / zileB)}.
+                </div>
+              )}
               {randuri.length === 0 ? (
                 <div className="gol card">Nicio vânzare pentru filtrele alese.</div>
               ) : (
@@ -459,7 +468,7 @@ function PierderiContinut(props: {
         <Kpi eticheta="Lipsă de numerar la ture" valoare={<span className={d.casa.minus < 0 ? 'minus' : ''}>{formatLei(d.casa.minus)}</span>} nota={d.casa.plus ? `plusuri ${formatLei(d.casa.plus)}` : undefined} />
       </div>
 
-      <div className="grila-carduri">
+      <div className="grila-carduri late">
         <section className="card sectiune">
           <h2>Casări pe motive (la cost)</h2>
           {d.casari.length === 0 ? (

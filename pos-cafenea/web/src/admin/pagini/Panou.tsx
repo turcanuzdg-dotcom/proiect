@@ -67,10 +67,24 @@ export function PaginaPanou({ navigheaza }: PropsPagina) {
                     <div key={t.id} className="alerta pericol">
                       <span>
                         <strong>Discrepanță la tură</strong> · {t.locatie} · {t.barista ?? '—'} · {formatDataOra(t.deschisa_la)}
-                        {t.inchisa_la ? '' : ' (tură încă deschisă)'} — numerar <Dif valoare={t.dif_numerar} lei />, card <Dif valoare={t.dif_card} lei />, doze <Dif valoare={t.dif_doze} />
-                        {t.dif_anulari ? <>, anulări <Dif valoare={t.dif_anulari} /></> : null}
-                        {t.dif_casari ? <>, casări <Dif valoare={t.dif_casari} /></> : null}
-                        {t.dif_fond ? <>, fond la deschidere <Dif valoare={t.dif_fond} lei /></> : null}
+                        {t.inchisa_la ? '' : ' (tură încă deschisă)'} —{' '}
+                        {(
+                          [
+                            ['numerar', t.dif_numerar, true],
+                            ['card', t.dif_card, true],
+                            ['doze', t.dif_doze, false],
+                            ['anulări', t.dif_anulari, false],
+                            ['casări', t.dif_casari, false],
+                            ['fond la deschidere', t.dif_fond, true],
+                          ] as const
+                        )
+                          .filter(([, v]) => v)
+                          .map(([nume, v, lei], i) => (
+                            <span key={nume}>
+                              {i > 0 && ', '}
+                              {nume} <Dif valoare={v} lei={lei} />
+                            </span>
+                          ))}
                       </span>
                       <button type="button" className="buton-secundar" onClick={() => navigheaza(`ture/${t.id}`)}>
                         Deschide tura

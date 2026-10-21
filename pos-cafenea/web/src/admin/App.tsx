@@ -29,8 +29,8 @@ const PAGINI: { cheie: string; titlu: string; grup: string; Componenta: Componen
   { cheie: 'transferuri', titlu: 'Transferuri', grup: 'Gestiune', Componenta: PaginaTransferuri },
   { cheie: 'inventarieri', titlu: 'Inventarieri', grup: 'Gestiune', Componenta: PaginaInventarieri },
   { cheie: 'bani', titlu: 'Bani', grup: 'Gestiune', Componenta: PaginaBani },
-  { cheie: 'retetar', titlu: 'Rețetar', grup: 'Configurare', Componenta: PaginaRetetar },
   { cheie: 'rapoarte', titlu: 'Rapoarte', grup: 'Analiză', Componenta: PaginaRapoarte },
+  { cheie: 'retetar', titlu: 'Rețetar', grup: 'Configurare', Componenta: PaginaRetetar },
   { cheie: 'setari', titlu: 'Setări', grup: 'Configurare', Componenta: PaginaSetari },
 ];
 

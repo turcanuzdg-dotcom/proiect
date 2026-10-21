@@ -85,6 +85,7 @@ textarea { min-height: 72px; resize: vertical; }
 .tabel-container { overflow-x: auto; border: 1px solid var(--linie); border-radius: var(--raza); background: var(--suprafata); }
 table.tabel { width: 100%; border-collapse: collapse; }
 .tabel th, .tabel td { padding: 9px 12px; border-bottom: 1px solid var(--linie); text-align: left; vertical-align: top; }
+.tabel th.num, .tabel td.num { text-align: right; }
 .tabel th { font-size: 12px; text-transform: uppercase; letter-spacing: 0.03em; color: var(--text-slab); background: var(--suprafata-2); font-weight: 700; position: sticky; top: 0; }
 .tabel tr:last-child td { border-bottom: none; }
 .tabel tbody tr.clic { cursor: pointer; }

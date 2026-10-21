@@ -58,13 +58,18 @@
 }
 .tab:hover { color: var(--text); }
 .tab.activ { color: var(--accent); border-bottom-color: var(--caramel); }
+.stare { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
 .reincarcare { opacity: 0.6; transition: opacity 0.15s; }
+/* baza.css aliniază toate celulele la stânga cu o regulă mai specifică decât .num */
 .sectiune { display: flex; flex-direction: column; gap: 12px; }
 .sectiune > h2 { margin-top: 6px; }
 
 /* ---- Indicatori ---- */
-.grila-kpi { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 12px; }
-.grila-carduri { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; }
+.grila-kpi { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 12px; }
+.grila-carduri { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr)); gap: 14px; }
+.grila-carduri.late { grid-template-columns: repeat(auto-fill, minmax(min(460px, 100%), 1fr)); }
+/* În panou mesajele scurte apar sus, ca să nu acopere butoanele din subsolul ferestrelor. */
+.toast { bottom: auto; top: 16px; }
 .kpi { display: flex; flex-direction: column; gap: 2px; }
 .kpi-eticheta { font-size: 13px; color: var(--text-slab); }
 .kpi-valoare { font-size: 24px; font-weight: 650; }

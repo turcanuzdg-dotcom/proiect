@@ -206,8 +206,9 @@ export async function reaplicaEveniment(db: Db, evId: string) {
       await t.query(`UPDATE evenimente_sync SET stare = 'aplicat', eroare = NULL WHERE id = $1`, [evId]);
     });
   } catch (err) {
-    if (err instanceof EroareUtilizator) {
-      await db.query('UPDATE evenimente_sync SET eroare = $2 WHERE id = $1', [evId, err.message]);
+    if (eroarePermanenta(err)) {
+      await db.query('UPDATE evenimente_sync SET eroare = $2 WHERE id = $1', [evId, (err as Error).message]);
+      if (!(err instanceof EroareUtilizator)) throw new EroareUtilizator(`Evenimentul tot nu poate fi aplicat: ${(err as Error).message}`);
     }
     throw err;
   }
