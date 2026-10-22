@@ -703,12 +703,12 @@ export function Setari({ onInchide }: { onInchide: () => void }) {
               <input value={cfg.secret ?? ''} onChange={(e) => setCfg({ ...cfg, secret: e.target.value.trim() })} autoComplete="off" />
             </label>
           </div>
-        ) : (
+        ) : cfg.tip === 'simulator' ? (
           <label className="bifa">
             <input type="checkbox" checked={!!cfg.simuleazaRefuz} onChange={(e) => setCfg({ ...cfg, simuleazaRefuz: e.target.checked })} />
             Simulează refuzul plăților cu cardul (pentru instruire)
           </label>
-        )}
+        ) : null}
         {test && <div className="alerta">{test}</div>}
         <div className="card mic slab">
           Tableta: {app.config.dispozitiv.nume} · {app.catalog.locatie.nume}
