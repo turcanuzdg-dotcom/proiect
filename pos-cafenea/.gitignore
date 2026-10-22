@@ -4,3 +4,4 @@ date/
 *.log
 .env
 punte/.secret
+simulare/public/date-demo.tar.gz

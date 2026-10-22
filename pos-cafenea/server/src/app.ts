@@ -5,16 +5,9 @@ import { ZodError } from 'zod';
 import type { Db } from './db';
 import { EroareUtilizator } from './erori';
 import { magistrala, type Notificare } from './magistrala';
-import { creeazaBilet, detinatorBilet, dispozitivDinToken, utilizatorDinToken, type DispozitivAutentificat, type UtilizatorAutentificat } from './servicii/acces';
+import { creeazaBilet, detinatorBilet, dispozitivDinToken, utilizatorDinToken } from './servicii/acces';
 import { ruteAdmin } from './rute/admin';
 import { rutePOS } from './rute/pos';
-
-declare module 'fastify' {
-  interface FastifyRequest {
-    utilizator?: UtilizatorAutentificat;
-    dispozitiv?: DispozitivAutentificat;
-  }
-}
 
 export interface OptiuniApp {
   db: Db;

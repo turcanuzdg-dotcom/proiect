@@ -72,6 +72,19 @@ Fără secret, puntea refuză orice comandă, deci o altă pagină din browser s
 nu pot porni plăți sau bonuri. Până se scriu driverele pentru modelele reale, atât puntea cât și
 POS-ul au un simulator.
 
+## Simularea în browser
+
+O pagină statică în care tot softul rulează în browser, fără server: serverul real (pe PGlite),
+tableta, panoul de administrare și un terminal PAX simulat, cu un ghid pas cu pas pentru client.
+
+```bash
+npm run simulare      # generează datele demo (~2 min) și construiește simulare/dist/
+```
+
+`simulare/dist/` se poate publica pe orice găzduire statică. Pagina `index.html` nu are `<html>` și
+`<head>`: e scrisă pentru găzduirea de artefacte, care le adaugă singură. Browserul trebuie să permită
+WebAssembly (`'wasm-unsafe-eval'` în Content-Security-Policy).
+
 ## Teste
 
 ```bash
@@ -89,4 +102,5 @@ TEST_DATABASE_URL=postgres://postgres@localhost/postgres npm test   # aceleași 
 | `web/src/pos/` | Aplicația de tabletă: IndexedDB, coada offline, sincronizare, echipamente, ecrane |
 | `web/src/admin/` | Panoul de administrare |
 | `punte/` | Serviciul local pentru alte echipamente (terminal/imprimantă pe USB sau rețea), când nu se folosește POSLink |
+| `simulare/` | Simularea în browser: serverul real pe PGlite, tableta, panoul și terminalul PAX simulat |
 | `docs/` | Arhitectura, maparea cerințelor, întrebări deschise |

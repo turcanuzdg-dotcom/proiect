@@ -25,7 +25,7 @@ export function Autentificare({ onIntrare }: { onIntrare: (token: string, utiliz
     <div className="pagina-login">
       <form className="card login" onSubmit={trimite}>
         <div className="marca">
-          <img src="/icon.svg" alt="" width={36} height={36} />
+          <img src="icon.svg" alt="" width={36} height={36} />
           <div>
             <h1>Administrare cafenea</h1>
             <p className="slab">Stocuri, bani, rețetar, ture și rapoarte</p>

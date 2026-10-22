@@ -12,4 +12,6 @@ rădăcină nu se aplică aici.
   `server/src/servicii/sync.ts`); aplicarea pe server trebuie să rămână idempotentă și în ordine.
 - Schema bazei: migrații noi în `server/migrari/NNN_*.sql`, niciodată modificări în cele existente.
 - Înainte de commit: `npm test` și `npm run typecheck` (din `pos-cafenea/`).
+- `simulare/` rulează serverul real în browser (rutele prin `simulare/src/server/ruter.ts`, modulele Node
+  înlocuite în `simulare/src/shim`); serviciile nu au voie să importe alte module Node decât cele de acolo.
 - Testele în browser se fac cu Playwright din scratchpad (Chromium la `/opt/pw-browsers/chromium`).

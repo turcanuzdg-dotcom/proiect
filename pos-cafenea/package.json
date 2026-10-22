@@ -9,7 +9,8 @@
     "start": "npm run start -w server",
     "seed": "npm run seed -w server",
     "test": "vitest run",
-    "typecheck": "tsc -p shared && tsc -p server && tsc -p web && tsc -p punte"
+    "typecheck": "tsc -p shared && tsc -p server && tsc -p web && tsc -p punte && tsc -p simulare",
+    "simulare": "tsx simulare/genereaza-date.ts && vite build --config simulare/vite.config.ts"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

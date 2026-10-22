@@ -100,7 +100,7 @@ function Cadru({ utilizator, onIesire }: { utilizator: string; onIesire: () => v
     <div className="cadru">
       <aside className="meniu">
         <div className="marca">
-          <img src="/icon.svg" alt="" width={28} height={28} />
+          <img src="icon.svg" alt="" width={28} height={28} />
           <span>Cafenea</span>
           <span className={live ? 'indicator-live activ' : 'indicator-live'} title={live ? 'Actualizare în timp real' : 'Fără legătură în timp real'}>
             {live ? 'live' : 'offline'}
