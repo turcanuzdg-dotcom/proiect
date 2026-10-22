@@ -5,3 +5,4 @@ date/
 .env
 punte/.secret
 simulare/public/date-demo.tar.gz
+simulare/dist-site/

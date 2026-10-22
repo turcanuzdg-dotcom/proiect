@@ -81,9 +81,16 @@ tableta, panoul de administrare și un terminal PAX simulat, cu un ghid pas cu p
 npm run simulare      # generează datele demo (~2 min) și construiește simulare/dist/
 ```
 
-`simulare/dist/` se poate publica pe orice găzduire statică. Pagina `index.html` nu are `<html>` și
-`<head>`: e scrisă pentru găzduirea de artefacte, care le adaugă singură. Browserul trebuie să permită
-WebAssembly (`'wasm-unsafe-eval'` în Content-Security-Policy).
+`simulare/dist/` e pentru găzduirea de artefacte: pagina `index.html` nu are `<html>` și `<head>`,
+pe care gazda le adaugă singură. Pentru un site public obișnuit:
+
+```bash
+npm run simulare:site   # simulare/dist-site/, document complet + previzualizarea linkului
+```
+
+`dist-site/` se publică pe ramura `gh-pages` (GitHub Pages servește
+https://turcanuzdg-dotcom.github.io/proiect/). Browserul trebuie să permită WebAssembly
+(`'wasm-unsafe-eval'` dacă gazda trimite Content-Security-Policy).
 
 ## Teste
 

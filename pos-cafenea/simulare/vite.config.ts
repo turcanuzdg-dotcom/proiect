@@ -25,14 +25,48 @@ function serverInBrowser(): Plugin {
 
 /**
  * Pagina (pagina.html) se publică așa cum e: gazda artefactului adaugă singură <html>, <head> și <body>.
- * Gazda servește doar tipuri web (fără .data sau .gz), deci fișierele binare de date pleacă ca text
- * base64: arhiva demo și fișierele PostgreSQL ale PGlite (comprimate întâi).
+ * Cu SIMULARE_SITE=<adresa publică> devine un document complet, pentru o găzduire statică obișnuită
+ * (GitHub Pages), cu previzualizarea pentru linkurile trimise pe Telegram sau Facebook.
+ * Gazda artefactelor servește doar tipuri web (fără .data sau .gz), deci fișierele binare de date
+ * pleacă ca text base64: arhiva demo și fișierele PostgreSQL ale PGlite (comprimate întâi).
  */
+const site = process.env.SIMULARE_SITE?.replace(/\/?$/, '/');
+
+function documentComplet(continut: string, adresa: string) {
+  const descriere = 'Încercați softul de vânzare și gestiune pentru cafenea: tableta baristei, terminalul PAX și panoul administratorului, direct în browser.';
+  return `<!doctype html>
+<html lang="ro">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Cafeneaua, simulată">
+<meta property="og:description" content="${descriere}">
+<meta property="og:url" content="${adresa}">
+<meta property="og:image" content="${adresa}previzualizare.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+</head>
+<body>
+${continut}
+</body>
+</html>
+`;
+}
+
 function pagina(): Plugin {
   return {
     name: 'pagina-simulare',
     generateBundle(_opt, bundle) {
-      this.emitFile({ type: 'asset', fileName: 'index.html', source: readFileSync(resolve(__dirname, 'pagina.html'), 'utf8') });
+      const continut = readFileSync(resolve(__dirname, 'pagina.html'), 'utf8');
+      this.emitFile({ type: 'asset', fileName: 'index.html', source: site ? documentComplet(continut, site) : continut });
+      if (site) {
+        this.emitFile({ type: 'asset', fileName: 'previzualizare.jpg', source: readFileSync(resolve(__dirname, 'previzualizare.jpg')) });
+        // Fără Jekyll: GitHub Pages ar ascunde fișierele care încep cu „_”.
+        this.emitFile({ type: 'asset', fileName: '.nojekyll', source: '' });
+      }
       // Sigla panoului (icon.svg, relativ la pagină).
       this.emitFile({ type: 'asset', fileName: 'icon.svg', source: readFileSync(resolve(radacina, 'web/public/icon.svg')) });
       const fs = Object.keys(bundle).find((k) => k.endsWith('.data'))!;
@@ -58,7 +92,7 @@ export default defineConfig({
     },
   },
   build: {
-    outDir: 'dist',
+    outDir: site ? 'dist-site' : 'dist',
     emptyOutDir: true,
     target: 'es2022',
     assetsInlineLimit: 0,
