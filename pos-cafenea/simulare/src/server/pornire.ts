@@ -3,7 +3,6 @@
 // doar terminalul PAX și rețeaua sunt înlocuite.
 import { PGlite, types } from '@electric-sql/pglite';
 import urlWasm from 'pglite-dist/pglite.wasm?url';
-import urlFs from 'pglite-dist/pglite.data?url';
 import { dinPglite, type Db } from '../../../server/src/db-comun';
 import { magistrala, type Notificare } from '../../../server/src/magistrala';
 import { ruteAdmin } from '../../../server/src/rute/admin';
@@ -60,6 +59,21 @@ async function descarca(url: string, laOcteti: (n: number, total: number) => voi
   return tot;
 }
 
+/** Datele binare vin ca text base64 (gazda servește doar tipuri web). */
+function dinBase64(octeti: Uint8Array<ArrayBuffer>): Uint8Array<ArrayBuffer> {
+  const binar = atob(new TextDecoder().decode(octeti).trim());
+  const rez = new Uint8Array(binar.length);
+  for (let i = 0; i < binar.length; i++) rez[i] = binar.charCodeAt(i);
+  return rez;
+}
+
+async function dezarhiveaza(gz: Uint8Array<ArrayBuffer>): Promise<Uint8Array<ArrayBuffer>> {
+  return new Uint8Array(await new Response(new Blob([gz]).stream().pipeThrough(new DecompressionStream('gzip'))).arrayBuffer());
+}
+
+// Fișierele de date stau lângă scriptul paginii (assets/).
+const bazaModul = import.meta.url;
+
 const ziLocala = (d: Date) => new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Chisinau' }).format(d);
 
 /** Mută tot istoricul cu un număr întreg de zile, ca ultima zi din arhivă să devină ieri. */
@@ -96,7 +110,7 @@ async function asociaza(db: Db, nume: string): Promise<TabletaSim> {
 
 export async function pornesteServer(laProgres: (p: Progres) => void): Promise<ServerSim> {
   // Cele trei fișiere mari se descarcă în paralel; progresul e suma lor.
-  const surse = [urlWasm, urlFs, 'date-demo.tar.gz'];
+  const surse = [urlWasm, new URL('pglite-fs.txt', bazaModul).href, new URL('date-demo.txt', bazaModul).href];
   const primiti = surse.map(() => 0);
   const totaluri = surse.map(() => 0);
   const raporteaza = () => {
@@ -104,7 +118,7 @@ export async function pornesteServer(laProgres: (p: Progres) => void): Promise<S
     const p = total ? primiti.reduce((s, x) => s + x, 0) / total : 0;
     laProgres({ faza: `Se descarcă programul și datele (${(primiti.reduce((s, x) => s + x, 0) / 1e6).toFixed(1)} MB)`, procent: Math.min(0.85, p * 0.85) });
   };
-  const [wasm, fs, arhiva] = await Promise.all(
+  const [wasm, fsText, arhivaText] = await Promise.all(
     surse.map((u, i) =>
       descarca(u, (n, t) => {
         primiti[i] = n;
@@ -115,6 +129,8 @@ export async function pornesteServer(laProgres: (p: Progres) => void): Promise<S
   );
 
   laProgres({ faza: 'Pornește baza de date (PostgreSQL în browser)', procent: 0.88 });
+  const fs = await dezarhiveaza(dinBase64(fsText));
+  const arhiva = dinBase64(arhivaText);
   const wasmModule = await WebAssembly.compile(wasm);
   const lite = await PGlite.create({
     wasmModule,

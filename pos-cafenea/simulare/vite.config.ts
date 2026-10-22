@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { gzipSync } from 'node:zlib';
 import { resolve } from 'node:path';
 import { defineConfig, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
@@ -22,14 +23,23 @@ function serverInBrowser(): Plugin {
   };
 }
 
-/** Pagina (pagina.html) se publică așa cum e: gazda artefactului adaugă singură <html>, <head> și <body>. */
+/**
+ * Pagina (pagina.html) se publică așa cum e: gazda artefactului adaugă singură <html>, <head> și <body>.
+ * Gazda servește doar tipuri web (fără .data sau .gz), deci fișierele binare de date pleacă ca text
+ * base64: arhiva demo și fișierele PostgreSQL ale PGlite (comprimate întâi).
+ */
 function pagina(): Plugin {
   return {
     name: 'pagina-simulare',
-    generateBundle() {
+    generateBundle(_opt, bundle) {
       this.emitFile({ type: 'asset', fileName: 'index.html', source: readFileSync(resolve(__dirname, 'pagina.html'), 'utf8') });
       // Sigla panoului (icon.svg, relativ la pagină).
       this.emitFile({ type: 'asset', fileName: 'icon.svg', source: readFileSync(resolve(radacina, 'web/public/icon.svg')) });
+      const fs = Object.keys(bundle).find((k) => k.endsWith('.data'))!;
+      const date = (bundle[fs] as { source: Uint8Array }).source;
+      delete bundle[fs];
+      this.emitFile({ type: 'asset', fileName: 'assets/pglite-fs.txt', source: gzipSync(date, { level: 9 }).toString('base64') });
+      this.emitFile({ type: 'asset', fileName: 'assets/date-demo.txt', source: readFileSync(resolve(__dirname, 'public/date-demo.tar.gz')).toString('base64') });
     },
   };
 }
@@ -37,6 +47,7 @@ function pagina(): Plugin {
 export default defineConfig({
   root: __dirname,
   base: './',
+  publicDir: false,
   plugins: [serverInBrowser(), react(), pagina()],
   resolve: {
     alias: {
