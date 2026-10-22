@@ -12,6 +12,7 @@ import {
 import { formatOra } from '../comun/format';
 import { uuid } from '../comun/uuid';
 import { useAplicatie } from './context';
+import type { RezultatCard } from './echipamente';
 import { AlegeModificatori, Casare, InchidereTura, Istoric, PlataCard, PlataMarunta, PlataNumerar, Setari } from './dialoguri';
 import { Inventar } from './Inventar';
 import * as stocare from './stocare';
@@ -44,6 +45,9 @@ export function Vanzare() {
   const [cos, setCos] = useState<LinieCos[]>([]);
   const [dialog, setDialog] = useState<Dialog>(null);
   const [cauta, setCauta] = useState('');
+  // Referința plății cu cardul: aceeași pentru toate încercările unei comenzi, ca terminalul
+  // s-o poată regăsi dacă răspunsul se pierde; devine id-ul comenzii.
+  const [referintaCard, setReferintaCard] = useState(() => uuid());
 
   const modificatori = useMemo(() => new Map(catalog.modificatori.map((m) => [m.id, m])), [catalog]);
   const produse = useMemo(() => {
@@ -75,9 +79,10 @@ export function Vanzare() {
     setCos((c) => c.flatMap((l) => (l.cheie !== cheie ? [l] : l.cantitate + delta <= 0 ? [] : [{ ...l, cantitate: l.cantitate + delta }])));
 
   /** Salvează comanda local (cu coada offline) și tipărește bonul. */
-  const finalizeaza = async (metoda: MetodaPlata, extra: { primit?: number; card_autorizare?: string; motiv_casare?: MotivCasare; nota?: string } = {}) => {
+  const finalizeaza = async (metoda: MetodaPlata, extra: { primit?: number; card?: RezultatCard; motiv_casare?: MotivCasare; nota?: string } = {}) => {
     const nr = await stocare.urmatorulNumar();
-    const comandaId = uuid();
+    const comandaId = metoda === 'card' ? referintaCard : uuid();
+    setReferintaCard(uuid());
     const ev = app.eveniment('comanda', {
       comanda_id: comandaId,
       tura_id: app.tura.id,
@@ -89,7 +94,9 @@ export function Vanzare() {
       linii,
       total,
       primit: extra.primit ?? null,
-      card_autorizare: extra.card_autorizare ?? null,
+      card_autorizare: extra.card?.autorizare ?? null,
+      card_rrn: extra.card?.rrn ?? null,
+      card_operation_id: extra.card?.operation_id ?? null,
     });
     const locala: stocare.ComandaLocala = {
       comanda_id: comandaId,
@@ -109,7 +116,9 @@ export function Vanzare() {
       total,
       primit: extra.primit ?? null,
       rest: extra.primit != null ? Math.round((extra.primit - total) * 100) / 100 : null,
-      card_autorizare: extra.card_autorizare ?? null,
+      card_autorizare: extra.card?.autorizare ?? null,
+      card_rrn: extra.card?.rrn ?? null,
+      card_operation_id: extra.card?.operation_id ?? null,
       barista: app.barista,
       stare: 'finalizata',
       bon_tiparit: false,
@@ -122,7 +131,8 @@ export function Vanzare() {
       const r = await app.echipamente
         .tiparesteBon({
           referinta: comandaId, nr, total, metoda, primit: locala.primit, rest: locala.rest,
-          linii: locala.linii.map((l) => ({ nume: l.nume + l.modificatori.map((m) => ` + ${m.nume}`).join(''), cantitate: l.cantitate, pret_unitar: l.total / l.cantitate, total: l.total })),
+          card: metoda === 'card' ? { autorizare: locala.card_autorizare, rrn: locala.card_rrn, operation_id: locala.card_operation_id } : null,
+          linii: locala.linii.map((l) => ({ produs_id: l.produs_id, nume: l.nume + l.modificatori.map((m) => ` + ${m.nume}`).join(''), cantitate: l.cantitate, pret_unitar: l.total / l.cantitate, total: l.total })),
         })
         .catch((e: Error) => ({ ok: false, mesaj: e.message }));
       if (r.ok) await stocare.marcheazaBonTiparit(comandaId);
@@ -233,7 +243,7 @@ export function Vanzare() {
       )}
       {dialog?.tip === 'numerar' && <PlataNumerar total={total} onConfirma={(primit) => finalizeaza('numerar', { primit })} onInchide={() => setDialog(null)} />}
       {dialog?.tip === 'card' && (
-        <PlataCard total={total} onAprobat={(autorizare) => finalizeaza('card', { card_autorizare: autorizare })} onInchide={() => setDialog(null)} />
+        <PlataCard total={total} referinta={referintaCard} onAprobat={(card) => finalizeaza('card', { card })} onInchide={() => setDialog(null)} />
       )}
       {dialog?.tip === 'casare' && (
         <Casare cos={cos} onConfirma={(motiv, nota) => finalizeaza('casare', { motiv_casare: motiv, nota })} onInchide={() => setDialog(null)} />

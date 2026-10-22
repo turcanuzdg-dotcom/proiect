@@ -31,6 +31,7 @@ export interface Produs {
   doze_cafea: number;
   ordine: number;
   activ: boolean;
+  cota_tva: string | null;
   reteta: { articol_id: number; cantitate: number }[];
   modificatori: number[];
   cost_reteta: number;

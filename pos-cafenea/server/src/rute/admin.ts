@@ -14,6 +14,7 @@ import { fisaArticol, stocLocatie, stocToateLocatiile } from '../servicii/stoc';
 import { detaliuTura, listaTure, verificaTura } from '../servicii/ture';
 import { listaComenzi } from '../servicii/vanzari';
 import { listaEroriSync, marcheazaRezolvat, reaplicaEveniment } from '../servicii/sync';
+import * as terminal from '../servicii/terminal';
 import { schemaLiniiInventar } from './pos';
 
 const idNum = z.object({ id: z.coerce.number().int().positive() });
@@ -39,6 +40,7 @@ const schemaProdus = z.object({
   doze_cafea: z.number().finite().min(0).max(20).optional(),
   ordine: z.number().int().optional(),
   activ: z.boolean().optional(),
+  cota_tva: z.string().regex(/^[A-Z_]$/, 'o literă A–Z sau _').nullish(),
   reteta: z.array(linieReteta).max(50),
   modificatori: z.array(z.number().int().positive()).max(50),
 });
@@ -105,6 +107,19 @@ export async function ruteAdmin(app: FastifyInstance, db: Db, doarAdmin: preHand
     a.put('/api/dispozitive/:id/activ', async (req) => {
       await acces.activeazaDispozitiv(db, idNum.parse(req.params).id, z.object({ activ: z.boolean() }).parse(req.body).activ);
       return { ok: true };
+    });
+    a.put('/api/dispozitive/:id/terminal', async (req) => {
+      const { terminal_device_id } = z.object({ terminal_device_id: z.string().trim().max(100).nullable() }).parse(req.body);
+      await terminal.seteazaTerminal(db, idNum.parse(req.params).id, terminal_device_id);
+      return { ok: true };
+    });
+    a.get('/api/dispozitive/:id/terminal/stare', async (req) => terminal.stareTerminal(db, idNum.parse(req.params).id));
+
+    a.get('/api/terminal/config', async () => ({ configurat: terminal.poslinkConfigurat(), fiscal: await terminal.citesteFiscal(db) }));
+    a.put('/api/setari/fiscal', async (req) => {
+      const f = z.object({ cota_tva_implicita: z.string().regex(/^[A-Z_]$/), antet: z.string().max(60) }).parse(req.body);
+      await scrieSetare(db, 'fiscal', f);
+      return f;
     });
 
     a.get('/api/setari/tolerante', async () => citesteTolerante(db));

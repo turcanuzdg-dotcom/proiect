@@ -63,12 +63,13 @@ export async function inregistreazaComanda(db: Db, ctx: ContextPOS, la: string, 
 
   await db.query(
     `INSERT INTO comenzi (id, locatie_id, tura_id, dispozitiv_id, utilizator_id, nr, creata_la, metoda,
-                          motiv_casare, nota, total, primit, rest, card_autorizare, doze_cafea)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
+                          motiv_casare, nota, total, primit, rest, card_autorizare, doze_cafea, card_rrn, card_operation_id)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
     [
       d.comanda_id, ctx.locatie_id, d.tura_id, ctx.dispozitiv_id, d.utilizator_id, d.nr, la, d.metoda,
       casare ? d.motiv_casare : null, d.nota ?? null, total, primit,
       primit != null ? rotunjeste(primit - total) : null, d.card_autorizare ?? null, rotunjeste(doze),
+      d.card_rrn ?? null, d.card_operation_id ?? null,
     ],
   );
   await insereaza(db, 'comenzi_linii', ['comanda_id', 'produs_id', 'cantitate', 'pret_unitar', 'modificatori', 'total', 'cost'], randuriLinii);

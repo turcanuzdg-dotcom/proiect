@@ -57,6 +57,8 @@ export interface DateProdus {
   doze_cafea?: number;
   ordine?: number;
   activ?: boolean;
+  /** Litera cotei de TVA de pe casa fiscală; lipsă = cea implicită din setări. */
+  cota_tva?: string | null;
   reteta: LinieReteta[];
   modificatori: number[];
 }
@@ -88,17 +90,17 @@ export async function salveazaProdus(db: Db, d: DateProdus, id?: number) {
     let produsId = id;
     if (id) {
       const r = await t.query(
-        `UPDATE produse SET nume = $2, categorie_id = $3, pret = $4, doze_cafea = $5, ordine = $6, activ = $7
+        `UPDATE produse SET nume = $2, categorie_id = $3, pret = $4, doze_cafea = $5, ordine = $6, activ = $7, cota_tva = $8
           WHERE id = $1 RETURNING id`,
-        [id, d.nume, d.categorie_id, d.pret, d.doze_cafea ?? 0, d.ordine ?? 0, d.activ ?? true],
+        [id, d.nume, d.categorie_id, d.pret, d.doze_cafea ?? 0, d.ordine ?? 0, d.activ ?? true, d.cota_tva || null],
       );
       if (!r[0]) throw new EroareNegasit('Produsul');
       await t.query('DELETE FROM retete WHERE produs_id = $1', [id]);
       await t.query('DELETE FROM produse_modificatori WHERE produs_id = $1', [id]);
     } else {
       const r = await t.query(
-        `INSERT INTO produse (nume, categorie_id, pret, doze_cafea, ordine, activ) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
-        [d.nume, d.categorie_id, d.pret, d.doze_cafea ?? 0, d.ordine ?? 0, d.activ ?? true],
+        `INSERT INTO produse (nume, categorie_id, pret, doze_cafea, ordine, activ, cota_tva) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
+        [d.nume, d.categorie_id, d.pret, d.doze_cafea ?? 0, d.ordine ?? 0, d.activ ?? true, d.cota_tva || null],
       );
       produsId = r[0].id;
     }

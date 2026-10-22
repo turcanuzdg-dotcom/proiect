@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { ETICHETE_MOTIVE, LIMITE, MOTIVE_CASARE, formatLei, type ModificatorCatalog, type MotivCasare, type ProdusCatalog } from '@cafenea/shared';
-import { creeazaEchipamente } from './echipamente';
+import { creeazaEchipamente, type RezultatCard } from './echipamente';
 import { formatDataOra, formatOra } from '../comun/format';
 import { Modal } from '../comun/Modal';
 import { useAplicatie } from './context';
@@ -113,7 +113,7 @@ export function PlataNumerar({ total, onConfirma, onInchide }: { total: number; 
   );
 }
 
-export function PlataCard({ total, onAprobat, onInchide }: { total: number; onAprobat: (autorizare?: string) => Promise<void>; onInchide: () => void }) {
+export function PlataCard({ total, referinta, onAprobat, onInchide }: { total: number; referinta: string; onAprobat: (card: RezultatCard) => Promise<void>; onInchide: () => void }) {
   const { echipamente } = useAplicatie();
   const [stare, setStare] = useState<{ tip: 'asteapta' } | { tip: 'refuzat'; mesaj: string }>({ tip: 'asteapta' });
   const [incercare, setIncercare] = useState(0);
@@ -122,10 +122,10 @@ export function PlataCard({ total, onAprobat, onInchide }: { total: number; onAp
     let anulat = false;
     setStare({ tip: 'asteapta' });
     echipamente
-      .platesteCard(total, `cmd-${Date.now()}`)
+      .platesteCard(total, referinta)
       .then(async (r) => {
         if (anulat) return;
-        if (r.aprobat) await onAprobat(r.autorizare);
+        if (r.aprobat) await onAprobat(r);
         else setStare({ tip: 'refuzat', mesaj: r.mesaj ?? 'Plata a fost refuzată' });
       })
       .catch((e: Error) => !anulat && setStare({ tip: 'refuzat', mesaj: `Terminalul nu răspunde: ${e.message}` }));
@@ -217,7 +217,8 @@ const bonDin = (c: stocare.ComandaLocala): BonFiscal => ({
   metoda: c.metoda === 'card' ? 'card' : 'numerar',
   primit: c.primit,
   rest: c.rest,
-  linii: c.linii.map((l) => ({ nume: l.nume + l.modificatori.map((m) => ` + ${m.nume}`).join(''), cantitate: l.cantitate, pret_unitar: l.total / l.cantitate, total: l.total })),
+  card: c.metoda === 'card' ? { autorizare: c.card_autorizare, rrn: c.card_rrn, operation_id: c.card_operation_id } : null,
+  linii: c.linii.map((l) => ({ produs_id: l.produs_id, nume: l.nume + l.modificatori.map((m) => ` + ${m.nume}`).join(''), cantitate: l.cantitate, pret_unitar: l.total / l.cantitate, total: l.total })),
 });
 
 export function Istoric({ onInchide }: { onInchide: () => void }) {
@@ -280,7 +281,7 @@ export function Istoric({ onInchide }: { onInchide: () => void }) {
         subsol={
           selectata.stare === 'finalizata' && (
             <>
-              {selectata.metoda !== 'casare' && (
+              {selectata.metoda !== 'casare' && (!selectata.bon_tiparit || app.echipamente.poateDuplica) && (
                 <button className="buton-secundar" disabled={ocupat} onClick={() => tipareste(selectata)}>
                   {selectata.bon_tiparit ? 'Copie bon (nefiscală)' : 'Tipărește bonul fiscal'}
                 </button>
@@ -407,7 +408,9 @@ function Anulare({ comanda, onInapoi, onGata }: { comanda: stocare.ComandaLocala
     }
     // Pe card, banii se dau înapoi prin terminal înainte de a înregistra anularea.
     if (comanda.metoda === 'card') {
-      const r = await app.echipamente.returCard(comanda.total, comanda.card_autorizare, comanda.comanda_id).catch((e: Error) => ({ aprobat: false, mesaj: e.message }));
+      const r = await app.echipamente
+        .returCard(comanda.total, { autorizare: comanda.card_autorizare, rrn: comanda.card_rrn, operation_id: comanda.card_operation_id }, comanda.comanda_id)
+        .catch((e: Error) => ({ aprobat: false, mesaj: e.message }));
       if (!r.aprobat) {
         setEroare(`Returul pe card nu a reușit: ${r.mesaj ?? 'terminalul a refuzat'}`);
         setLucreaza(false);
@@ -646,7 +649,7 @@ export function Setari({ onInchide }: { onInchide: () => void }) {
               setTest('Se verifică…');
               try {
                 // Instanța nouă, nu cea din contextul de dinainte de salvare.
-                const s = await creeazaEchipamente(cfg).verifica();
+                const s = await creeazaEchipamente(cfg, () => app.config.token).verifica();
                 setTest(`Terminal: ${s.terminal} · Imprimantă: ${s.imprimanta}`);
               } catch (e) {
                 setTest(`Nu răspunde: ${(e as Error).message}`);
@@ -671,14 +674,23 @@ export function Setari({ onInchide }: { onInchide: () => void }) {
       <div className="randuri-form">
         <div className="camp">
           <span>Legătura cu terminalul de plată și imprimanta fiscală</span>
-          <div className="doua-coloane">
-            <button className={`optiune${cfg.tip === 'simulator' ? ' bifata' : ''}`} onClick={() => setCfg({ ...cfg, tip: 'simulator' })}>
-              Simulator (fără echipamente)
+          <div className="lista-optiuni">
+            <button className={`optiune${cfg.tip === 'server' ? ' bifata' : ''}`} onClick={() => setCfg({ ...cfg, tip: 'server' })}>
+              Terminal fiscal prin server
             </button>
             <button className={`optiune${cfg.tip === 'punte' ? ' bifata' : ''}`} onClick={() => setCfg({ ...cfg, tip: 'punte' })}>
               Punte locală
             </button>
+            <button className={`optiune${cfg.tip === 'simulator' ? ' bifata' : ''}`} onClick={() => setCfg({ ...cfg, tip: 'simulator' })}>
+              Simulator (fără echipamente)
+            </button>
           </div>
+          {cfg.tip === 'server' && (
+            <p className="slab mic">
+              Terminalul bancar în regim fiscal (de ex. PAX A930 cu IS Fiscal) legat de această tabletă în panou, la Setări → Tablete. Plata cu
+              cardul, bonul fiscal și raportul Z se fac pe el, prin POSLink. Are nevoie de internet.
+            </p>
+          )}
         </div>
         {cfg.tip === 'punte' ? (
           <div className="doua-coloane">

@@ -30,6 +30,9 @@ export function App() {
   const sincronizator = useRef<Sincronizator | null>(null);
   const catalogRef = useRef<CatalogPOS | undefined>(undefined);
   catalogRef.current = catalog;
+  const configRef = useRef<stocare.ConfigTableta | undefined>(undefined);
+  configRef.current = config;
+  const tokenTableta = useCallback(() => configRef.current?.token, []);
 
   const anunta = useCallback((mesaj: string, pericol = false) => {
     setToast({ mesaj, pericol });
@@ -37,15 +40,20 @@ export function App() {
   }, []);
 
   const incarcaCatalog = useCallback(async (token: string) => {
-    const c = await cerereJson<CatalogPOS>('/api/pos/catalog', { token, timeout: 15_000 });
+    const c = await cerereJson<CatalogPOS & { terminal_prin_server?: boolean }>('/api/pos/catalog', { token, timeout: 15_000 });
     await stocare.scrie('catalog', c);
     setCatalog(c);
+    // Tableta are un terminal fiscal legat în panou și nu s-a ales nimic aici: îl folosim din oficiu.
+    if (c.terminal_prin_server && !(await stocare.citeste('echipamente'))) {
+      await stocare.scrie('echipamente', { tip: 'server', url: '' });
+      setEchipamente(creeazaEchipamente({ tip: 'server', url: '' }, tokenTableta));
+    }
     return c;
-  }, []);
+  }, [tokenTableta]);
 
   const reincarcaEchipamente = useCallback(async () => {
-    setEchipamente(creeazaEchipamente(await stocare.citeste('echipamente')));
-  }, []);
+    setEchipamente(creeazaEchipamente(await stocare.citeste('echipamente'), tokenTableta));
+  }, [tokenTableta]);
 
   // Pornire: totul se citește din memoria tabletei, deci merge și fără internet.
   useEffect(() => {

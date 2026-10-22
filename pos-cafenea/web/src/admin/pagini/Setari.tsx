@@ -7,11 +7,12 @@ import { CapPagina, FiltruLocatie, Rand, Stare, Taburi } from '../componente';
 import { useAdmin, useDate } from '../context';
 import type { Locatie } from '../tipuri';
 
-type Tab = 'locatii' | 'utilizatori' | 'tablete' | 'tolerante' | 'erori';
+type Tab = 'locatii' | 'utilizatori' | 'tablete' | 'fiscal' | 'tolerante' | 'erori';
 const TABURI: { cheie: Tab; titlu: string }[] = [
   { cheie: 'locatii', titlu: 'Locații' },
   { cheie: 'utilizatori', titlu: 'Utilizatori' },
   { cheie: 'tablete', titlu: 'Tablete' },
+  { cheie: 'fiscal', titlu: 'Terminal fiscal' },
   { cheie: 'tolerante', titlu: 'Toleranțe la închidere' },
   { cheie: 'erori', titlu: 'Erori de sincronizare' },
 ];
@@ -25,6 +26,7 @@ export function PaginaSetari({ sub, navigheaza }: PropsPagina) {
       {tab === 'locatii' && <TabLocatii />}
       {tab === 'utilizatori' && <TabUtilizatori />}
       {tab === 'tablete' && <TabTablete />}
+      {tab === 'fiscal' && <TabFiscal />}
       {tab === 'tolerante' && <TabTolerante />}
       {tab === 'erori' && <TabErori />}
     </>
@@ -299,6 +301,67 @@ function FormularUtilizator(props: { utilizator: Utilizator | null; onInchide: (
   );
 }
 
+// ---------------- Terminal fiscal (POSLink) ----------------
+
+interface ConfigTerminal {
+  configurat: boolean;
+  fiscal: { cota_tva_implicita: string; antet: string };
+}
+
+function TabFiscal() {
+  const { arata } = useAdmin();
+  const r = useDate(() => api.get<ConfigTerminal>('/api/terminal/config'), []);
+  const [cota, setCota] = useState<string | null>(null);
+  const [antet, setAntet] = useState<string | null>(null);
+  const salveaza = async (e: FormEvent) => {
+    e.preventDefault();
+    try {
+      await api.put('/api/setari/fiscal', { cota_tva_implicita: (cota ?? r.date?.fiscal.cota_tva_implicita ?? 'A').toUpperCase(), antet: antet ?? r.date?.fiscal.antet ?? '' });
+      arata('Setările fiscale au fost salvate');
+      r.reincarca();
+    } catch (err) {
+      arata(mesajEroare(err), 'pericol');
+    }
+  };
+  return (
+    <Stare {...r}>
+      {(c) => (
+        <div className="randuri-form" style={{ maxWidth: 720 }}>
+          <div className={`alerta ${c.configurat ? 'succes' : 'avertisment'}`}>
+            {c.configurat
+              ? 'Legătura cu POSLink (Intelectsoft) este configurată pe server. Fiecare tabletă primește terminalul ei din tabul „Tablete”.'
+              : 'Legătura cu POSLink nu este configurată: setați variabila POSLINK_API_KEY pe server (cheia din cabinetul POSLink). Până atunci tabletele folosesc simulatorul.'}
+          </div>
+          <p className="slab mic">
+            Terminalul bancar Android în regim fiscal (de ex. PAX A930 cu IS Fiscal) face trei lucruri pentru tabletă: încasează cardul, tipărește bonul fiscal și
+            scoate raportul Z. Cheia API stă doar pe server; tableta vorbește cu serverul nostru.
+          </p>
+          <form className="randuri-form" onSubmit={salveaza}>
+            <div className="doua-coloane">
+              <label className="camp">
+                <span>Cota TVA implicită (litera de pe casa fiscală)</span>
+                <input value={cota ?? c.fiscal.cota_tva_implicita} onChange={(e) => setCota(e.target.value.toUpperCase().slice(0, 1))} maxLength={1} />
+              </label>
+              <label className="camp">
+                <span>Text în antetul bonului (opțional)</span>
+                <input value={antet ?? c.fiscal.antet} onChange={(e) => setAntet(e.target.value)} maxLength={60} placeholder="de ex. Mulțumim!" />
+              </label>
+            </div>
+            <div>
+              <button type="submit" className="buton">
+                Salvează
+              </button>
+            </div>
+          </form>
+          <p className="slab mic">
+            Literele cotelor (A = 20%, B = 8%, …) sunt cele configurate pe casa fiscală a clientului; se văd în cabinetul MEV. Un produs poate avea propria literă, din Rețetar.
+          </p>
+        </div>
+      )}
+    </Stare>
+  );
+}
+
 // ---------------- Tablete ----------------
 
 interface Dispozitiv {
@@ -311,6 +374,7 @@ interface Dispozitiv {
   creat_la: string;
   ultima_sincronizare: string | null;
   asociat: boolean;
+  terminal_device_id: string | null;
 }
 
 function TabTablete() {
@@ -356,6 +420,28 @@ function TabTablete() {
       arata(mesajEroare(err), 'pericol');
     }
   };
+  // ID-ul terminalului (DeviceID din cabinetul POSLink) legat de tabletă.
+  const [terminale, setTerminale] = useState<Record<number, string>>({});
+  const salveazaTerminal = async (d: Dispozitiv) => {
+    const valoare = (terminale[d.id] ?? d.terminal_device_id ?? '').trim();
+    try {
+      await api.put(`/api/dispozitive/${d.id}/terminal`, { terminal_device_id: valoare || null });
+      arata(valoare ? 'Terminalul a fost legat de tabletă' : 'Terminalul a fost dezlegat');
+      setTerminale((v) => { const n = { ...v }; delete n[d.id]; return n; });
+      r.reincarca();
+    } catch (err) {
+      arata(mesajEroare(err), 'pericol');
+    }
+  };
+  const verificaTerminal = async (d: Dispozitiv) => {
+    try {
+      const s = await api.get<{ stare: Record<string, unknown> }>(`/api/dispozitive/${d.id}/terminal/stare`);
+      const st = s.stare;
+      arata(`Terminal ${st.online === false ? 'offline' : 'online'}${st.battery != null ? ` · baterie ${st.battery}%` : ''}${st.paper != null ? ` · hârtie ${st.paper}` : ''}${st.bank ? ` · ${st.bank}` : ''}`);
+    } catch (err) {
+      arata(mesajEroare(err), 'pericol');
+    }
+  };
 
   return (
     <>
@@ -376,6 +462,7 @@ function TabTablete() {
                   <th>Tableta</th>
                   <th>Cafeneaua</th>
                   <th>Stare</th>
+                  <th>Terminal fiscal (ID POSLink)</th>
                   <th>Ultima sincronizare</th>
                   <th />
                 </tr>
@@ -393,6 +480,28 @@ function TabTablete() {
                       ) : (
                         <span className="insigna info">așteaptă codul {d.cod_asociere}</span>
                       )}
+                    </td>
+                    <td>
+                      <span className="cu-um">
+                        <input
+                          className="input-mic"
+                          style={{ width: 240 }}
+                          placeholder="DeviceID din cabinetul POSLink"
+                          aria-label={`Terminal ${d.nume}`}
+                          value={terminale[d.id] ?? d.terminal_device_id ?? ''}
+                          onChange={(e) => setTerminale((v) => ({ ...v, [d.id]: e.target.value }))}
+                        />
+                        {terminale[d.id] !== undefined && terminale[d.id] !== (d.terminal_device_id ?? '') && (
+                          <button type="button" className="buton-link" onClick={() => salveazaTerminal(d)}>
+                            Salvează
+                          </button>
+                        )}
+                        {d.terminal_device_id && terminale[d.id] === undefined && (
+                          <button type="button" className="buton-link" onClick={() => verificaTerminal(d)}>
+                            Verifică
+                          </button>
+                        )}
+                      </span>
                     </td>
                     <td>{formatDataOra(d.ultima_sincronizare)}</td>
                     <td className="num">

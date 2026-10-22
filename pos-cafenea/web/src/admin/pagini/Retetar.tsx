@@ -201,6 +201,7 @@ function FormularProdus(props: Comune & { produs: Produs | null; onInchide: () =
   const [doze, setDoze] = useState(p ? String(p.doze_cafea) : '0');
   const [ordine, setOrdine] = useState(p ? String(p.ordine) : '0');
   const [activ, setActiv] = useState(p?.activ ?? true);
+  const [cotaTva, setCotaTva] = useState(p?.cota_tva ?? '');
   const [linii, setLinii] = useState<LinieForm[]>(p ? p.reteta.map((l) => linie(String(l.articol_id), String(l.cantitate))) : [linie()]);
   const [mods, setMods] = useState<number[]>(p?.modificatori ?? []);
   const [eroare, setEroare] = useState<string | null>(null);
@@ -224,6 +225,7 @@ function FormularProdus(props: Comune & { produs: Produs | null; onInchide: () =
         doze_cafea: numar(doze) || 0,
         ordine: Math.round(numar(ordine) || 0),
         activ,
+        cota_tva: cotaTva.trim().toUpperCase() || null,
         reteta,
         modificatori: mods,
       };
@@ -291,6 +293,10 @@ function FormularProdus(props: Comune & { produs: Produs | null; onInchide: () =
             <input inputMode="numeric" value={ordine} onChange={(e) => setOrdine(e.target.value)} />
           </label>
         </div>
+        <label className="camp" style={{ maxWidth: 320 }}>
+          <span>Cota TVA pe bonul fiscal (litera de pe casa fiscală; gol = cea implicită)</span>
+          <input value={cotaTva} onChange={(e) => setCotaTva(e.target.value.toUpperCase().slice(0, 1))} placeholder="de ex. A" maxLength={1} />
+        </label>
         <label className="bifa">
           <input type="checkbox" checked={activ} onChange={(e) => setActiv(e.target.checked)} /> Activ (apare pe tabletă)
         </label>

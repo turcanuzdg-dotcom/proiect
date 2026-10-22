@@ -127,6 +127,9 @@ export interface DateComanda {
   total: number;
   primit?: number | null;
   card_autorizare?: string | null;
+  /** RRN și operationId ale plății pe terminal: necesare pentru restituire. */
+  card_rrn?: string | null;
+  card_operation_id?: string | null;
 }
 
 export interface DateAnulare {

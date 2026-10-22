@@ -38,6 +38,8 @@ const schemaEveniment = z.discriminatedUnion('tip', [
       total: bani,
       primit: bani.nullish(),
       card_autorizare: text(100).nullish(),
+      card_rrn: text(100).nullish(),
+      card_operation_id: text(100).nullish(),
     }),
   }),
   z.object({

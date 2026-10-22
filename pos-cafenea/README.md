@@ -44,6 +44,19 @@ PORT=3000 npm start
   `DATABASE_URL` setat, serverul refuză să pornească fără `ADMIN_PAROLA` dacă nu există niciun admin.
 - Migrațiile bazei de date (`server/migrari/*.sql`) se aplică automat la pornire.
 
+### Terminalul fiscal (POSLink / Intelectsoft)
+
+Pentru un terminal bancar Android în regim fiscal (de ex. PAX A930 cu IS Fiscal), plata cu cardul și
+bonul fiscal merg prin API-ul POSLink, din server:
+
+```bash
+POSLINK_API_KEY=<cheia din cabinetul POSLink> npm start     # opțional POSLINK_URL
+```
+
+Apoi, în panou, la Setări → Tablete, se trece pentru fiecare tabletă `DeviceID`-ul terminalului ei,
+iar la Setări → Terminal fiscal, litera cotei de TVA implicite. Tableta alege singură „Terminal fiscal
+prin server” când are un terminal legat.
+
 ### Puntea de echipamente
 
 Browserul tabletei nu poate vorbi direct cu terminalul băncii sau cu casa de marcat. Pentru ele rulează
@@ -75,5 +88,5 @@ TEST_DATABASE_URL=postgres://postgres@localhost/postgres npm test   # aceleași 
 | `server/` | API Fastify, migrații SQL, servicii (vânzări, ture, stoc, bani, inventar, rapoarte, sincronizare), date demo |
 | `web/src/pos/` | Aplicația de tabletă: IndexedDB, coada offline, sincronizare, echipamente, ecrane |
 | `web/src/admin/` | Panoul de administrare |
-| `punte/` | Serviciul local pentru terminalul de plată și imprimanta fiscală |
+| `punte/` | Serviciul local pentru alte echipamente (terminal/imprimantă pe USB sau rețea), când nu se folosește POSLink |
 | `docs/` | Arhitectura, maparea cerințelor, întrebări deschise |

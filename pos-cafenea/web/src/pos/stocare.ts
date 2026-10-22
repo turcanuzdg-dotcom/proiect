@@ -42,6 +42,8 @@ export interface ComandaLocala {
   primit: number | null;
   rest: number | null;
   card_autorizare: string | null;
+  card_rrn?: string | null;
+  card_operation_id?: string | null;
   barista: BaristaActiv;
   stare: 'finalizata' | 'anulata';
   anulata_la?: string;
@@ -51,7 +53,7 @@ export interface ComandaLocala {
 }
 
 export interface ConfigEchipamente {
-  tip: 'simulator' | 'punte';
+  tip: 'simulator' | 'punte' | 'server';
   url: string;
   /** Secretul afișat de punte la pornire. */
   secret?: string;

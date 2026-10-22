@@ -26,9 +26,9 @@ flowchart LR
 | Cerința clientului | Cum e rezolvată | Stare |
 |---|---|---|
 | **1. Două module sincronizate în timp real** | POS (`web/src/pos`) și panou (`web/src/admin`) pe același API. Panoul primește notificări prin SSE (`/api/flux`) și se reîmprospătează singur la fiecare vânzare. | gata |
-| **2. Trimiterea sumei la terminal, bon tipărit direct** | `web/src/pos/echipamente.ts` + `punte/`. Plata cu cardul trimite suma la terminal și salvează comanda doar după aprobare; bonul fiscal se tipărește automat, iar dacă imprimanta nu răspunde vânzarea rămâne salvată și bonul se poate retipări din Istoric. | interfață gata, **driverele reale lipsesc** (vezi întrebările) |
+| **2. Trimiterea sumei la terminal, bon tipărit direct** | Terminalul clientului e un **PAX A930** (Android) cu softul fiscal IntelectSoft și acceptare Moldindconbank, în „regim fiscal”: același aparat încasează cardul și tipărește bonul fiscal. Integrarea se face prin **POSLink** (API REST Intelectsoft, gratuit pentru terminalele în regim fiscal), din server: `server/src/servicii/poslink.ts` + `terminal.ts`. Tableta trimite suma, serverul o pune pe terminal și așteaptă aprobarea (până la 5 minute); dacă răspunsul se pierde, verifică „ultima tranzacție” ca să nu încaseze de două ori; apoi trimite bonul fiscal cu liniile, cota TVA pe produs și plata (numerar cu rest, sau card cu RRN). Raportul Z și închiderea zilei bancare, la închiderea turei. Dacă imprimanta/terminalul nu răspunde, vânzarea rămâne salvată și bonul se poate emite din Istoric. | gata, testat pe un POSLink simulat; **de validat în mediul de test Intelectsoft** |
 | Numerar cu afișare rest | Dialog cu sume rapide (exact, 50, 100, 200…) și restul afișat mare. | gata |
-| Card | Suma pleacă automat la terminal; refuzul se poate reîncerca. | gata (simulator) |
+| Card | Suma pleacă automat la terminal (POSLink `payment/Pay`), cu aceeași referință la fiecare reîncercare; refuzul se poate reîncerca. | gata |
 | Casare fără încasare (protocol, degustări, personal, rebut) | Buton separat; motiv obligatoriu, notă opțională. Scade ingredientele, nu introduce bani, nu emite bon fiscal. | gata |
 | Descărcare automată pe rețetar, cu „Lapte de ovăz” și „Extra shot” | `shared/src/calcul.ts`: rețetă + modificatori. Un modificator poate **înlocui** un ingredient (lapte → lapte de ovăz, în cantitatea din rețeta produsului) și/sau **adăuga/scădea** (extra shot +9 g cafea și +1 doză; fără zahăr −1 plic). Costul ingredientelor se salvează pe fiecare linie vândută. | gata, testat |
 | **3. Închiderea turei** (doze râșniță, numerar, total card, retururi/casări) | Fereastră „oarbă”: barista introduce ce a numărat fără să vadă cifrele sistemului. Serverul calculează scripticul (numerar din registru, card din tranzacții, doze din rețetar, anulări și casări din comenzi), salvează diferențele și marchează tura pentru admin peste pragurile din Setări → Toleranțe. Adminul o marchează „verificată” cu o notă. | gata, testat |
@@ -75,11 +75,13 @@ flowchart LR
 
 ## Limitări cunoscute (de rezolvat în etapele următoare)
 
-- **Echipamentele reale nu sunt încă legate**: există interfața și simulatorul, lipsesc driverele pentru
-  modelele concrete.
-- La o plată cu cardul care expiră (terminalul nu răspunde), reîncercarea poate duce la dublă debitare
-  dacă terminalul a aprobat totuși; protocoalele ECR au de obicei o comandă „ultima tranzacție”, care
-  se va folosi în driver.
+- Integrarea cu terminalul e scrisă după documentația publică POSLink și ISFiscalService și testată
+  pe un POSLink simulat; trebuie validată în mediul de test Intelectsoft (vezi mai jos). Schema
+  răspunsului „ultima tranzacție” nu e publicată: o citim defensiv (după referința noastră sau sumă).
+- Bonul de retur (storno) și copia unui bon nu au comenzi în POSLink: se fac din meniul casei fiscale de
+  pe terminal. Plata se restituie pe card prin POSLink (`Refund`), cu RRN-ul plății.
+- Plata cu cardul și bonul fiscal au nevoie de internet (POSLink e în cloud). O vânzare în numerar făcută
+  fără internet rămâne fără bon fiscal până la reconectare („Bon netipărit” în Istoric).
 - Un eveniment respins de server pentru format invalid nu poate fi corectat din panou; se marchează
   rezolvat, iar operațiunea se reface manual. Tableta verifică aceleași limite înainte de a salva, deci
   cazul apare doar la date corupte.
@@ -93,13 +95,33 @@ flowchart LR
   registrul de numerar trebuie împărțit pe tabletă.
 - Rețetele modificate se aplică și vânzărilor offline care ajung pe server după modificare.
 
+## Terminalul clientului: PAX A930 cu IntelectSoft, prin Moldindconbank
+
+Ce știm (octombrie 2026): terminalul e un PAX A930RTX (Android, imprimantă încorporată, 4G), cu
+aplicația fiscală IntelectSoft („POS Android 2-în-1”: plata cu cardul și bonul fiscal pe același
+aparat, certificat SFS; contract IS Fiscal Cloud de la 70 lei/lună per casă) și acceptare
+Moldindconbank. Integrarea pentru softuri terțe se face prin **POSLink** (Intelectsoft):
+
+- API REST în cloud, cheie API din cabinetul POSLink, câte un `DeviceID` pentru fiecare terminal.
+  Documentație: https://poslink.eservicii.md/POSLink/api-docs.html.
+- Comenzi folosite: `Device/payment/Pay` (plata, până la 5 min), `LastTransaction`, `CloseDoc`
+  (obligatoriu după plată), `Refund`, `closeDay` (ziua bancară), `Device/Invoice/Pay` (bonul fiscal:
+  linii cu `Name/Quantity/Price/VAT`, plăți cu cod `1` numerar / `2` card + `RRN`), `Report/Create`
+  (Z/X), `Device/Status` (online, baterie, hârtie).
+- Gratuit pentru terminalele în regim fiscal.
+
+Ce trebuie confirmat cu Intelectsoft (+373 22 835 312) înainte de punerea în funcțiune:
+1. Accesul: cheia API și `DeviceID`-ul terminalului clientului în cabinetul POSLink, și **mediul de
+   test** pentru verificarea fluxului.
+2. Schema exactă a bonului în `Device/Invoice/Pay` (Items vs. Lines; dacă o plată cu cod `2` + RRN
+   doar înregistrează plata deja făcută sau pornește din nou cardul) și a răspunsului
+   `LastTransaction`.
+3. Cum se emite **bonul de retur** (storno) și copia unui bon: din meniul terminalului sau prin API.
+4. Literele cotelor de TVA configurate pe casa clientului (A = 20% de regulă).
+5. Comportamentul offline al terminalului (limita de ore fără sincronizare cu SIA MEV).
+
 ## Ce trebuie aflat de la client
 
-1. **Terminalul de plată**: banca (MAIB, Moldindconbank, Victoriabank, OTP etc.) și modelul
-   terminalului; banca trebuie să ofere documentația protocolului de integrare cu casa (ECR).
-2. **Casa de marcat / imprimanta fiscală**: modelul (Datecs, Tremol, Daisy…) și cum se conectează
-   (USB, serial, rețea). În Moldova bonul fiscal trebuie emis de o mașină de casă și control înregistrată
-   la SFS; de confirmat cu contabilul cum se integrează soluția aleasă.
 3. **Tabletele**: Android sau iPad? Pentru Android putem face și o aplicație instalabilă cu puntea
    inclusă, fără calculator separat.
 4. **Găzduirea**: unde rulează serverul (VPS, domeniu, HTTPS, copii de siguranță).

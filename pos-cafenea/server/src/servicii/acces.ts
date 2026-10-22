@@ -151,7 +151,7 @@ export async function reasociazaDispozitiv(db: Db, id: number) {
 export function listaDispozitive(db: Db) {
   return db.query(
     `SELECT d.id, d.nume, d.locatie_id, l.nume AS locatie, d.cod_asociere, d.activ, d.creat_la, d.ultima_sincronizare,
-            d.token IS NOT NULL AS asociat
+            d.terminal_device_id, d.token IS NOT NULL AS asociat
        FROM dispozitive d JOIN locatii l ON l.id = d.locatie_id ORDER BY l.nume, d.nume`,
   );
 }
