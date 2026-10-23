@@ -12,6 +12,7 @@ import {
 import { insereaza, type Db } from '../db';
 import { EroareUtilizator } from '../erori';
 import { incarcaDefinitii } from './catalog';
+import { RETUR_NEANULAT } from './terminal';
 import { costuriMedii, inregistreazaMiscari } from './stoc';
 import { actualizeazaTuraInchisa, asiguraTura, blocheazaCasa, corecteazaNumarariUlterioare, momentContabil, type ContextPOS } from './ture';
 
@@ -202,6 +203,8 @@ export interface FiltruComenzi {
   pret_abatere?: boolean;
   /** Doar vânzările pe card fără plată aprobată de terminal. */
   card_neconfirmat?: boolean;
+  /** Doar comenzile restituite pe card prin terminal, dar neanulate (terminal.ts, RETUR_NEANULAT). */
+  retur_neanulat?: boolean;
   limita?: number;
 }
 
@@ -220,9 +223,12 @@ export async function listaComenzi(db: Db, f: FiltruComenzi) {
   if (f.pret_abatere) cond.push('c.pret_abatere');
   // Aceleași vânzări ca pe Panou și în alerta turei: pe card, neconfirmate, neanulate.
   if (f.card_neconfirmat) cond.push("c.card_confirmat = false AND c.stare = 'finalizata'");
+  // Aceleași retururi ca pe Panou și pe tură (fără cele a căror comandă nu e pe server).
+  const returNeanulat = `EXISTS (SELECT 1 FROM operatiuni_terminal o WHERE o.referinta = c.id AND ${RETUR_NEANULAT})`;
+  if (f.retur_neanulat) cond.push(returNeanulat);
   p.push(Math.min(f.limita ?? 200, 1000));
   const comenzi = await db.query<any>(
-    `SELECT c.*, u.nume AS barista, l.nume AS locatie
+    `SELECT c.*, u.nume AS barista, l.nume AS locatie, ${returNeanulat} AS retur_neanulat
        FROM comenzi c
        LEFT JOIN utilizatori u ON u.id = c.utilizator_id
        JOIN locatii l ON l.id = c.locatie_id

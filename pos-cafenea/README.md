@@ -135,6 +135,12 @@ devin tot mai lente, pe măsură ce crește istoricul.
 - Loginul: pauze după 5 greșeli de pe aceeași adresă (IPv6 pe /64), cel mult o încercare la 10 s pe
   un cont după 20 de greșeli din orice adrese (adresele de pe care contul a intrat deja nu sunt
   încetinite) și cel mult 2 verificări de parolă în paralel.
+- Asocierea tabletelor: codul e valabil 24 de ore de la emitere (apoi „Reasociază” în Setări → Tablete),
+  aceleași pauze ca la login după coduri greșite de pe aceeași adresă, iar eșecurile se numără în jurnal
+  (`asociere.esuata`, un rând pe minut pentru fiecare adresă, fără codurile încercate).
+- Fluxul de notificări (`/api/flux`) se deschide cu un bilet de o singură folosire, valabil un minut;
+  fluxul deschis se reverifică la fiecare puls (25 s): după ieșirea din panou, retrogradarea adminului,
+  dezactivarea sau reasocierea tabletei se închide. Cel mult 5 fluxuri deschise pe admin sau tabletă.
 - **Jurnalul de audit** (Setări → Jurnal): fiecare modificare din panou (cu valoarea de dinainte, unde
   se suprascrie ceva: prețuri, rețete, toleranțe, terminale, roluri), autentificările și operațiunile
   tabletelor din afara cozii (terminal, inventariere, asociere). Nu conține parole, PIN-uri sau coduri.
@@ -146,6 +152,14 @@ devin tot mai lente, pe măsură ce crește istoricul.
 - Registrele `miscari_stoc`, `miscari_bani` și `jurnal_audit` nu se pot modifica, șterge sau goli
   nici direct în bază (declanșatori). Jurnalul crește cu fiecare modificare; păstrarea lui pe termen
   lung se decide la copiile de siguranță.
+
+### Actualizarea unei instalări existente
+
+Migrațiile se aplică singure la pornire. Înainte de o actualizare, lăsați tabletele să sincronizeze și
+închideți turele deschise. De la migrarea 004, administratorii nu mai au PIN de tabletă: operațiile
+offline ale unui administrator făcute înainte de actualizare se aplică în continuare (serverul le
+recunoaște după data aplicării migrării 004), dar cele de după ajung la „Erori sincronizare”. Pentru ele,
+treceți contul temporar la barista cu un PIN, apăsați „Reaplică”, apoi readuceți-l la administrator.
 
 ### Terminalul fiscal (POSLink / Intelectsoft)
 

@@ -231,6 +231,32 @@ describe('deschiderea turei', () => {
     expect(tura.creata_automat).toBe(false);
   });
 
+  it('prima tură a unei cafenele noi, reaplicată în ordinea inversă: fondul de pornire nu intră de două ori', async () => {
+    const c = await cafeneaNoua('Cafenea Prima Tură Reaplicată');
+    // Barista e înregistrată la altă cafenea: toată prima tură a locației e respinsă.
+    const { id: dana } = await t.admin.post('/api/utilizatori', { nume: 'Dana Mutată', rol: 'barista', pin: '1357', locatie_id: t.demo.locatii.botanica, activ: true });
+    const s1 = randomUUID();
+    const latte = t.produs('Latte');
+    const evs = [
+      evTuraDeschisa(s1, dana, 500, zi(19, 7)),
+      evComanda(s1, dana, [{ produs_id: latte.id, cantitate: 1, pret_unitar: latte.pret, modificatori: [] }], 'numerar', { primit: latte.pret, la: zi(19, 9) }),
+      inchidere(s1, dana, 500 + latte.pret, zi(19, 20), 1),
+    ];
+    expect((await c.sync(evs)).cu_eroare).toHaveLength(3);
+
+    await t.admin.put(`/api/utilizatori/${dana}`, { nume: 'Dana Mutată', rol: 'barista', pin: '1357', locatie_id: c.loc.id, activ: true });
+    // Cea mai nouă întâi: închiderea aliniază casa goală cu +fond, apoi deschiderea găsește registrul gol la ora ei.
+    for (const e of [...evs].reverse()) await t.admin.post(`/api/sync/erori/${e.id}/reaplica`);
+
+    expect(await c.soldNumerar()).toBe(500 + latte.pret);
+    const tura = await t.admin.get(`/api/ture/${s1}`);
+    expect(tura.dif_numerar).toBe(0);
+    expect(tura.dif_fond).toBeNull(); // fondul de pornire nu e o diferență
+    expect(tura.scriptic_numerar).toBe(500 + latte.pret);
+    expect(tura.are_discrepante).toBe(false);
+    expect(tura.creata_automat).toBe(false);
+  });
+
   it('o tură verificată ale cărei cifre se schimbă după verificare iese din nou la verificare', async () => {
     const c = await cafeneaNoua('Cafenea Verificată');
     const tura = randomUUID();

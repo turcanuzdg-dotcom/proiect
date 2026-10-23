@@ -58,7 +58,8 @@ flowchart LR
   (o singură folosire); tableta primește un token. PIN-ul baristei se verifică local (ca să meargă
   offline) și servește la atribuirea vânzărilor, nu ca protecție puternică. Serverul acceptă doar
   utilizatori cu PIN din locația tabletei; un administrator (fără PIN) doar pentru operațiile făcute
-  înainte de promovarea lui din barista, după jurnalul de audit.
+  înainte de promovarea lui din barista (după jurnalul de audit) sau, pe o instalare mai veche, înainte
+  de actualizarea care a șters PIN-urile adminilor (migrarea 004). Codul de asociere expiră după 24 de ore.
 - **Același cod de bază de date peste tot**: PostgreSQL în producție, PGlite în dezvoltare și teste.
   Toate testele trec pe amândouă.
 - **Evenimentele care ajung târziu nu strică numărările deja făcute.** O vânzare offline sincronizată
@@ -91,7 +92,8 @@ flowchart LR
   stocul; rândul tabletei din `dispozitive` se ia înaintea casei, dar doar `FOR NO KEY UPDATE`, care nu se
   ciocnește cu cheile străine spre tabletă scrise de o reaplicare din panou.
 - **Securitate pe măsura unei cafenele, nu a unei bănci.** Tokenul de sesiune circulă doar în antet
-  (fluxul de notificări folosește bilete de un minut) și stă în bază doar ca amprentă SHA-256, la fel
+  (fluxul de notificări folosește bilete de un minut, de o singură folosire; fluxul deschis se reverifică
+  la fiecare puls și se închide după ieșire, retrogradare, dezactivarea sau reasocierea tabletei) și stă în bază doar ca amprentă SHA-256, la fel
   ca tokenul tabletelor; o sesiune ține cel mult 30 de zile. Loginul are pauze după încercări greșite
   (pe adresă și pe cont), schimbarea parolei închide celelalte sesiuni, dezactivarea unei tablete îi
   anulează tokenul, tableta poate declara doar bariste din locația ei, iar puntea de echipamente cere un
@@ -113,7 +115,12 @@ flowchart LR
   anularea trece pe calea manuală: returul din meniul terminalului, apoi confirmarea pe tabletă. La
   sincronizare, o vânzare pe card de pe o tabletă cu terminal prin server, fără plată aprobată de aceeași
   sumă, primește `card_confirmat = false` (nu se respinge: tableta lucrează offline-first) și apare la fel în
-  Comenzi, pe tură și pe Panou; pe tabletele cu terminal separat rămâne NULL (nu se poate confirma). Terminalul legat în panou are întâietate pe
+  Comenzi, pe tură și pe Panou; pe tabletele cu terminal separat rămâne NULL (nu se poate confirma). O plată
+  lămurită ca aprobată după sincronizarea vânzării o confirmă atunci. Bonul fiscal pe card se emite doar
+  pentru plata aprobată a comenzii, de pe aceeași tabletă și pentru același total. Returul pe card poartă
+  barista care l-a făcut; un retur aprobat a cărui comandă nu e anulată pe server după 10 minute (anularea
+  n-a ajuns sau n-a fost făcută) apare pe Panou, pe tură și în Comenzi („retur fără anulare”), fără să
+  blocheze ceva. Terminalul legat în panou are întâietate pe
   tabletă; Simulatorul și puntea locală apar doar în dezvoltare sau cu „mod demonstrație” din Setări → Tablete.
 - **Tableta se blochează singură.** După `blocare_automata_min` minute fără atingere (implicit 5, din panou)
   revine la ecranul de PIN, niciodată cât e deschis dialogul unei plăți cu cardul (și cu rezultat nesigur), al
@@ -139,7 +146,9 @@ flowchart LR
   compară fiecare citire cu suma întregului registru). Pragul se citește sub o blocare SHARE de cel mult
   100 ms: dacă registrul e ocupat de o tranzacție lungă, închiderea renunță și reîncearcă, nu ține
   vânzările pe loc; dacă rămâne ocupat toată fereastra de reîncercări, următoarea închidere vine după
-  5 minute, nu după o oră, iar jurnalul spune vârsta ultimului sold închis și cât a crescut coada.
+  5 minute, nu după o oră, iar jurnalul spune vârsta ultimului sold închis și cât a crescut coada. După
+  două închideri eșuate la rând, ultima încercare așteaptă blocarea o secundă; după șase (o jumătate de
+  oră), Panoul arată alerta.
   Autovacuumul pe registru nu cedează unei cereri care așteaptă mai puțin de `deadlock_timeout` (1 s),
   iar cel anti-wraparound nu cedează deloc: cât rulează, toate încercările eșuează, iar închiderea
   reușește abia după ce se termină (coada crește între timp, citirile rămân corecte).
@@ -165,7 +174,7 @@ flowchart LR
   barista verifică ecranul terminalului și chitanța băncii; dacă plata nu a trecut, tableta trimite o plată nouă
   (cu altă referință), iar încercarea nesigură rămâne în registru. La fel un retur nesigur: barista spune pe
   tabletă dacă terminalul arată returul făcut sau îl face din meniul terminalului. O anulare pe card fără retur
-  aprobat nu e încă semnalată separat în panou.
+  aprobat nu e încă semnalată separat în panou (invers, un retur aprobat fără anulare e semnalat).
 - POSLINK_URL trebuie să fie https (http doar pentru 127.0.0.1/localhost); un răspuns POSLink peste 1 MB nu
   se citește.
 - Plata cu cardul și bonul fiscal au nevoie de internet (POSLink e în cloud). O vânzare în numerar făcută

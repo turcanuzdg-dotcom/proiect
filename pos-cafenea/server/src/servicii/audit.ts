@@ -91,7 +91,14 @@ export class JurnalLoginNecunoscut {
   private minut = { inceput: 0, randuri: 0 };
   private ultimaScanare = 0;
 
-  constructor(private maxGrupuri = 10_000) {}
+  /**
+   * @param fel acțiunea și calea rândurilor scrise; implicit loginurile inexistente. Aceeași numărare
+   *   servește și asocierilor eșuate ale tabletelor (`asociere.esuata`), la care nu se dau exemple.
+   */
+  constructor(
+    private maxGrupuri = 10_000,
+    private fel: { actiune: string; cale: string } = { actiune: 'login.esuat.necunoscut', cale: '/api/auth/login' },
+  ) {}
 
   /** Numără un eșec; întoarce rândurile de scris acum (de cele mai multe ori niciunul). */
   esec(adresa: string, login: string, acum = Date.now()): IntrareAudit[] {
@@ -106,7 +113,7 @@ export class JurnalLoginNecunoscut {
     if (c.incercari === 0) c.de_la = acum;
     c.incercari += 1;
     c.adresa = adresa;
-    if (c.exemple.length < JurnalLoginNecunoscut.EXEMPLE && !c.exemple.includes(login)) c.exemple.push(login.slice(0, 60));
+    if (login && c.exemple.length < JurnalLoginNecunoscut.EXEMPLE && !c.exemple.includes(login)) c.exemple.push(login.slice(0, 60));
     if (acum - c.scris >= JurnalLoginNecunoscut.INTERVAL) this.scrie(grup, c, acum, randuri);
     // Ce a rămas nescris la alte grupuri pleacă la următorul eșec, oricare ar fi el.
     if (acum - this.ultimaScanare >= JurnalLoginNecunoscut.INTERVAL / 4) {
@@ -158,8 +165,8 @@ export class JurnalLoginNecunoscut {
   private rand(c: ContorLogin): IntrareAudit {
     return {
       adresa: c.adresa,
-      actiune: 'login.esuat.necunoscut',
-      cale: '/api/auth/login',
+      actiune: this.fel.actiune,
+      cale: this.fel.cale,
       stare_http: 401,
       date: { incercari: c.incercari, exemple: c.exemple, de_la: new Date(c.de_la).toISOString() },
     };

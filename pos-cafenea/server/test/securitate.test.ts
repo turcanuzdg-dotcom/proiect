@@ -96,7 +96,7 @@ describe('acces', () => {
     const dupa = new Date(Date.now() + 5 * 60_000).toISOString(); // în viitor, dar sub limita de 10 minute
     const r = await t.tableta.sync([evTuraDeschisa(randomUUID(), id, 500, dupa)]);
     expect(r.cu_eroare).toHaveLength(1);
-    expect(r.cu_eroare[0].eroare).toMatch(/Promovată ieri nu are PIN de tabletă/);
+    expect(r.cu_eroare[0].eroare).toMatch(/Promovată ieri e administrator, fără PIN de tabletă.*treceți-l temporar la barista/);
     await t.admin.post(`/api/sync/erori/${r.cu_eroare[0].id}/rezolvat`);
   });
 
@@ -105,9 +105,9 @@ describe('acces', () => {
     // Nici cu o dată din trecut (n-a existat nicio promovare), nici online, la inventariere.
     const r = await t.tableta.sync([evTuraDeschisa(randomUUID(), id, 500, '2026-10-02T08:00:00Z')]);
     expect(r.cu_eroare).toHaveLength(1);
-    expect(r.cu_eroare[0].eroare).toMatch(/Admin de la început nu are PIN de tabletă/);
+    expect(r.cu_eroare[0].eroare).toMatch(/Admin de la început e administrator, fără PIN de tabletă/);
     await t.admin.post(`/api/sync/erori/${r.cu_eroare[0].id}/rezolvat`);
-    await expect(t.tableta.post('/api/pos/inventarieri', { utilizator_id: id })).rejects.toThrow(/nu are PIN de tabletă/);
+    await expect(t.tableta.post('/api/pos/inventarieri', { utilizator_id: id })).rejects.toThrow(/fără PIN de tabletă/);
   });
 
   it('un utilizator fără PIN de tabletă: eroarea spune asta și se repară dându-i un PIN', async () => {

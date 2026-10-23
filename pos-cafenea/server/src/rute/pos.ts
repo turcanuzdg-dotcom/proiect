@@ -1,11 +1,11 @@
 import type { FastifyInstance, onRequestAsyncHookHandler } from 'fastify';
 import { z } from 'zod';
 import type { Db } from '../db';
-import { EroareNegasit } from '../erori';
+import { EroareNegasit, EroareUtilizator } from '../erori';
 import { magistrala } from '../magistrala';
 import { LIMITA_CORP_SYNC } from '../limite';
 import { asociazaDispozitiv, utilizatorPermisTabletei } from '../servicii/acces';
-import { auditNumaratori, hookAudit } from '../servicii/audit';
+import { auditeaza, auditNumaratori, hookAudit, JurnalLoginNecunoscut } from '../servicii/audit';
 import { catalogTableta } from '../servicii/catalog';
 import { creeazaInventariere, finalizeazaInventariere, raportInventariere, salveazaNumaratori } from '../servicii/inventar';
 import { proceseazaSync } from '../servicii/sync';
@@ -23,11 +23,24 @@ export async function rutePOS(app: FastifyInstance, db: Db, doarDispozitiv: onRe
   // jurnalul de audit; evenimentele din coadă se păstrează oricum în evenimente_sync.
   app.addHook('onResponse', hookAudit(db));
 
+  // Asocierile eșuate (cod greșit sau expirat) nu au tabletă, deci nu trec prin hookAudit: se numără pe
+  // adresă și se scriu adunate (`asociere.esuata`, cel mult un rând pe minut pentru fiecare adresă, fără
+  // codurile încercate), ca o încercare de ghicire să lase urmă fără să umple jurnalul.
+  const asociereEsuata = new JurnalLoginNecunoscut(10_000, { actiune: 'asociere.esuata', cale: '/api/pos/asociere' });
+  app.addHook('onClose', async () => {
+    for (const i of asociereEsuata.vida()) await auditeaza(db, i, app.log);
+  });
   app.post('/api/pos/asociere', async (req) => {
     const { cod } = z.object({ cod: z.string().min(4).max(20) }).parse(req.body);
-    const r = await asociazaDispozitiv(db, cod);
-    req.dispozitiv = r.dispozitiv; // pentru jurnal: ce tabletă a fost asociată, de pe ce adresă
-    return r;
+    try {
+      const r = await asociazaDispozitiv(db, cod, req.ip);
+      req.dispozitiv = r.dispozitiv; // pentru jurnal: ce tabletă a fost asociată, de pe ce adresă
+      return r;
+    } catch (e) {
+      // 429 (pauza după încercări greșite) nu se numără: cererea n-a ajuns la verificarea codului.
+      if (e instanceof EroareUtilizator && e.status === 401) for (const i of asociereEsuata.esec(req.ip, '')) void auditeaza(db, i, req.log);
+      throw e;
+    }
   });
 
   app.register(async (p) => {
@@ -50,9 +63,11 @@ export async function rutePOS(app: FastifyInstance, db: Db, doarDispozitiv: onRe
     });
     // Returul pe card: referința e comanda restituită; RRN-ul, plata și plafonul le ia serverul din
     // registrul terminalului (câmpurile rrn/operation_id trimise de tablete mai vechi se ignoră).
+    // Barista care restituie (utilizator_id) rămâne pe returul din registru; tabletele mai vechi nu o trimit.
     p.post('/api/pos/terminal/retur', async (req) => {
-      const d = z.object({ referinta: z.string().uuid(), suma: bani.nullish() }).parse(req.body);
-      return terminal.returCard(db, req.dispozitiv!.id, d.referinta, d.suma);
+      const d = z.object({ referinta: z.string().uuid(), suma: bani.nullish(), utilizator_id: z.number().int().positive().nullish() }).parse(req.body);
+      if (d.utilizator_id) await utilizatorPermisTabletei(db, d.utilizator_id, req.dispozitiv!.locatie_id);
+      return terminal.returCard(db, req.dispozitiv!.id, d.referinta, d.suma, d.utilizator_id ?? null);
     });
     p.post('/api/pos/terminal/bon', async (req) => {
       const d = z

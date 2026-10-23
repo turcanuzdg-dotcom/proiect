@@ -203,7 +203,7 @@ export async function pornesteServer(laProgres: (p: Progres) => void): Promise<S
     const u = token ? await acces.utilizatorDinToken(db, token) : null;
     const d = !u && token ? await acces.dispozitivDinToken(db, token) : null;
     if (!u && !d) return reply.status(401).send({ eroare: 'Autentificare necesară' });
-    return { bilet: acces.creeazaBilet(u ? { utilizator: u } : { dispozitiv: d! }) };
+    return { bilet: acces.creeazaBilet(u ? { utilizator: u } : { dispozitiv: d! }, token!) };
   });
   await app.register(async (pos) => rutePOS(pos, db, doarDispozitiv as any));
   await app.register(async (adm) => ruteAdmin(adm, db, doarAdmin as any));
@@ -218,7 +218,19 @@ export async function pornesteServer(laProgres: (p: Progres) => void): Promise<S
       laMesaj(JSON.stringify(n));
     };
     magistrala.on('notificare', asculta);
-    return () => void magistrala.off('notificare', asculta);
+    // Ca în server/src/app.ts: la fiecare puls fluxul se reverifică (ieșire, tabletă dezactivată sau reasociată).
+    let oprit = false;
+    const opreste = () => {
+      oprit = true;
+      clearInterval(puls);
+      magistrala.off('notificare', asculta);
+    };
+    const puls = setInterval(() => {
+      void acces.detinatorValid(db, detinator).then((valid) => {
+        if (!valid && !oprit) opreste();
+      }, () => {});
+    }, 25_000);
+    return opreste;
   };
 
   laProgres({ faza: 'Gata', procent: 1 });

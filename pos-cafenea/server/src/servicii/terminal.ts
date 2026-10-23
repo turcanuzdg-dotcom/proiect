@@ -109,24 +109,35 @@ async function operatiuni(db: Db, referinta: string, tip: 'plata' | 'retur') {
 
 async function deschideOperatiune(
   db: Db,
-  o: { referinta: string; tip: 'plata' | 'retur'; document_nr: string; dispozitiv_id: number; terminal_device_id: string; suma: number },
+  o: { referinta: string; tip: 'plata' | 'retur'; document_nr: string; dispozitiv_id: number; terminal_device_id: string; suma: number; utilizator_id?: number | null },
 ): Promise<number> {
   const r = await db.query<{ id: number }>(
-    `INSERT INTO operatiuni_terminal (referinta, tip, document_nr, dispozitiv_id, locatie_id, terminal_device_id, suma, stare)
-     SELECT $1, $2, $3, d.id, d.locatie_id, $5, $6, 'in_curs' FROM dispozitive d WHERE d.id = $4 RETURNING id`,
-    [o.referinta, o.tip, o.document_nr, o.dispozitiv_id, o.terminal_device_id, o.suma],
+    `INSERT INTO operatiuni_terminal (referinta, tip, document_nr, dispozitiv_id, locatie_id, terminal_device_id, suma, stare, utilizator_id)
+     SELECT $1, $2, $3, d.id, d.locatie_id, $5, $6, 'in_curs', $7 FROM dispozitive d WHERE d.id = $4 RETURNING id`,
+    [o.referinta, o.tip, o.document_nr, o.dispozitiv_id, o.terminal_device_id, o.suma, o.utilizator_id ?? null],
   );
   return r[0].id;
 }
 
-/** Încheie o încercare cu rezultatul primit. Doar câmpurile alese, niciodată răspunsul brut. */
+/**
+ * Încheie o încercare cu rezultatul primit. Doar câmpurile alese, niciodată răspunsul brut.
+ * O plată aprobată abia acum (verificată după un răspuns pierdut) confirmă și vânzarea pe card deja
+ * sincronizată în timp ce plata era nelămurită: altfel ar rămâne „card neconfirmat” pentru totdeauna.
+ */
 async function incheieOperatiune(db: Db, id: number, r: RezultatPlata): Promise<void> {
-  await db.query(
+  const [o] = await db.query<{ referinta: string; tip: string; suma: number }>(
     `UPDATE operatiuni_terminal SET stare = $2, autorizare = COALESCE($3, autorizare), rrn = COALESCE($4, rrn),
             operation_id = COALESCE($5, operation_id), mesaj = $6, actualizata_la = now()
-      WHERE id = $1`,
+      WHERE id = $1 RETURNING referinta, tip, suma`,
     [id, stareDin(r), r.autorizare ?? null, r.rrn ?? null, r.operation_id ?? null, r.mesaj ? r.mesaj.slice(0, 500) : null],
   );
+  if (o?.tip === 'plata' && r.aprobat) {
+    await db.query(
+      `UPDATE comenzi SET card_confirmat = true
+        WHERE id = $1 AND metoda = 'card' AND card_confirmat = false AND abs(total - $2) < 0.005`,
+      [o.referinta, o.suma],
+    );
+  }
 }
 
 /**
@@ -198,7 +209,13 @@ export async function plataCard(db: Db, dispozitivId: number, suma: number, refe
  * sau fără plată înregistrată (vânzare din pilotul manual, de dinaintea registrului) se face din meniul
  * terminalului; codul erorii îi spune tabletei să ceară asta baristei.
  */
-export async function returCard(db: Db, dispozitivId: number, referinta: string, sumaCeruta?: number | null): Promise<RezultatPlata & { suma?: number }> {
+export async function returCard(
+  db: Db,
+  dispozitivId: number,
+  referinta: string,
+  sumaCeruta?: number | null,
+  utilizatorId: number | null = null,
+): Promise<RezultatPlata & { suma?: number }> {
   const deviceId = await terminalulTabletei(db, dispozitivId);
   const c = client();
   const locatie = (await db.query<{ locatie_id: number }>('SELECT locatie_id FROM dispozitive WHERE id = $1', [dispozitivId]))[0].locatie_id;
@@ -229,7 +246,7 @@ export async function returCard(db: Db, dispozitivId: number, referinta: string,
       if (r.aprobat || r.nesigur) return { ...r, suma: Number(neincheiat.suma) };
     }
     const documentNr = uuidDocument();
-    const id = await deschideOperatiune(db, { referinta, tip: 'retur', document_nr: documentNr, dispozitiv_id: dispozitivId, terminal_device_id: deviceId, suma });
+    const id = await deschideOperatiune(db, { referinta, tip: 'retur', document_nr: documentNr, dispozitiv_id: dispozitivId, terminal_device_id: deviceId, suma, utilizator_id: utilizatorId });
     const r = await executa(db, id, () => c.restituie(deviceId, suma, { rrn: plata.rrn, operation_id: plata.operation_id }, documentNr));
     return { ...r, suma };
   });
@@ -237,11 +254,55 @@ export async function returCard(db: Db, dispozitivId: number, referinta: string,
 
 /** Plata aprobată a unei comenzi, din registrul terminalului (bonul fiscal și confirmarea vânzării o folosesc). */
 export async function plataAprobata(db: Db, comandaId: string) {
-  const r = await db.query<{ suma: number; rrn: string | null; autorizare: string | null }>(
-    `SELECT suma, rrn, autorizare FROM operatiuni_terminal WHERE referinta = $1 AND tip = 'plata' AND stare = 'aprobata'`,
+  const r = await db.query<{ suma: number; rrn: string | null; autorizare: string | null; dispozitiv_id: number; locatie_id: number }>(
+    `SELECT suma, rrn, autorizare, dispozitiv_id, locatie_id FROM operatiuni_terminal WHERE referinta = $1 AND tip = 'plata' AND stare = 'aprobata'`,
     [comandaId],
   );
   return r[0] ? { ...r[0], suma: Number(r[0].suma) } : null;
+}
+
+// ---- Reconcilierea retururilor cu anulările ----
+
+/**
+ * Cât poate trece între un retur aprobat și anularea comenzii pe server (minute). Tableta face întâi
+ * returul, apoi pune anularea în coadă; offline, anularea ajunge la reconectare.
+ */
+export const ASTEPTARE_ANULARE_MIN = 10;
+
+/**
+ * Retururile pe card aprobate a căror comandă nu e anulată pe server după ASTEPTARE_ANULARE_MIN: banii au
+ * fost dați înapoi, dar vânzarea se numără încă la încasări (tură, Panou, Bani). Se semnalează, nu se
+ * blochează nimic (tableta lucrează offline-first): fie anularea n-a ajuns (dialog închis, tabletă
+ * pierdută), fie returul s-a cerut fără anulare. Dispare când anularea se sincronizează.
+ * Condiția SQL, pe aliasul `o` (operatiuni_terminal) și `c` (comenzi, LEFT JOIN pe o.referinta).
+ */
+export const RETUR_NEANULAT = `o.tip = 'retur' AND o.stare = 'aprobata' AND (c.id IS NULL OR c.stare <> 'anulata')
+  AND o.actualizata_la < now() - interval '${ASTEPTARE_ANULARE_MIN} minutes'`;
+
+/** Retururile aprobate fără anulare, cel mult 200, cele mai noi primele (Panou, tură). */
+export async function retururiNeanulate(db: Db, f: { tura_id?: string } = {}) {
+  const p: unknown[] = [];
+  let tura = '';
+  if (f.tura_id) {
+    // Ale turei: comanda ei, sau (comanda lipsă pe server) returul făcut pe locația ei cât era deschisă.
+    p.push(f.tura_id);
+    tura = `AND (c.tura_id = $1 OR (c.id IS NULL AND EXISTS (
+              SELECT 1 FROM ture t WHERE t.id = $1 AND t.locatie_id = o.locatie_id
+                AND o.creata_la >= t.deschisa_la AND (t.inchisa_la IS NULL OR o.creata_la <= t.inchisa_la))))`;
+  }
+  const r = await db.query<{ referinta: string; suma: number; la: string; locatie: string; dispozitiv: string; barista: string | null; nr: number | null; comanda_pe_server: boolean }>(
+    `SELECT o.referinta, o.suma, o.actualizata_la AS la, l.nume AS locatie, d.nume AS dispozitiv, u.nume AS barista,
+            c.nr, c.id IS NOT NULL AS comanda_pe_server
+       FROM operatiuni_terminal o
+       LEFT JOIN comenzi c ON c.id = o.referinta
+       JOIN locatii l ON l.id = o.locatie_id
+       JOIN dispozitive d ON d.id = o.dispozitiv_id
+       LEFT JOIN utilizatori u ON u.id = o.utilizator_id
+      WHERE ${RETUR_NEANULAT} ${tura}
+      ORDER BY o.actualizata_la DESC LIMIT 200`,
+    p,
+  );
+  return r.map((x) => ({ ...x, suma: Number(x.suma) }));
 }
 
 export interface BonDeLaTableta {
@@ -262,11 +323,22 @@ export async function emiteBon(db: Db, dispozitivId: number, bon: BonDeLaTableta
   if (Math.abs(bon.total - linii) > 0.01) {
     throw new EroareUtilizator(`Totalul bonului (${bon.total.toFixed(2)}) nu corespunde liniilor (${linii.toFixed(2)})`);
   }
-  // La card, RRN-ul și codul de autorizare vin din plata înregistrată de server, nu de la tabletă.
-  let card = bon.card;
+  // La card, bonul fiscal se emite doar pentru plata aprobată prin server a acestei comenzi, de pe această
+  // tabletă și pentru același total; RRN-ul și codul de autorizare vin din ea, nu de la tabletă. Altfel
+  // tableta lasă vânzarea „Bon netipărit”, iar bonul se emite de pe terminal.
+  let card: BonDeLaTableta['card'] = null;
   if (bon.metoda === 'card') {
     const plata = await plataAprobata(db, bon.comanda_id);
-    if (plata) card = { rrn: plata.rrn, autorizare: plata.autorizare };
+    if (!plata || plata.dispozitiv_id !== dispozitivId || Math.abs(plata.suma - bon.total) >= 0.005) {
+      throw new EroareUtilizator(
+        plata && plata.dispozitiv_id === dispozitivId
+          ? `Plata aprobată a comenzii e de ${plata.suma.toFixed(2)} lei, nu ${bon.total.toFixed(2)}; bonul fiscal se emite de pe terminal`
+          : 'Comanda nu are o plată pe card aprobată prin server de pe această tabletă; bonul fiscal se emite de pe terminal',
+        409,
+        COD_TERMINAL.bonFaraPlata,
+      );
+    }
+    card = { rrn: plata.rrn, autorizare: plata.autorizare };
   }
   const fiscal = await citesteFiscal(db);
   const ids = [...new Set(bon.linii.map((l) => l.produs_id).filter((x): x is number => x != null))];
@@ -296,7 +368,8 @@ export async function emiteBon(db: Db, dispozitivId: number, bon: BonDeLaTableta
     await db.query(
       `INSERT INTO bonuri_fiscale (comanda_id, dispozitiv_id, terminal_device_id, tip, numar, qr, receipt_id, raspuns)
        VALUES ($1, $2, $3, 'bon', $4, $5, $6, $7)
-       ON CONFLICT (comanda_id) DO UPDATE SET qr = COALESCE(EXCLUDED.qr, bonuri_fiscale.qr), receipt_id = COALESCE(EXCLUDED.receipt_id, bonuri_fiscale.receipt_id)`,
+       ON CONFLICT (comanda_id) DO UPDATE SET qr = COALESCE(EXCLUDED.qr, bonuri_fiscale.qr), receipt_id = COALESCE(EXCLUDED.receipt_id, bonuri_fiscale.receipt_id)
+        WHERE bonuri_fiscale.dispozitiv_id = EXCLUDED.dispozitiv_id`,
       [bon.comanda_id, dispozitivId, deviceId, bon.numar, rezultat.qr ?? null, rezultat.receipt_id ?? null, JSON.stringify(rezultat)],
     );
   }

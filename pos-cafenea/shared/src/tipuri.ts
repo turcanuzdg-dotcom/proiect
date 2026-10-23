@@ -130,6 +130,11 @@ export const COD_TERMINAL = {
    * sumă): rezultatul se verifică din nou, nu se face nimic de mână cât operațiunea e în curs.
    */
   operatieInCurs: 'operatie_in_curs',
+  /**
+   * Bon fiscal pe card fără plată aprobată prin server pentru această comandă, de pe această tabletă și de
+   * același total: vânzarea rămâne „Bon netipărit”, bonul se emite de pe terminal.
+   */
+  bonFaraPlata: 'bon_fara_plata',
 } as const;
 export type CodTerminal = (typeof COD_TERMINAL)[keyof typeof COD_TERMINAL];
 

@@ -3,6 +3,7 @@ import type { Db } from '../db';
 import { EroareNegasit, EroareUtilizator } from '../erori';
 import { citesteTolerante } from './setari';
 import { BANI, inchisPana, sqlSold } from './solduri';
+import { retururiNeanulate } from './terminal';
 
 /**
  * Blocările pe locație (pg_advisory_xact_lock, eliberate la sfârșitul tranzacției).
@@ -142,10 +143,11 @@ export async function deschideTura(db: Db, ctx: ContextPOS, la: string, d: DateT
     await diferentaCasa(db, ctx.locatie_id, d.tura_id, dif, 'fond_initial', 'Fondul de pornire al casei', d.utilizator_id, la);
   } else {
     await diferentaCasa(db, ctx.locatie_id, d.tura_id, dif, 'diferenta_casa', 'Diferență la deschiderea turei', d.utilizator_id, la);
-    // Deschidere reaplicată după o numărare ulterioară (de ex. închiderea acestei ture, care a aliniat deja
-    // registrul): diferența a fost absorbită acolo; o scoatem de acolo, ca să conteze o singură dată.
-    await corecteazaNumarariUlterioare(db, ctx.locatie_id, la, dif, d.utilizator_id);
   }
+  // Deschidere reaplicată după o numărare ulterioară (de ex. închiderea acestei ture, care a aliniat deja
+  // registrul): diferența, sau fondul de pornire al primei ture a locației, a fost absorbită acolo; o scoatem
+  // de acolo, ca să conteze o singură dată. Fără numărare ulterioară nu face nimic.
+  await corecteazaNumarariUlterioare(db, ctx.locatie_id, la, dif, d.utilizator_id);
 }
 
 export async function plataMarunta(db: Db, ctx: ContextPOS, la: string, d: DatePlataMarunta): Promise<void> {
@@ -369,7 +371,14 @@ export async function detaliuTura(db: Db, id: string) {
       WHERE tura_id = $1 AND stare = 'finalizata' AND card_confirmat = false`,
     [id],
   );
-  return { ...t, bani, card_neconfirmat: { nr: neconfirmat.nr, suma: Number(neconfirmat.suma) } };
+  // Retururi pe card aprobate fără anularea comenzii: banii au plecat, dar vânzarea se numără încă la card.
+  const retururi = await retururiNeanulate(db, { tura_id: id });
+  return {
+    ...t,
+    bani,
+    card_neconfirmat: { nr: neconfirmat.nr, suma: Number(neconfirmat.suma) },
+    retur_neanulat: { nr: retururi.length, suma: rotunjeste(retururi.reduce((s, r) => s + r.suma, 0)), lista: retururi },
+  };
 }
 
 export async function verificaTura(db: Db, id: string, utilizatorId: number, nota: string | null) {

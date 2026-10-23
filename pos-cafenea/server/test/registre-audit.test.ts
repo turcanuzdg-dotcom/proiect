@@ -256,9 +256,17 @@ describe('jurnalul de audit', () => {
     await pauza(100);
     const inainte = await numar();
     for (let i = 0; i < 5; i++) expect((await t.app.inject({ method: 'POST', url: '/api/produse', payload: {} })).statusCode).toBe(401);
-    expect((await t.app.inject({ method: 'POST', url: '/api/pos/asociere', payload: { cod: 'GRESIT99' } })).statusCode).toBe(401);
     await pauza(200);
     expect(await numar()).toBe(inainte);
+    // Asocierile eșuate lasă urmă, dar adunată: un singur rând pe adresă și minut, fără codurile încercate.
+    for (let i = 0; i < 4; i++) {
+      expect((await t.app.inject({ method: 'POST', url: '/api/pos/asociere', payload: { cod: `GRESIT9${i}` }, remoteAddress: '192.0.2.77' })).statusCode).toBe(401);
+    }
+    await pauza(200);
+    expect(await numar()).toBe(inainte + 1);
+    const [rand] = await t.db.query<Intrare>(`SELECT * FROM jurnal_audit ORDER BY id DESC LIMIT 1`);
+    expect(rand).toMatchObject({ actiune: 'asociere.esuata', adresa: '192.0.2.77', cale: '/api/pos/asociere', stare_http: 401, date: { incercari: 1, exemple: [] } });
+    expect(JSON.stringify(rand.date)).not.toMatch(/GRESIT/);
   });
 
   it('panoul citește ultimele intrări, cu căutare', async () => {

@@ -380,6 +380,8 @@ interface Dispozitiv {
   locatie_id: number;
   locatie: string;
   cod_asociere: string | null;
+  /** Codul a trecut de valabilitatea lui (24 de ore): tableta cere un cod nou („Reasociază”). */
+  cod_expirat?: boolean;
   activ: boolean;
   creat_la: string;
   ultima_sincronizare: string | null;
@@ -496,6 +498,10 @@ function TabTablete() {
                         <span className="insigna">dezactivată</span>
                       ) : d.asociat ? (
                         <span className="insigna succes">asociată</span>
+                      ) : d.cod_expirat ? (
+                        <span className="insigna avertisment" title="Un cod de asociere e valabil 24 de ore; generați unul nou cu „Reasociază”">
+                          cod expirat
+                        </span>
                       ) : (
                         <span className="insigna info">așteaptă codul {d.cod_asociere}</span>
                       )}
@@ -956,6 +962,7 @@ const ACTIUNI: Record<string, string> = {
   'login.reusit': 'Autentificare în panou',
   'login.esuat': 'Autentificare eșuată',
   'login.esuat.necunoscut': 'Autentificări eșuate (conturi inexistente)',
+  'asociere.esuata': 'Asocieri de tabletă eșuate (cod greșit sau expirat)',
   'POST /api/auth/logout': 'Ieșire din panou',
   'POST /api/locatii': 'Locație creată',
   'PUT /api/locatii/:id': 'Locație modificată',
@@ -1000,7 +1007,7 @@ function titluActiune(e: IntrareJurnal): string {
     const activ = (e.date?.corp as { activ?: boolean } | undefined)?.activ;
     if (activ !== undefined) return activ ? 'Tabletă reactivată (cod nou)' : 'Tabletă dezactivată';
   }
-  if (e.actiune === 'login.esuat.necunoscut' && e.date?.incercari) return `${ACTIUNI[e.actiune]}: ${e.date.incercari}`;
+  if ((e.actiune === 'login.esuat.necunoscut' || e.actiune === 'asociere.esuata') && e.date?.incercari) return `${ACTIUNI[e.actiune]}: ${e.date.incercari}`;
   return ACTIUNI[e.actiune] ?? e.actiune;
 }
 

@@ -89,7 +89,8 @@ export interface Echipamente {
   readonly manual: boolean;
   /** Trimite suma la terminal și așteaptă clientul să apropie cardul. */
   platesteCard(suma: number, referinta: string): Promise<RezultatCard>;
-  returCard(suma: number, plata: ReferintePlata, referinta: string): Promise<RezultatCard>;
+  /** `utilizatorId`: barista care restituie (serverul o păstrează pe returul din registrul terminalului). */
+  returCard(suma: number, plata: ReferintePlata, referinta: string, utilizatorId?: number): Promise<RezultatCard>;
   tiparesteBon(bon: BonFiscal): Promise<RezultatTiparire>;
   tiparesteRetur(bon: BonFiscal): Promise<RezultatTiparire>;
   /** Copie nefiscală a unui bon deja emis. */
@@ -200,9 +201,9 @@ class PrinServer implements Echipamente {
     }
   }
   /** Serverul ia RRN-ul și suma din plata înregistrată a comenzii; tableta trimite doar comanda. */
-  async returCard(suma: number, _plata: ReferintePlata, referinta: string): Promise<RezultatCard> {
+  async returCard(suma: number, _plata: ReferintePlata, referinta: string, utilizatorId?: number): Promise<RezultatCard> {
     try {
-      return await this.cere<RezultatCard>('/retur', { referinta, suma }, 150_000);
+      return await this.cere<RezultatCard>('/retur', { referinta, suma, utilizator_id: utilizatorId ?? null }, 150_000);
     } catch (e) {
       // Fără plată înregistrată prin server (sau încasată pe alt terminal): returul se face din meniul terminalului.
       if (e instanceof EroareHttp && (e.cod === COD_TERMINAL.returDinMeniu || e.cod === COD_TERMINAL.returAltTerminal)) {

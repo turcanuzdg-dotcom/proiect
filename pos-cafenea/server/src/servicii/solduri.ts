@@ -34,6 +34,14 @@ const CHEIE_SOLDURI = 7310;
  */
 const ASTEPTARE_BLOCARE = '100ms';
 const INCERCARI = 5;
+/**
+ * Așteptarea ultimei încercări când închiderea a eșuat deja de câteva ori la rând (planificaInchideri):
+ * sub o încărcare continuă cu tranzacții de peste 100 ms, încercările scurte pot cădea toate, iar coada
+ * crește oră de oră. O dată la câteva minute, vânzările pot aștepta cel mult o secundă.
+ */
+export const ASTEPTARE_INSISTENTA = '1s';
+/** După câte închideri eșuate la rând ultima încercare așteaptă ASTEPTARE_INSISTENTA. */
+export const ESECURI_PANA_LA_INSISTENTA = 2;
 
 /** Un sold închis rămâne cel puțin atât după ce a apărut unul mai nou (o citire în curs îl poate folosi). */
 const PASTRARE_IMPLICITA_MIN = 60;
@@ -43,6 +51,8 @@ export interface OptiuniInchidere {
   pastreazaMin?: number;
   /** Pauza dintre reîncercări când registrul e ocupat (ms; implicit 200 × încercarea). */
   pauzaMs?: number;
+  /** Așteptarea blocării la ultima încercare (de ex. ASTEPTARE_INSISTENTA); implicit ca la celelalte. */
+  asteptareFinala?: string;
 }
 
 /**
@@ -66,7 +76,9 @@ async function prag(db: Db, r: Registru, opt: OptiuniInchidere): Promise<number 
   for (let incercare = 1; ; incercare++) {
     try {
       return await db.tx(async (t) => {
-        await t.exec(`SET LOCAL lock_timeout = '${ASTEPTARE_BLOCARE}'`);
+        const asteptare = incercare >= INCERCARI && opt.asteptareFinala ? opt.asteptareFinala : ASTEPTARE_BLOCARE;
+        if (!/^\d+(ms|s)$/.test(asteptare)) throw new Error(`Așteptare invalidă: ${asteptare}`);
+        await t.exec(`SET LOCAL lock_timeout = '${asteptare}'`);
         await blocheazaRegistru(t, r);
         return (await t.query<{ n: number | null }>(`SELECT MAX(id) AS n FROM ${r.miscari}`))[0].n;
       });
@@ -148,8 +160,11 @@ export interface OptiuniPlanificare {
   intervalMs?: number;
   /** Pauza după o închidere eșuată (ms; implicit 5 minute): coada nu crește o oră în plus. */
   reincercareMs?: number;
-  /** Închiderea propriu-zisă (testele o înlocuiesc); implicit inchideSolduri(db). */
-  inchide?: () => Promise<unknown>;
+  /**
+   * Închiderea propriu-zisă (testele o înlocuiesc); implicit inchideSolduri(db). `insistent`: au eșuat deja
+   * ESECURI_PANA_LA_INSISTENTA închideri la rând, deci ultima încercare așteaptă ASTEPTARE_INSISTENTA.
+   */
+  inchide?: (o: { insistent: boolean }) => Promise<unknown>;
   /** Unde se scriu eșecurile; implicit console.error. */
   eroare?: (mesaj: string) => void;
 }
@@ -168,10 +183,21 @@ export interface Planificare {
  * fiecare oră pierdută le lungește coada. Un eșec se jurnalizează cu vârsta ultimului sold închis și
  * mărimea cozii, ca o închidere care cade mereu să se vadă.
  */
+/** Planificarea pornită de server (index.ts), ca Panoul să arate o închidere care cade mereu. */
+let planificareActiva: Planificare | null = null;
+
+/** După câte închideri eșuate la rând (5 min între ele) apare alerta pe Panou. */
+export const ESECURI_PANA_LA_ALERTA = 6;
+
+/** Starea închiderilor periodice, dacă rulează în acest proces (null în teste și în simulare). */
+export function stareInchideri(): ReturnType<Planificare['stare']> | null {
+  return planificareActiva?.stare() ?? null;
+}
+
 export function planificaInchideri(db: Db, opt: OptiuniPlanificare = {}): Planificare {
   const interval = opt.intervalMs ?? 60 * 60_000;
   const reincercare = opt.reincercareMs ?? 5 * 60_000;
-  const inchide = opt.inchide ?? (() => inchideSolduri(db));
+  const inchide = opt.inchide ?? ((o: { insistent: boolean }) => inchideSolduri(db, o.insistent ? { asteptareFinala: ASTEPTARE_INSISTENTA } : {}));
   const scrie = opt.eroare ?? ((m: string) => console.error(m));
   let ceas: ReturnType<typeof setTimeout> | undefined;
   let oprit = false;
@@ -187,7 +213,7 @@ export function planificaInchideri(db: Db, opt: OptiuniPlanificare = {}): Planif
 
   const ruleaza = async () => {
     try {
-      await inchide();
+      await inchide({ insistent: esecuriLaRand >= ESECURI_PANA_LA_INSISTENTA });
       ultimaReusita = new Date();
       esecuriLaRand = 0;
       programeaza(interval);
@@ -208,13 +234,16 @@ export function planificaInchideri(db: Db, opt: OptiuniPlanificare = {}): Planif
   };
 
   programeaza(0);
-  return {
+  const planificare: Planificare = {
     opreste() {
       oprit = true;
       if (ceas) clearTimeout(ceas);
+      if (planificareActiva === planificare) planificareActiva = null;
     },
     stare: () => ({ ultimaReusita, esecuriLaRand }),
   };
+  planificareActiva = planificare;
+  return planificare;
 }
 
 /** Vârsta ultimului sold închis și mărimea aproximativă a cozii (id-uri de după el), pe registre. */

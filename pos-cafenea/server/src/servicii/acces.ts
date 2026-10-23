@@ -280,27 +280,90 @@ export async function iesire(db: Db, token: string) {
 
 // ---- Bilete pentru fluxul de notificări (SSE) ----
 // EventSource nu poate trimite antete, iar tokenul de sesiune nu trebuie să ajungă în URL-uri
-// (jurnalele serverului și ale proxy-ului). Un bilet e scurt, aleator și valabil un minut.
+// (jurnalele serverului și ale proxy-ului). Un bilet e scurt, aleator, valabil un minut și se poate
+// folosi o singură dată (panoul cere altul la fiecare reconectare). Biletul ține minte amprenta
+// tokenului din care a fost cerut, ca fluxul deschis să poată fi reverificat (vezi detinatorValid).
 
-interface Bilet {
+export interface DetinatorFlux {
   utilizator?: UtilizatorAutentificat;
   dispozitiv?: DispozitivAutentificat;
+  /** Amprenta tokenului de sesiune sau al tabletei. */
+  amprenta: string;
+}
+interface Bilet extends DetinatorFlux {
   expira: number;
 }
 const bilete = new Map<string, Bilet>();
+/** Biletele încă nefolosite ale fiecărui deținător, în ordinea emiterii. */
+const biletePeDetinator = new Map<string, string[]>();
+/** Câte bilete nefolosite poate avea un deținător; la al șaselea, cel mai vechi nu mai e valabil. */
+export const MAX_BILETE_PE_DETINATOR = 5;
+const VALABILITATE_BILET = 60_000;
+let ultimaCuratare = 0;
 
-export function creeazaBilet(detinator: { utilizator?: UtilizatorAutentificat; dispozitiv?: DispozitivAutentificat }): string {
+/** Cheia deținătorului: același admin sau aceeași tabletă, indiferent de sesiune. */
+export const cheieDetinator = (d: { utilizator?: { id: number }; dispozitiv?: { id: number } }) =>
+  d.utilizator ? `u${d.utilizator.id}` : `d${d.dispozitiv!.id}`;
+
+function scoateDinLista(cheie: string, bilet: string) {
+  const lista = biletePeDetinator.get(cheie);
+  if (!lista) return;
+  const rest = lista.filter((b) => b !== bilet);
+  if (rest.length) biletePeDetinator.set(cheie, rest);
+  else biletePeDetinator.delete(cheie);
+}
+
+export function creeazaBilet(detinator: { utilizator?: UtilizatorAutentificat; dispozitiv?: DispozitivAutentificat }, token: string): string {
   const acum = Date.now();
-  for (const [b, v] of bilete) if (v.expira < acum) bilete.delete(b);
+  // Biletele expirate pleacă cel mult o dată la 10 s, nu la fiecare cerere (harta are cel mult
+  // MAX_BILETE_PE_DETINATOR bilete pentru fiecare admin sau tabletă).
+  if (acum - ultimaCuratare >= 10_000) {
+    ultimaCuratare = acum;
+    for (const [b, v] of bilete) {
+      if (v.expira >= acum) continue;
+      bilete.delete(b);
+      scoateDinLista(cheieDetinator(v), b);
+    }
+  }
+  const cheie = cheieDetinator(detinator);
+  const lista = (biletePeDetinator.get(cheie) ?? []).filter((b) => bilete.has(b));
+  while (lista.length >= MAX_BILETE_PE_DETINATOR) bilete.delete(lista.shift()!);
   const bilet = tokenNou();
-  bilete.set(bilet, { ...detinator, expira: acum + 60_000 });
+  bilete.set(bilet, { ...detinator, amprenta: amprentaToken(token), expira: acum + VALABILITATE_BILET });
+  lista.push(bilet);
+  biletePeDetinator.set(cheie, lista);
   return bilet;
 }
 
-export function detinatorBilet(bilet: string): Bilet | null {
+/** Deținătorul biletului, o singură dată: biletul nu mai e valabil după această citire. */
+export function detinatorBilet(bilet: string): DetinatorFlux | null {
   const b = bilete.get(bilet);
-  if (!b || b.expira < Date.now()) return null;
-  return b;
+  if (!b) return null;
+  bilete.delete(bilet);
+  scoateDinLista(cheieDetinator(b), bilet);
+  if (b.expira < Date.now()) return null;
+  const { expira: _expira, ...detinator } = b;
+  return detinator;
+}
+
+/**
+ * Fluxul deschis e încă al cuiva cu drept la el? Sesiunea adminului există, nu a expirat și contul e tot
+ * admin activ; tableta are încă același token (nu a fost dezactivată sau reasociată) și aceeași locație.
+ * Fără prelungirea sesiunii: doar o cerere a panoului o prelungește.
+ */
+export async function detinatorValid(db: Db, d: DetinatorFlux): Promise<boolean> {
+  if (d.utilizator) {
+    const r = await db.query(
+      `SELECT 1 FROM sesiuni s JOIN utilizatori u ON u.id = s.utilizator_id
+        WHERE s.token = $1 AND s.utilizator_id = $2 AND s.expira_la > now()
+          AND s.creata_la > now() - interval '${ZILE_SESIUNE_MAXIM} days' AND u.activ AND u.rol = 'admin'`,
+      [d.amprenta, d.utilizator.id],
+    );
+    return r.length > 0;
+  }
+  if (!d.dispozitiv) return false;
+  const r = await db.query('SELECT 1 FROM dispozitive WHERE id = $1 AND token = $2 AND activ AND locatie_id = $3', [d.dispozitiv.id, d.amprenta, d.dispozitiv.locatie_id]);
+  return r.length > 0;
 }
 
 // ---- Tablete (dispozitive POS) ----
@@ -319,26 +382,42 @@ export async function dispozitivDinToken(db: Db, token: string): Promise<Dispozi
   return r[0] ?? null;
 }
 
+/** Cât e valabil un cod de asociere de la emitere (ore). Apoi adminul cere altul („Reasociază”). */
+export const VALABILITATE_COD_ORE = 24;
+
 /** Adminul creează tableta și primește un cod de asociere de 8 caractere, valabil o singură dată. */
 export async function creeazaDispozitiv(db: Db, nume: string, locatieId: number) {
-  const r = await db.query('INSERT INTO dispozitive (nume, locatie_id, cod_asociere) VALUES ($1, $2, $3) RETURNING *', [nume, locatieId, codAsociere()]);
+  const r = await db.query('INSERT INTO dispozitive (nume, locatie_id, cod_asociere, cod_asociere_la) VALUES ($1, $2, $3, now()) RETURNING *', [nume, locatieId, codAsociere()]);
   return r[0];
 }
 
-export async function asociazaDispozitiv(db: Db, cod: string) {
+/**
+ * Asocierea cu un cod: pauze pe adresă după încercări greșite (aceleași bariere ca la login, cheia
+ * „asociere”), iar codul e valabil VALABILITATE_COD_ORE de la emitere. Eșecurile se numără în jurnal
+ * (rânduri `asociere.esuata` adunate pe adresă, rute/pos.ts).
+ */
+const protectieAsociere = new ProtectieLogin();
+
+export async function asociazaDispozitiv(db: Db, cod: string, adresa = '') {
+  protectieAsociere.verifica('asociere', adresa);
   const token = tokenNou();
   const r = await db.query<any>(
-    `UPDATE dispozitive SET token = $2, cod_asociere = NULL WHERE cod_asociere = $1 AND activ
+    `UPDATE dispozitive SET token = $2, cod_asociere = NULL, cod_asociere_la = NULL
+      WHERE cod_asociere = $1 AND activ AND cod_asociere_la > now() - interval '${VALABILITATE_COD_ORE} hours'
      RETURNING id, nume, locatie_id`,
     [cod.trim().toUpperCase(), amprentaToken(token)],
   );
-  if (!r[0]) throw new EroareUtilizator('Cod de asociere greșit sau deja folosit', 401);
+  if (!r[0]) {
+    protectieAsociere.esec('asociere', adresa, true);
+    throw new EroareUtilizator(`Cod de asociere greșit, expirat (după ${VALABILITATE_COD_ORE} de ore) sau deja folosit; cereți în panou un cod nou`, 401);
+  }
+  protectieAsociere.reusit('asociere', adresa);
   return { token, dispozitiv: r[0] as DispozitivAutentificat };
 }
 
 /** Generează un cod nou (de ex. tableta a fost resetată); tokenul vechi nu mai funcționează. */
 export async function reasociazaDispozitiv(db: Db, id: number) {
-  const r = await db.query('UPDATE dispozitive SET cod_asociere = $2, token = NULL WHERE id = $1 RETURNING *', [id, codAsociere()]);
+  const r = await db.query('UPDATE dispozitive SET cod_asociere = $2, cod_asociere_la = now(), token = NULL WHERE id = $1 RETURNING *', [id, codAsociere()]);
   if (!r[0]) throw new EroareNegasit('Tableta');
   return r[0];
 }
@@ -346,7 +425,8 @@ export async function reasociazaDispozitiv(db: Db, id: number) {
 export function listaDispozitive(db: Db) {
   return db.query(
     `SELECT d.id, d.nume, d.locatie_id, l.nume AS locatie, d.cod_asociere, d.activ, d.creat_la, d.ultima_sincronizare,
-            d.terminal_device_id, d.token IS NOT NULL AS asociat
+            d.terminal_device_id, d.token IS NOT NULL AS asociat,
+            (d.cod_asociere IS NOT NULL AND (d.cod_asociere_la IS NULL OR d.cod_asociere_la <= now() - interval '${VALABILITATE_COD_ORE} hours')) AS cod_expirat
        FROM dispozitive d JOIN locatii l ON l.id = d.locatie_id ORDER BY l.nume, d.nume`,
   );
 }
@@ -358,7 +438,8 @@ export function listaDispozitive(db: Db) {
  */
 export async function activeazaDispozitiv(db: Db, id: number, activ: boolean): Promise<{ cod_asociere: string | null }> {
   const r = await db.query<{ cod_asociere: string | null }>(
-    'UPDATE dispozitive SET activ = $2, token = NULL, cod_asociere = $3 WHERE id = $1 AND activ <> $2 RETURNING cod_asociere',
+    `UPDATE dispozitive SET activ = $2, token = NULL, cod_asociere = $3, cod_asociere_la = CASE WHEN $2 THEN now() END
+      WHERE id = $1 AND activ <> $2 RETURNING cod_asociere`,
     [id, activ, activ ? codAsociere() : null],
   );
   if (r[0]) return r[0];
@@ -374,12 +455,16 @@ export async function activeazaDispozitiv(db: Db, id: number, activ: boolean): P
  * între timp rămâne valabil, ca vânzările făcute offline înainte de dezactivare să se aplice.
  *
  * Un administrator nu are PIN (rolul de admin îl șterge: salveazaUtilizator, migrarea 004), deci nu
- * apare pe tablete. Singurul caz legitim e o barista promovată care are încă operații offline în
- * coada tabletei, făcute cu PIN-ul de dinainte: se acceptă doar evenimentele cu `moment` anterior
- * ultimei promovări barista → admin din jurnalul de audit. Altfel (sau fără `moment`, la cererile
- * online) e eroarea „nu are PIN”, iar adminul decide prin „Reaplică”.
+ * apare pe tablete. Se acceptă doar operațiile lui offline cu `moment` anterior (vezi limitaAdmin):
+ *  - ultimei promovări barista → admin din jurnalul de audit (o barista promovată, cu coada încă în tabletă);
+ *  - actualizării care a șters PIN-urile adminilor (migrarea 004), pe o instalare de dinaintea ei: până
+ *    atunci un admin cu PIN vindea pe tabletă, iar coada de atunci trebuie să se poată aplica.
+ * Altfel (sau fără `moment`, la cererile online) e eroarea „nu are PIN”, iar adminul decide prin „Reaplică”.
+ *
+ * `limite` ține minte, pe durata unui lot de sincronizare, limita fiecărui admin: un lot de sute de
+ * evenimente pe numele aceluiași admin citește jurnalul o singură dată.
  */
-export async function utilizatorPermisTabletei(db: Db, utilizatorId: number, locatieId: number, moment?: string): Promise<void> {
+export async function utilizatorPermisTabletei(db: Db, utilizatorId: number, locatieId: number, moment?: string, limite?: LimiteAdmin): Promise<void> {
   const u = (
     await db.query<{ nume: string; rol: string; are_pin: boolean; locatie_id: number | null }>(
       'SELECT nume, rol, pin_hash IS NOT NULL AS are_pin, locatie_id FROM utilizatori WHERE id = $1',
@@ -388,21 +473,46 @@ export async function utilizatorPermisTabletei(db: Db, utilizatorId: number, loc
   )[0];
   if (!u) throw new EroareUtilizator(`Utilizatorul ${utilizatorId} nu există`);
   if (u.locatie_id != null && u.locatie_id !== locatieId) throw new EroareUtilizator(`Utilizatorul ${u.nume} nu lucrează în această locație`);
-  if (!u.are_pin && !(u.rol === 'admin' && moment && (await promovatDupa(db, utilizatorId, moment)))) {
-    throw new EroareUtilizator(`Utilizatorul ${u.nume} nu are PIN de tabletă; dați-i un PIN în Setări → Utilizatori, apoi „Reaplică”`);
+  if (u.are_pin) return;
+  if (u.rol !== 'admin') throw new EroareUtilizator(`Utilizatorul ${u.nume} nu are PIN de tabletă; dați-i un PIN în Setări → Utilizatori, apoi „Reaplică”`);
+  if (moment) {
+    let limita = limite?.get(utilizatorId);
+    if (limita === undefined) {
+      limita = await limitaAdmin(db, utilizatorId);
+      limite?.set(utilizatorId, limita);
+    }
+    if (limita != null && Date.parse(moment) < limita) return;
   }
+  // Un administrator nu poate primi PIN (salveazaUtilizator i-l șterge): calea e retrogradarea temporară.
+  throw new EroareUtilizator(
+    `Utilizatorul ${u.nume} e administrator, fără PIN de tabletă. Ca operațiunea să se aplice: treceți-l temporar la barista ` +
+      'cu un PIN (Setări → Utilizatori), apăsați „Reaplică”, apoi readuceți-l la administrator',
+  );
 }
 
-/** Utilizatorul a fost trecut din barista în admin (din panou) după `moment`? */
-async function promovatDupa(db: Db, utilizatorId: number, moment: string): Promise<boolean> {
-  const r = await db.query<{ promovat: boolean }>(
-    `SELECT $2::timestamptz < MAX(la) AS promovat
-       FROM jurnal_audit
-      WHERE actiune = 'PUT /api/utilizatori/:id' AND cale = $1 AND stare_http = 200
-        AND date->'inainte'->>'rol' = 'barista' AND date->'corp'->>'rol' = 'admin'`,
-    [`/api/utilizatori/${utilizatorId}`, moment],
+/** Limitele adminilor pe durata unui lot: id → moment (ms) înaintea căruia operațiile lui se acceptă, null = niciunul. */
+export type LimiteAdmin = Map<number, number | null>;
+
+const MIGRARE_FARA_PIN_ADMIN = '004_securitate_registre_jurnal.sql';
+
+/**
+ * Momentul înaintea căruia operațiile unui admin fără PIN se acceptă: cea mai recentă dintre ultima lui
+ * promovare barista → admin (jurnalul de audit, indexul parțial jurnal_audit_promovari) și aplicarea
+ * migrării 004, dar aceasta doar pe o instalare mai veche decât ea. La o instalare nouă toate migrațiile
+ * se aplică odată, deci nu exista nicio coadă de dinainte; o oră între prima migrație și 004 deosebește
+ * o actualizare de o instalare nouă.
+ */
+async function limitaAdmin(db: Db, utilizatorId: number): Promise<number | null> {
+  const [r] = await db.query<{ promovat: string | Date | null; migrare: string | Date | null }>(
+    `SELECT (SELECT MAX(la) FROM jurnal_audit
+              WHERE actiune = 'PUT /api/utilizatori/:id' AND cale = $1 AND stare_http = 200
+                AND date->'inainte'->>'rol' = 'barista' AND date->'corp'->>'rol' = 'admin') AS promovat,
+            (SELECT m.aplicata_la FROM schema_migrari m
+              WHERE m.nume = $2 AND m.aplicata_la > (SELECT MIN(aplicata_la) FROM schema_migrari) + interval '1 hour') AS migrare`,
+    [`/api/utilizatori/${utilizatorId}`, MIGRARE_FARA_PIN_ADMIN],
   );
-  return r[0]?.promovat === true;
+  const momente = [r?.promovat, r?.migrare].filter((x): x is string | Date => x != null).map((x) => new Date(x).getTime());
+  return momente.length ? Math.max(...momente) : null;
 }
 
 // ---- Utilizatori ----

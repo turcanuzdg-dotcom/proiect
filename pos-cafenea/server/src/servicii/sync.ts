@@ -3,7 +3,7 @@ import { LIMITE, MOTIVE_CASARE, type EvenimentPOS, type RaspunsSync } from '@caf
 import type { Db } from '../db';
 import { EroareNegasit, EroareUtilizator } from '../erori';
 import { magistrala, type Notificare } from '../magistrala';
-import { utilizatorPermisTabletei } from './acces';
+import { utilizatorPermisTabletei, type LimiteAdmin } from './acces';
 import { catalogTableta } from './catalog';
 import { deschideTura, inchideTura, plataMarunta } from './ture';
 import { anuleazaComanda, inregistreazaComanda, type ContextPOS } from './vanzari';
@@ -159,6 +159,8 @@ export async function proceseazaSync(db: Db, ctx: ContextPOS, evenimente: unknow
   const acceptate: string[] = [];
   const cu_eroare: RaspunsSync['cu_eroare'] = [];
   const notificari = new Set<Notificare['tip']>();
+  // Un lot de sute de evenimente pe numele aceluiași admin fără PIN citește jurnalul o singură dată.
+  const limiteAdmin: LimiteAdmin = new Map();
 
   for (const brut of evenimente) {
     const evId = typeof (brut as any)?.id === 'string' ? (brut as any).id : null;
@@ -182,7 +184,7 @@ export async function proceseazaSync(db: Db, ctx: ContextPOS, evenimente: unknow
       const tipuri = await db.tx(async (t) => {
         // În tranzacția evenimentului: o oră respinsă trece prin eroarePermanenta, nu blochează lotul.
         const oraSuspecta = await verificaOra(t, ctx, ev);
-        await utilizatorPermisTabletei(t, ev.date.utilizator_id, ctx.locatie_id, ev.la);
+        await utilizatorPermisTabletei(t, ev.date.utilizator_id, ctx.locatie_id, ev.la, limiteAdmin);
         const rez = await aplica(t, ctx, ev);
         await t.query(
           `INSERT INTO evenimente_sync (id, dispozitiv_id, locatie_id, tip, la, stare, payload, ora_suspecta)

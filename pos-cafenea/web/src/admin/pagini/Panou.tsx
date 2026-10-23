@@ -19,6 +19,10 @@ interface DatePanou {
   /** Vânzări pe card din ultimele 7 zile, pe tablete cu terminal prin server, fără plată aprobată de terminal. */
   card_neconfirmat: number;
   card_neconfirmat_suma: number;
+  /** Retururi pe card aprobate (de peste 10 minute) a căror comandă nu e anulată pe server. */
+  retururi_neanulate: { referinta: string; suma: number; la: string; locatie: string; dispozitiv: string; barista: string | null; nr: number | null; comanda_pe_server: boolean }[];
+  /** Închiderea soldurilor eșuează de cel puțin o jumătate de oră (null = merge). */
+  solduri_blocate: { esecuri: number; ultima_reusita: string | null } | null;
 }
 
 const ORA = 3_600_000;
@@ -35,7 +39,7 @@ export function PaginaPanou({ navigheaza }: PropsPagina) {
           const total = d.vanzari.reduce((s, v) => s + v.total, 0);
           const comenzi = d.vanzari.reduce((s, v) => s + v.comenzi, 0);
           const tableteVechi = d.dispozitive.filter((x) => !x.ultima_sincronizare || Date.now() - new Date(x.ultima_sincronizare).getTime() > ORA);
-          const nrAlerte = d.discrepante.length + d.sub_prag.length + (d.erori_sync ? 1 : 0) + (d.preturi_abatute ? 1 : 0) + (d.ore_suspecte ? 1 : 0) + (d.card_neconfirmat ? 1 : 0) + tableteVechi.length;
+          const nrAlerte = d.discrepante.length + d.sub_prag.length + (d.erori_sync ? 1 : 0) + (d.preturi_abatute ? 1 : 0) + (d.ore_suspecte ? 1 : 0) + (d.card_neconfirmat ? 1 : 0) + (d.retururi_neanulate.length ? 1 : 0) + (d.solduri_blocate ? 1 : 0) + tableteVechi.length;
           return (
             <>
               <div className="card grila-kpi">
@@ -135,6 +139,42 @@ export function PaginaPanou({ navigheaza }: PropsPagina) {
                       <button type="button" className="buton-secundar" onClick={() => navigheaza('comenzi/card-neconfirmat')}>
                         Vezi vânzările
                       </button>
+                    </div>
+                  )}
+                  {d.retururi_neanulate.length > 0 && (
+                    <div className="alerta pericol">
+                      <span>
+                        <strong>
+                          {d.retururi_neanulate.length} {d.retururi_neanulate.length === 1 ? 'retur' : 'retururi'} pe card fără anularea comenzii (
+                          {formatLei(d.retururi_neanulate.reduce((s, x) => s + x.suma, 0))})
+                        </strong>{' '}
+                        — banii au fost restituiți pe card, dar vânzarea se numără încă la încasări. Anularea n-a ajuns de pe tabletă
+                        sau returul s-a făcut fără ea: verificați cu barista.
+                        {d.retururi_neanulate.some((x) => !x.comanda_pe_server) && (
+                          <>
+                            {' '}
+                            Fără comandă pe server:{' '}
+                            {d.retururi_neanulate
+                              .filter((x) => !x.comanda_pe_server)
+                              .map((x) => `${formatLei(x.suma)} la ${formatDataOra(x.la)}, ${x.dispozitiv}${x.barista ? ` (${x.barista})` : ''}`)
+                              .join('; ')}
+                            .
+                          </>
+                        )}
+                      </span>
+                      <button type="button" className="buton-secundar" onClick={() => navigheaza('comenzi/retur-neanulat')}>
+                        Vezi comenzile
+                      </button>
+                    </div>
+                  )}
+                  {d.solduri_blocate && (
+                    <div className="alerta avertisment">
+                      <span>
+                        <strong>Închiderea soldurilor de stoc și bani eșuează ({d.solduri_blocate.esecuri} încercări la rând)</strong>{' '}
+                        — cifrele rămân corecte, dar citirile devin mai lente. Ultima reușită:{' '}
+                        {d.solduri_blocate.ultima_reusita ? formatDataOra(d.solduri_blocate.ultima_reusita) : 'niciuna de la pornirea serverului'}. Vezi jurnalul
+                        serverului (o tranzacție lungă sau un VACUUM pe registre).
+                      </span>
                     </div>
                   )}
                   {d.ore_suspecte > 0 && (

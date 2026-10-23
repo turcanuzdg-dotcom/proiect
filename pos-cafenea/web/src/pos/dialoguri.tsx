@@ -559,7 +559,7 @@ export function Anulare({ comanda, onInapoi, onGata }: { comanda: stocare.Comand
     // returul din meniul terminalului: dialogul trece pe calea manuală, nu rămâne blocat.
     if (comanda.metoda === 'card' && !returManual && !returConfirmat) {
       const r: RezultatCard = await app.echipamente
-        .returCard(comanda.total, { autorizare: comanda.card_autorizare, rrn: comanda.card_rrn, operation_id: comanda.card_operation_id }, comanda.comanda_id)
+        .returCard(comanda.total, { autorizare: comanda.card_autorizare, rrn: comanda.card_rrn, operation_id: comanda.card_operation_id }, comanda.comanda_id, app.barista.id)
         .catch((e: Error) => ({ aprobat: false, nesigur: true, mesaj: e.message }));
       const urmare = urmareRetur(r);
       if (urmare !== 'inregistreaza') {

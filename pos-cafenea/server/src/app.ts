@@ -7,7 +7,7 @@ import type { Db } from './db';
 import { corpEroare, raspunsLaEroare } from './erori';
 import { LIMITA_CORP } from './limite';
 import { magistrala, type Notificare } from './magistrala';
-import { creeazaBilet, detinatorBilet, dispozitivDinToken, utilizatorDinToken } from './servicii/acces';
+import { cheieDetinator, creeazaBilet, detinatorBilet, detinatorValid, dispozitivDinToken, utilizatorDinToken } from './servicii/acces';
 import { ruteAdmin } from './rute/admin';
 import { rutePOS } from './rute/pos';
 
@@ -22,7 +22,12 @@ export interface OptiuniApp {
    * poate alege adresa (de care țin pauzele de la login și jurnalul de audit).
    */
   trustProxy?: boolean | string;
+  /** Pulsul fluxului de notificări, la care se și reverifică deținătorul (ms; implicit 25 s). */
+  intervalPuls?: number;
 }
+
+/** Câte fluxuri de notificări poate ține deschise un admin sau o tabletă. */
+export const MAX_FLUXURI = 5;
 
 function trustProxyDinMediu(v = process.env.TRUST_PROXY): boolean | string {
   if (!v) return 'loopback';
@@ -62,7 +67,7 @@ function tokenDin(req: FastifyRequest): string | null {
   return h?.startsWith('Bearer ') ? h.slice(7) : null;
 }
 
-export async function construiesteApp({ db, dirWeb, jurnal = false, trustProxy = trustProxyDinMediu() }: OptiuniApp) {
+export async function construiesteApp({ db, dirWeb, jurnal = false, trustProxy = trustProxyDinMediu(), intervalPuls = 25_000 }: OptiuniApp) {
   const app = Fastify({
     // În jurnal, adresa fără parametri: acolo pot ajunge bilete și coduri.
     logger: jurnal ? { serializers: { req: (r) => ({ method: r.method, url: r.url.split('?')[0], ip: r.ip }) } } : false,
@@ -123,13 +128,18 @@ export async function construiesteApp({ db, dirWeb, jurnal = false, trustProxy =
     const u = token ? await utilizatorDinToken(db, token) : null;
     const d = !u && token ? await dispozitivDinToken(db, token) : null;
     if (!u && !d) return reply.status(401).send({ eroare: 'Autentificare necesară' });
-    return { bilet: creeazaBilet(u ? { utilizator: u } : { dispozitiv: d! }) };
+    return { bilet: creeazaBilet(u ? { utilizator: u } : { dispozitiv: d! }, token!) };
   });
+  // Fluxurile deschise ale fiecărui admin sau tablete, în ordinea deschiderii: peste MAX_FLUXURI, cel mai
+  // vechi se închide (o reconectare prin proxy poate lăsa câteva pe jumătate închise; un client nu ține mai multe).
+  const fluxuriPeDetinator = new Map<string, Set<ServerResponse>>();
   app.get('/api/flux', async (req, reply) => {
     const bilet = (req.query as { bilet?: string }).bilet;
+    // Biletul se consumă aici: o a doua deschidere cu el primește 401, iar panoul cere altul.
     const detinator = typeof bilet === 'string' ? detinatorBilet(bilet) : null;
-    if (!detinator) return reply.status(401).send({ eroare: 'Bilet lipsă sau expirat' });
+    if (!detinator) return reply.status(401).send({ eroare: 'Bilet lipsă, expirat sau deja folosit' });
     const d = detinator.dispozitiv ?? null;
+    const cheie = cheieDetinator(detinator);
     reply.hijack();
     const res = reply.raw;
     res.writeHead(200, {
@@ -140,18 +150,44 @@ export async function construiesteApp({ db, dirWeb, jurnal = false, trustProxy =
       'X-Accel-Buffering': 'no',
     });
     fluxuri.add(res);
+    const aleLui = fluxuriPeDetinator.get(cheie) ?? new Set<ServerResponse>();
+    fluxuriPeDetinator.set(cheie, aleLui);
+    aleLui.add(res);
+    for (const vechi of aleLui) {
+      if (aleLui.size <= MAX_FLUXURI) break;
+      aleLui.delete(vechi);
+      vechi.end();
+    }
     res.write('retry: 3000\n\n');
     const asculta = (n: Notificare) => {
       if (d && n.locatie_id != null && n.locatie_id !== d.locatie_id) return;
+      if (res.writableEnded || res.destroyed) return;
       res.write(`data: ${JSON.stringify(n)}\n\n`);
     };
-    const puls = setInterval(() => res.write(': puls\n\n'), 25_000);
+    // La fiecare puls, fluxul se reverifică: după ieșire, retrogradare, dezactivarea sau reasocierea
+    // tabletei nu mai primește notificări (se închide; panoul cere un bilet nou, care va fi refuzat).
+    const puls = setInterval(() => {
+      detinatorValid(db, detinator).then(
+        (valid) => {
+          // Fluxul s-a putut închide cât se aștepta baza: nu se mai scrie în el.
+          if (res.writableEnded || res.destroyed) return;
+          if (valid) res.write(': puls\n\n');
+          else res.end();
+        },
+        // Baza nu răspunde: fluxul rămâne, se reverifică la pulsul următor.
+        () => {
+          if (!res.writableEnded && !res.destroyed) res.write(': puls\n\n');
+        },
+      );
+    }, intervalPuls);
     magistrala.on('notificare', asculta);
     // Clientul a plecat sau serverul a închis fluxul la oprire.
     res.on('close', () => {
       clearInterval(puls);
       magistrala.off('notificare', asculta);
       fluxuri.delete(res);
+      aleLui.delete(res);
+      if (aleLui.size === 0 && fluxuriPeDetinator.get(cheie) === aleLui) fluxuriPeDetinator.delete(cheie);
     });
   });
 

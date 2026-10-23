@@ -46,6 +46,8 @@ interface Tura {
   bani?: { cont: string; tip: TipMiscareBani; nr: number; suma: number }[];
   /** Doar în detaliu: vânzările pe card ale turei fără plată aprobată de terminal. */
   card_neconfirmat?: { nr: number; suma: number };
+  /** Doar în detaliu: retururi pe card aprobate fără anularea comenzii. */
+  retur_neanulat?: { nr: number; suma: number; lista: { referinta: string; suma: number; la: string; barista: string | null; nr: number | null; comanda_pe_server: boolean }[] };
 }
 
 /** Neverificată sau schimbată după verificare: cere din nou atenția adminului. */
@@ -277,6 +279,18 @@ function DetaliuTura({ id, onInchide }: { id: string; onInchide: () => void }) {
                 </strong>{' '}
                 — sunt în totalul card al sistemului, dar terminalul (prin server) nu a aprobat nicio plată pentru ele. Comparați cu raportul
                 băncii; la un terminal separat, fără legătură, toate vânzările pe card apar așa.
+              </div>
+            )}
+            {t.retur_neanulat && t.retur_neanulat.nr > 0 && (
+              <div className="alerta pericol">
+                <strong>
+                  {t.retur_neanulat.nr} {t.retur_neanulat.nr === 1 ? 'retur' : 'retururi'} pe card fără anularea comenzii: {formatLei(t.retur_neanulat.suma)}
+                </strong>{' '}
+                — banii au fost restituiți prin terminal, dar comanda se numără încă la card în tura aceasta (
+                {t.retur_neanulat.lista
+                  .map((x) => `${x.nr != null ? `bon #${x.nr}` : 'comandă lipsă pe server'}, ${formatDataOra(x.la)}${x.barista ? `, ${x.barista}` : ''}`)
+                  .join('; ')}
+                ).
               </div>
             )}
             {t.bani && t.bani.length > 0 && (

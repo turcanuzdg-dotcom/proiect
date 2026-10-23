@@ -429,6 +429,136 @@ describe('vânzările pe card de pe tabletele fără terminal prin server', () =
   });
 });
 
+describe('retururi pe card fără anularea comenzii (reconciliere)', () => {
+  const espresso = () => [{ produs_id: t.produs('Espresso').id, cantitate: 1, pret_unitar: t.produs('Espresso').pret, modificatori: [] }];
+  /** Returul a fost aprobat acum 11 minute: a trecut așteptarea anulării (registrul nu se modifică altfel). */
+  const imbatraneste = async (referinta: string) => {
+    await t.db.exec('ALTER TABLE operatiuni_terminal DISABLE TRIGGER operatiuni_terminal_registru');
+    try {
+      await t.db.query(`UPDATE operatiuni_terminal SET actualizata_la = now() - interval '11 minutes' WHERE referinta = $1 AND tip = 'retur'`, [referinta]);
+    } finally {
+      await t.db.exec('ALTER TABLE operatiuni_terminal ENABLE TRIGGER operatiuni_terminal_registru');
+    }
+  };
+  const panou = () => t.admin.get(`/api/panou?de_azi=${encodeURIComponent(new Date(Date.now() - 86_400_000).toISOString())}`);
+  const dePanou = async (ref: string) => (await panou()).retururi_neanulate.find((x: any) => x.referinta === ref);
+
+  it('un retur aprobat fără anulare apare pe Panou, pe tură și în Comenzi, cu barista, și dispare când anularea se sincronizează', async () => {
+    const tura = randomUUID();
+    const acum = new Date(Date.now() - 60_000).toISOString();
+    const v = evComanda(tura, t.barista, espresso(), 'card', { la: acum });
+    const ref = v.date.comanda_id;
+    await plata(ref, v.date.total);
+    expect((await t.tableta.sync([evTuraDeschisa(tura, t.barista, 500, acum), v])).cu_eroare).toEqual([]);
+    expect(await t.tableta.post('/api/pos/terminal/retur', { referinta: ref, utilizator_id: t.barista })).toMatchObject({ aprobat: true });
+    expect((await randuri(ref)).find((x) => x.tip === 'retur')).toMatchObject({ stare: 'aprobata', utilizator_id: t.barista });
+
+    // Imediat după retur, anularea e încă pe drum: nicio alertă.
+    expect(await dePanou(ref)).toBeUndefined();
+    await imbatraneste(ref);
+    expect(await dePanou(ref)).toMatchObject({ suma: v.date.total, barista: 'Ana Rusu', comanda_pe_server: true, dispozitiv: 'Tabletă Centru' });
+    const detaliu = await t.admin.get(`/api/ture/${tura}`);
+    expect(detaliu.retur_neanulat).toMatchObject({ nr: 1, suma: v.date.total });
+    const comenzi = await t.admin.get(`/api/comenzi?tura_id=${tura}&retur_neanulat=true`);
+    expect(comenzi.map((c: any) => [c.id, c.retur_neanulat])).toEqual([[ref, true]]);
+
+    // Returul unei comenzi care nu e (încă) pe server: pe Panou și pe tura deschisă în locația lui.
+    const lipsa = randomUUID();
+    await plata(lipsa, 30);
+    await t.tableta.post('/api/pos/terminal/retur', { referinta: lipsa });
+    await imbatraneste(lipsa);
+    expect(await dePanou(lipsa)).toMatchObject({ suma: 30, comanda_pe_server: false, barista: null, nr: null });
+    expect((await t.admin.get(`/api/ture/${tura}`)).retur_neanulat.nr).toBe(2);
+
+    // Anularea ajunge: comanda iese din alertă, din tură și din filtrul Comenzi.
+    const anulare = { id: randomUUID(), tip: 'comanda_anulata', la: new Date().toISOString(), date: { comanda_id: ref, tura_id: tura, utilizator_id: t.barista, motiv: 'Clientul a renunțat', restituie_stoc: true } };
+    expect((await t.tableta.sync([anulare])).cu_eroare).toEqual([]);
+    expect(await dePanou(ref)).toBeUndefined();
+    expect((await t.admin.get(`/api/ture/${tura}`)).retur_neanulat.lista.map((x: any) => x.referinta)).toEqual([lipsa]);
+    expect(await t.admin.get(`/api/comenzi?tura_id=${tura}&retur_neanulat=true`)).toEqual([]);
+    expect((await t.admin.get(`/api/comenzi?tura_id=${tura}`))[0].retur_neanulat).toBe(false);
+  });
+
+  it('barista declarată la retur trebuie să poată lucra pe tabletă (locația ei, PIN)', async () => {
+    const ref = randomUUID();
+    await plata(ref);
+    const ion = (await t.admin.get('/api/utilizatori')).find((u: any) => u.nume === 'Ion Ceban').id;
+    const r = await cerere('/api/pos/terminal/retur', { referinta: ref, utilizator_id: ion });
+    expect(r.statusCode).toBe(400);
+    expect(r.json().eroare).toMatch(/nu lucrează în această locație/);
+    expect(numar('/Refund')).toBe(0);
+  });
+});
+
+describe('o plată nelămurită la sincronizarea vânzării', () => {
+  it('confirmă vânzarea pe card când terminalul o aprobă mai târziu', async () => {
+    const tura = randomUUID();
+    const acum = new Date().toISOString();
+    const linie = [{ produs_id: t.produs('Espresso').id, cantitate: 1, pret_unitar: t.produs('Espresso').pret, modificatori: [] }];
+    const v = evComanda(tura, t.barista, linie, 'card', { la: acum });
+    const ref = v.date.comanda_id;
+    scenariu.pay = { errorCode: 241 };
+    scenariu.ultima = { errorCode: 7 };
+    expect((await plata(ref, v.date.total)).nesigur).toBe(true);
+    // Barista a văzut plata trecută pe terminal și a înregistrat vânzarea: ajunge neconfirmată.
+    expect((await t.tableta.sync([evTuraDeschisa(tura, t.barista, 500, acum), v])).cu_eroare).toEqual([]);
+    const stare = async () => (await t.db.query<{ card_confirmat: boolean | null }>('SELECT card_confirmat FROM comenzi WHERE id = $1', [ref]))[0].card_confirmat;
+    expect(await stare()).toBe(false);
+    expect((await t.admin.get(`/api/ture/${tura}`)).card_neconfirmat.nr).toBe(1);
+    // Verificarea ulterioară găsește plata aprobată: vânzarea iese din alertă.
+    scenariu.ultima = ultima({ documentNr: ref, status: 'Approved', amount: v.date.total, rrn: '777', authCode: '333' });
+    expect(await plata(ref, v.date.total)).toMatchObject({ aprobat: true });
+    expect(await stare()).toBe(true);
+    expect((await t.admin.get(`/api/ture/${tura}`)).card_neconfirmat.nr).toBe(0);
+  });
+});
+
+describe('bonul fiscal pe card, doar pentru plata aprobată', () => {
+  const linii = [{ produs_id: null, nume: 'Latte', cantitate: 1, pret_unitar: 45 }];
+
+  it('fără plată aprobată, cu alt total sau de pe altă tabletă: 409, nimic tipărit', async () => {
+    // Fără nicio plată: RRN-ul inventat de tabletă nu ajunge pe bon.
+    const fara = await cerere('/api/pos/terminal/bon', { comanda_id: randomUUID(), numar: '4', linii, metoda: 'card', total: 45, card: { rrn: 'INVENTAT', autorizare: '1' } });
+    expect(fara.statusCode).toBe(409);
+    expect(fara.json().cod).toBe(COD_TERMINAL.bonFaraPlata);
+    // Plata aprobată e de 45, bonul cere 90.
+    const ref = randomUUID();
+    await plata(ref);
+    const dublu = [{ produs_id: null, nume: 'Latte', cantitate: 2, pret_unitar: 45 }];
+    const alt = await cerere('/api/pos/terminal/bon', { comanda_id: ref, numar: '5', linii: dublu, metoda: 'card', total: 90 });
+    expect(alt.statusCode).toBe(409);
+    expect(alt.json()).toMatchObject({ cod: COD_TERMINAL.bonFaraPlata, eroare: expect.stringMatching(/45\.00 lei, nu 90\.00/) });
+    // Altă tabletă (cu terminal propriu) nu emite bonul plății încasate aici.
+    const centru = (await t.admin.get('/api/dispozitive')).find((d: any) => d.nume === 'Tabletă Centru');
+    const noua = await t.admin.post('/api/dispozitive', { nume: 'Tabletă Centru bon', locatie_id: centru.locatie_id });
+    await t.admin.put(`/api/dispozitive/${noua.id}/terminal`, { terminal_device_id: 'PAX-B' });
+    const token = (await t.app.inject({ method: 'POST', url: '/api/pos/asociere', payload: { cod: noua.cod_asociere } })).json().token;
+    const straina = await t.app.inject({ method: 'POST', url: '/api/pos/terminal/bon', payload: { comanda_id: ref, numar: '6', linii, metoda: 'card', total: 45 }, headers: { authorization: `Bearer ${token}` } });
+    expect(straina.statusCode).toBe(409);
+    expect(numar('/Invoice/Pay')).toBe(0);
+    await t.admin.put(`/api/dispozitive/${noua.id}/terminal`, { terminal_device_id: null });
+  });
+
+  it('bonul înregistrat al unei comenzi nu se rescrie de pe altă tabletă', async () => {
+    const comanda = randomUUID();
+    await t.tableta.post('/api/pos/terminal/bon', { comanda_id: comanda, numar: '7', linii, metoda: 'numerar', total: 45, primit: 50 });
+    const centru = (await t.admin.get('/api/dispozitive')).find((d: any) => d.nume === 'Tabletă Centru');
+    const alta = await t.admin.post('/api/dispozitive', { nume: 'Tabletă străină', locatie_id: t.demo.locatii.botanica });
+    await t.admin.put(`/api/dispozitive/${alta.id}/terminal`, { terminal_device_id: 'PAX-S' });
+    const token = (await t.app.inject({ method: 'POST', url: '/api/pos/asociere', payload: { cod: alta.cod_asociere } })).json().token;
+    scenariu.bon = { errorCode: 0, report: JSON.stringify({ QR: 'qr-strain', ReceiptID: 'r-strain' }) };
+    try {
+      const r = await t.app.inject({ method: 'POST', url: '/api/pos/terminal/bon', payload: { comanda_id: comanda, numar: '8', linii, metoda: 'numerar', total: 45, primit: 50 }, headers: { authorization: `Bearer ${token}` } });
+      expect(r.statusCode).toBe(200);
+    } finally {
+      scenariu.bon = { errorCode: 0, report: JSON.stringify({ QR: 'qr', ReceiptID: 'r-1' }) };
+      await t.admin.put(`/api/dispozitive/${alta.id}/terminal`, { terminal_device_id: null });
+    }
+    const [bon] = await t.db.query<any>('SELECT * FROM bonuri_fiscale WHERE comanda_id = $1', [comanda]);
+    expect(bon).toMatchObject({ dispozitiv_id: centru.id, qr: 'qr', receipt_id: 'r-1' });
+  });
+});
+
 describe('setările tabletelor și POSLink', () => {
   it('modul demonstrație și blocarea automată ajung în catalog și îi schimbă versiunea', async () => {
     const inainte = await t.tableta.get('/api/pos/catalog');

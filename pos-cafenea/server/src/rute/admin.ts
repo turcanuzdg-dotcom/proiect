@@ -322,7 +322,7 @@ export async function ruteAdmin(app: FastifyInstance, db: Db, doarAdmin: onReque
     // ---- Vânzări, ture, bani ----
     a.get('/api/comenzi', async (req) => {
       const f = z
-        .object({ locatie_id: locOpt, tura_id: z.string().uuid().optional(), de: data.optional(), pana: data.optional(), metoda: z.enum(['numerar', 'card', 'casare']).optional(), pret_abatere: z.stringbool().optional(), card_neconfirmat: z.stringbool().optional(), limita: z.coerce.number().int().positive().optional() })
+        .object({ locatie_id: locOpt, tura_id: z.string().uuid().optional(), de: data.optional(), pana: data.optional(), metoda: z.enum(['numerar', 'card', 'casare']).optional(), pret_abatere: z.stringbool().optional(), card_neconfirmat: z.stringbool().optional(), retur_neanulat: z.stringbool().optional(), limita: z.coerce.number().int().positive().optional() })
         .parse(req.query);
       return listaComenzi(db, f);
     });

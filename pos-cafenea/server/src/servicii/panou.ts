@@ -1,5 +1,6 @@
 import type { Db } from '../db';
-import { inchisPana, sqlSold, STOC } from './solduri';
+import { ESECURI_PANA_LA_ALERTA, inchisPana, sqlSold, stareInchideri, STOC } from './solduri';
+import { retururiNeanulate } from './terminal';
 import { NEVERIFICATA } from './ture';
 
 /** Prima pagină a adminului: vânzările de azi și tot ce cere atenție. */
@@ -68,6 +69,15 @@ export async function panou(db: Db, deAzi: string) {
        FROM comenzi c
       WHERE c.card_confirmat = false AND c.stare = 'finalizata' AND c.creata_la >= now() - interval '7 days'`,
   );
+  // Retururi pe card aprobate fără anularea comenzii (după ASTEPTARE_ANULARE_MIN): banii au plecat, dar
+  // vânzarea se numără încă la încasări. Aceleași ca pe tură și în Comenzi („Doar retur fără anulare”).
+  const retururi = await retururiNeanulate(db);
+  // Închiderea soldurilor cade de cel puțin o jumătate de oră: citirile rămân exacte, dar tot mai lente.
+  const inchideri = stareInchideri();
+  const solduriBlocate =
+    inchideri && inchideri.esecuriLaRand >= ESECURI_PANA_LA_ALERTA
+      ? { esecuri: inchideri.esecuriLaRand, ultima_reusita: inchideri.ultimaReusita?.toISOString() ?? null }
+      : null;
   return {
     vanzari,
     discrepante,
@@ -79,5 +89,7 @@ export async function panou(db: Db, deAzi: string) {
     ore_suspecte_tablete: oreSuspecteTablete,
     card_neconfirmat: cardNeconfirmat.n,
     card_neconfirmat_suma: Number(cardNeconfirmat.suma),
+    retururi_neanulate: retururi,
+    solduri_blocate: solduriBlocate,
   };
 }
