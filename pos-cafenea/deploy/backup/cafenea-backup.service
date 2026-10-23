@@ -1,0 +1,49 @@
+# Copia de siguranță a bazei POS (rulată de cafenea-backup.timer la fiecare 15 minute).
+# Instalat de instaleaza.sh în /etc/systemd/system/.
+#   sudo systemctl start cafenea-backup.service     o copie acum (o face și actualizeaza.sh)
+#   sudo journalctl -u cafenea-backup -n 20          ultimele rulări
+
+[Unit]
+Description=Copie de siguranță POS (pg_dump → age → rclone)
+Wants=network-online.target
+After=network-online.target postgresql.service
+
+[Service]
+Type=oneshot
+User=cafenea-backup
+Group=cafenea-backup
+EnvironmentFile=/etc/cafenea/backup.env
+# Conectare prin socketul local, ca utilizatorul de sistem cafenea-backup → rolul cafenea_citire.
+Environment=PGHOST=/run/postgresql PGUSER=cafenea_citire PGDATABASE=cafenea
+ExecStart=/usr/local/lib/cafenea/backup.sh
+StateDirectory=cafenea-backup
+StateDirectoryMode=0700
+TimeoutStartSec=15min
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+UMask=0077
+MemoryMax=512M

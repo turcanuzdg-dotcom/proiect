@@ -1,0 +1,81 @@
+# Serverul POS (API + interfață) ca serviciu systemd.
+# Instalat de instaleaza.sh în /etc/systemd/system/cafenea.service.
+#
+#   sudo systemctl status cafenea          starea
+#   sudo journalctl -u cafenea -f          jurnalul, în timp real
+#   sudo systemctl restart cafenea         repornire (o face și actualizeaza.sh)
+#   sudo systemd-analyze security cafenea  cât de bine e izolat (scorul mai mic e mai bine)
+
+[Unit]
+Description=POS cafenea (server Node.js)
+Documentation=file:///opt/cafenea/curent/deploy/README.md
+Wants=network-online.target
+After=network-online.target postgresql.service
+Requires=postgresql.service
+# Dacă pornirea eșuează repetat (de ex. baza nu răspunde), systemd încearcă la nesfârșit,
+# cu pauze tot mai mari (RestartSteps), în loc să renunțe după 5 încercări.
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=cafenea
+Group=cafenea
+WorkingDirectory=/opt/cafenea/curent
+
+# Stau în unitate, nu în server.env: un fișier de configurare greșit sau lipsă nu poate porni
+# serverul în modul de dezvoltare (bază locală, parolă implicită) și nici pe toate interfețele.
+Environment=NODE_ENV=production
+Environment=HOST=127.0.0.1
+Environment=PORT=3000
+Environment=TRUST_PROXY=loopback
+# Mai multe fire pentru scrypt (login) și DNS (POSLink): un val de login-uri nu blochează plățile.
+Environment=UV_THREADPOOL_SIZE=8
+# Fără „-” în față: dacă fișierul lipsește, serviciul nu pornește (în loc să pornească greșit).
+EnvironmentFile=/etc/cafenea/server.env
+
+# Același lucru ca „npm start”, fără procesul npm/tsx intermediar: Node încarcă tsx (dependență de
+# producție) și rulează direct sursa TypeScript. tsx își ține cache-ul în /tmp, care aici e privat.
+# Limita de heap e sub MemoryMax, ca Node să elibereze memorie înainte ca nucleul să-l oprească.
+ExecStart=/usr/bin/node --import tsx --max-old-space-size=768 server/src/index.ts
+Restart=always
+RestartSec=2
+RestartSteps=5
+RestartMaxDelaySec=30
+# Fluxurile live (SSE) se închid la oprire; o plată cu cardul în curs se regăsește la reîncercare
+# (LastTransaction), deci nu merită ținut serverul închis 5 minute ca s-o aștepte.
+TimeoutStopSec=60
+
+# ---- Izolare ----
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+# Tot sistemul de fișiere e doar de citire; codul din /opt/cafenea e al lui root. Serverul nu scrie
+# nimic pe disc (jurnalul merge în journald, datele în PostgreSQL), deci nu e nevoie de ReadWritePaths.
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RemoveIPC=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged
+SystemCallErrorNumber=EPERM
+UMask=0077
+# MemoryDenyWriteExecute NU se poate activa: compilatorul JIT al V8 are nevoie de memorie executabilă.
+MemoryMax=1G
+TasksMax=256
+
+[Install]
+WantedBy=multi-user.target

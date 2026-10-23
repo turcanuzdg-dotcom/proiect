@@ -1,0 +1,66 @@
+# Caddy în fața serverului POS. Caddy ține HTTPS-ul (certificat Let's Encrypt, reînnoit singur),
+# iar serverul Node ascultă doar pe 127.0.0.1:3000, deci nu e accesibil direct din internet.
+#
+# instaleaza.sh copiază fișierul în /etc/caddy/Caddyfile și înlocuiește:
+#   pos.exemplu.md      → domeniul real (de ex. pos.cafenea.md)
+#   admin@exemplu.md    → adresa la care Let's Encrypt trimite avertismentele despre certificat
+# După o modificare manuală: sudo caddy validate --config /etc/caddy/Caddyfile && sudo systemctl reload caddy
+#
+# Jurnal de acces: intenționat nu există (Caddy nu scrie cererile dacă nu i se cere). Cererile le
+# jurnalizează serverul Node, fără parametrii din adresă, iar journald le păstrează cel mult 30 de zile.
+{
+	email admin@exemplu.md
+}
+
+pos.exemplu.md {
+	encode zstd gzip
+
+	# Un lot de sincronizare are cel mult 100 de evenimente (sub 1 MB); orice cerere mai mare e respinsă
+	# aici, înainte să ajungă la Node.
+	request_body {
+		max_size 3MB
+	}
+
+	# Aceleași antete de securitate ca în aplicație; cele de aici le înlocuiesc pe ale serverului
+	# (blocul are o ștergere, „-Server”, deci se aplică la scrierea răspunsului), fără dubluri.
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "no-referrer"
+		Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=(), serial=(), bluetooth=()"
+		# connect-src: în afară de server, doar puntea locală de pe tabletă (punte/, http://127.0.0.1:8099).
+		# Dintr-o pagină HTTPS, o adresă http:// din rețeaua cafenelei ar fi blocată oricum (conținut mixt).
+		Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' http://127.0.0.1:8099; worker-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
+		# Nu spunem ce server web rulează (Caddy adaugă singur „Server” și „Via”).
+		-Server
+		-Via
+	}
+
+	# Fișierele care decid ce versiune a aplicației rulează tableta se verifică la fiecare încărcare,
+	# altfel o corecție ar ajunge pe tablete abia după expirarea cache-ului browserului.
+	@reimprospatare path / /sw.js /registerSW.js /manifest.webmanifest *.html
+	header @reimprospatare {
+		Cache-Control "no-cache"
+		defer
+	}
+
+	# Fișierele din /assets au conținutul în nume (index-3f9a1c.js): se pot ține oricât.
+	@active path /assets/*
+	header @active {
+		Cache-Control "public, max-age=31536000, immutable"
+		defer
+	}
+
+	# Datele (vânzări, stocuri, tokenuri) nu se păstrează în niciun cache.
+	@api path /api/*
+	header @api {
+		Cache-Control "no-store"
+		defer
+	}
+
+	reverse_proxy 127.0.0.1:3000 {
+		# Notificările live ale panoului (/api/flux, SSE) trebuie trimise imediat, nu adunate în buffer.
+		flush_interval -1
+	}
+}

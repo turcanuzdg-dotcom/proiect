@@ -1,0 +1,13 @@
+# La fiecare 15 minute: :00, :15, :30, :45 (plus până la un minut aleator).
+# Persistent=yes: dacă serverul a fost oprit la ora programată, copia se face imediat după pornire.
+[Unit]
+Description=Copie de siguranță POS la 15 minute
+
+[Timer]
+OnCalendar=*:0/15
+RandomizedDelaySec=60
+AccuracySec=30s
+Persistent=yes
+
+[Install]
+WantedBy=timers.target
