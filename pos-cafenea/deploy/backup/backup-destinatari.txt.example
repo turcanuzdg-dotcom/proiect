@@ -1,0 +1,12 @@
+# /etc/cafenea/backup-destinatari.txt — cheile PUBLICE age care pot deschide copiile, una pe rând.
+#
+# Fiecare copie se poate deschide cu ORICARE dintre cheile private corespunzătoare. Recomandat: două
+# chei, generate pe calculatoare diferite, niciuna pe VPS:
+#   - a furnizorului (în managerul de parole al furnizorului);
+#   - a clientului (tipărită și pusă în plic sigilat, sau în managerul de parole al clientului).
+# Generare (pe calculatorul propriu, nu pe VPS):  age-keygen -o cafenea-copii.key
+# Rândul „# public key: age1...” din fișierul generat e cheia publică de pus mai jos.
+#
+# Ștergeți „#” din fața rândurilor de mai jos și puneți cheile reale:
+#age1furnizor...
+#age1client...
