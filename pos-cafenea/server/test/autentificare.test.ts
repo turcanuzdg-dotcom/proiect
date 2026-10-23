@@ -9,6 +9,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { construiesteApp } from '../src/app';
 import { deschideDb } from '../src/db';
 import { grupAdresa, hashParola, LimitatorHash, ProtectieLogin } from '../src/servicii/acces';
+import { JurnalLoginNecunoscut } from '../src/servicii/audit';
 import { pregateste } from './ajutor';
 
 let t: Awaited<ReturnType<typeof pregateste>>;
@@ -320,3 +321,53 @@ async function bazaGoala() {
     },
   };
 }
+
+describe('jurnalul loginurilor inexistente (JurnalLoginNecunoscut)', () => {
+  const MINUT = JurnalLoginNecunoscut.INTERVAL;
+
+  it('o adresă: primul eșec se scrie imediat, apoi cel mult un rând pe minut, cu numărul de încercări', () => {
+    const j = new JurnalLoginNecunoscut();
+    const t0 = 1_000_000;
+    const randuri = [];
+    for (let i = 0; i < 200; i++) randuri.push(...j.esec('203.0.113.9', `nume-${i}`, t0 + i * 100));
+    expect(randuri).toHaveLength(1);
+    expect(randuri[0]).toMatchObject({ actiune: 'login.esuat.necunoscut', adresa: '203.0.113.9', stare_http: 401, date: { incercari: 1, exemple: ['nume-0'] } });
+    const urmator = j.esec('203.0.113.9', 'inca-unul', t0 + MINUT);
+    expect(urmator).toHaveLength(1);
+    expect(urmator[0].date).toMatchObject({ incercari: 200, exemple: ['nume-1', 'nume-2', 'nume-3'] });
+  });
+
+  it('IPv6 din același /64 e o singură adresă; ce a rămas nescris pleacă la eșecul altei adrese', () => {
+    const j = new JurnalLoginNecunoscut();
+    const t0 = 5_000_000;
+    let n = 0;
+    for (let i = 1; i <= 50; i++) n += j.esec(`2001:db8:1:2::${i.toString(16)}`, 'x', t0 + i).length;
+    expect(n).toBe(1);
+    const dupa = j.esec('192.0.2.1', 'y', t0 + MINUT + 10);
+    expect(dupa.map((r) => r.adresa).sort()).toEqual(['192.0.2.1', '2001:db8:1:2::32']);
+    expect(dupa.find((r) => r.adresa === '2001:db8:1:2::32')!.date).toMatchObject({ incercari: 49 });
+  });
+
+  it('multe adrese în același minut: cel mult MAX_RANDURI_PE_MINUT rânduri, restul într-un rând comun', () => {
+    const j = new JurnalLoginNecunoscut();
+    const t0 = 9_000_000;
+    let randuri = [];
+    for (let i = 0; i < 500; i++) randuri.push(...j.esec(`198.51.${i >> 8}.${i & 255}`, `n${i}`, t0 + i));
+    expect(randuri).toHaveLength(JurnalLoginNecunoscut.MAX_RANDURI_PE_MINUT);
+    randuri = j.esec('198.51.100.1', 'ultimul', t0 + 2 * MINUT);
+    const comun = randuri.find((r) => r.adresa === null);
+    expect(comun?.date).toMatchObject({ incercari: 500 - JurnalLoginNecunoscut.MAX_RANDURI_PE_MINUT });
+    // Nicio încercare pierdută: rândurile scrise le cuprind pe toate.
+    expect(randuri.length).toBeLessThanOrEqual(JurnalLoginNecunoscut.MAX_RANDURI_PE_MINUT + 1);
+  });
+
+  it('memoria e plafonată: grupurile vechi pleacă, încercările lor trec în rândul comun', () => {
+    const j = new JurnalLoginNecunoscut(100);
+    const t0 = 20_000_000;
+    for (let i = 0; i < 1_000; i++) j.esec(`10.${i >> 8}.${i & 255}.1`, 'z', t0 + i);
+    expect(j.marime()).toBeLessThanOrEqual(101);
+    const r = j.esec('10.200.0.1', 'z', t0 + 2 * MINUT);
+    const total = r.reduce((s, x) => s + ((x.date as { incercari: number }).incercari ?? 0), 0);
+    expect(total).toBe(1_001 - JurnalLoginNecunoscut.MAX_RANDURI_PE_MINUT);
+  });
+});

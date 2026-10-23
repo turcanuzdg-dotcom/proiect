@@ -91,12 +91,40 @@ describe('jurnalul de audit', () => {
     const [reusit] = await jurnal('login.reusit');
     expect(reusit).toMatchObject({ adresa: '192.0.2.7', stare_http: 200, date: { login: 'admin' } });
     expect(reusit.utilizator_id).toBeGreaterThan(0);
-    const [esuat] = await jurnal('login.esuat');
-    expect(esuat).toMatchObject({ adresa: '192.0.2.8', stare_http: 401, utilizator_id: null, date: { login: 'nimeni' } });
+    // Un cont inexistent: rândul de rezumat al adresei (primul se scrie imediat).
+    const [esuat] = await jurnal('login.esuat.necunoscut');
+    expect(esuat).toMatchObject({ adresa: '192.0.2.8', stare_http: 401, utilizator_id: null, date: { incercari: 1, exemple: ['nimeni'] } });
+    // Un cont real: câte un rând pentru fiecare eșec, cu numele.
+    const gresitAdmin = await t.app.inject({ method: 'POST', url: '/api/auth/login', payload: { login: 'admin', parola: 'alta-gresita' }, remoteAddress: '192.0.2.8' });
+    expect(gresitAdmin.statusCode).toBe(401);
+    const [esuatAdmin] = await jurnal('login.esuat');
+    expect(esuatAdmin).toMatchObject({ adresa: '192.0.2.8', stare_http: 401, utilizator_id: null, date: { login: 'admin' } });
     // Parola nu ajunge în jurnal, nici reușită, nici greșită.
     const text = JSON.stringify(await t.db.query('SELECT * FROM jurnal_audit'));
     expect(text).not.toContain(PAROLA_ADMIN);
     expect(text).not.toContain('ceva-gresit');
+    expect(text).not.toContain('alta-gresita');
+  });
+
+  it('un val de loginuri inventate scrie doar câteva rânduri; un eșec pe un cont real se scrie oricum', async () => {
+    const marca = await ultimulId();
+    const adresa = '198.51.100.250';
+    const incearca = (login: string, parola = 'nu-conteaza') =>
+      t.app.inject({ method: 'POST', url: '/api/auth/login', payload: { login, parola }, remoteAddress: adresa });
+    let refuzate = 0;
+    for (let i = 0; i < 20; i++) {
+      // Câte 10 deodată (sub plafonul cozii de hash-uri): 200 de nume diferite, toate 401.
+      const r = await Promise.all(Array.from({ length: 10 }, (_, j) => incearca(`inventat-${randomUUID().slice(0, 8)}-${i * 10 + j}`)));
+      refuzate += r.filter((x) => x.statusCode === 401).length;
+    }
+    expect(refuzate).toBe(200);
+    expect((await incearca('admin', 'parola-gresita-val')).statusCode).toBe(401);
+    await ultimulId();
+    const scrise = await t.db.query<Intrare>(`SELECT * FROM jurnal_audit WHERE id > $1 AND actiune LIKE 'login.esuat%' ORDER BY id`, [marca]);
+    const necunoscute = scrise.filter((e) => e.actiune === 'login.esuat.necunoscut');
+    expect(necunoscute.length).toBeLessThanOrEqual(2);
+    expect(necunoscute[0]).toMatchObject({ adresa, date: { incercari: 1 } });
+    expect(scrise.filter((e) => e.actiune === 'login.esuat')).toEqual([expect.objectContaining({ adresa, date: { login: 'admin' } })]);
   });
 
   it('o setare suprascrisă păstrează valoarea de dinainte', async () => {
@@ -206,6 +234,57 @@ describe('jurnalul de audit', () => {
     expect(tableta.some((e: any) => e.dispozitiv === 'Tabletă Centru')).toBe(true);
     expect(await t.admin.get('/api/jurnal?cauta=%25_nimic_')).toEqual([]);
     expect((await t.admin.get('/api/jurnal?limita=2')).length).toBe(2);
+  });
+
+  it('panoul ascunde implicit autentificările eșuate', async () => {
+    const implicit = await t.admin.get('/api/jurnal');
+    expect(implicit.some((e: any) => e.actiune.startsWith('login.esuat'))).toBe(false);
+    expect(implicit.some((e: any) => e.actiune === 'login.reusit')).toBe(true);
+    const toate = await t.admin.get('/api/jurnal?esecuri_login=1');
+    expect(toate.some((e: any) => e.actiune === 'login.esuat')).toBe(true);
+    expect(toate.some((e: any) => e.actiune === 'login.esuat.necunoscut')).toBe(true);
+  });
+
+  it('o numărare de inventar mare păstrează valorile schimbate și pe cele de dinainte', async () => {
+    // Articole destule pentru o cerere peste 16 KB.
+    const articole: number[] = [];
+    for (let i = 0; i < 550; i++) {
+      const a = await t.admin.post('/api/articole', { nume: `Articol inventar ${i}`, um: 'buc', tip: 'marfa' });
+      articole.push(a.id);
+    }
+    // Inventarierea deschisă a Centrului (o începe testul tabletei de mai sus) sau una nouă.
+    const deschise = (await t.admin.get(`/api/inventarieri?locatie_id=${t.demo.locatii.centru}`)).filter((x: any) => x.stare === 'deschisa');
+    const inv = deschise[0] ?? (await t.admin.post('/api/inventarieri', { locatie_id: t.demo.locatii.centru }));
+    const prima = articole.map((articol_id, i) => ({ articol_id, faptic: i + 0.5 }));
+    expect(JSON.stringify({ linii: prima }).length).toBeGreaterThan(16 * 1024);
+    let marca = await ultimulId();
+    await t.admin.put(`/api/inventarieri/${inv.id}/linii`, { linii: prima });
+    let [e] = await jurnal('PUT /api/inventarieri/:id/linii', marca);
+    expect(e.date.corp.linii_trimise).toBe(550);
+    expect(e.date.corp.schimbate).toHaveLength(550);
+    expect(e.date.corp.schimbate[7]).toEqual([articole[7], 7.5]);
+    expect(e.date.inainte.linii[7]).toEqual([articole[7], null]);
+
+    // A doua trimitere: aceeași listă, cu o singură valoare schimbată și una ștearsă.
+    const adoua = prima.map((l, i) => (i === 100 ? { ...l, faptic: 3 } : i === 200 ? { ...l, faptic: null } : l));
+    marca = await ultimulId();
+    await t.admin.put(`/api/inventarieri/${inv.id}/linii`, { linii: adoua });
+    [e] = await jurnal('PUT /api/inventarieri/:id/linii', marca);
+    expect(e.date.corp.schimbate).toEqual([
+      [articole[100], 3],
+      [articole[200], null],
+    ]);
+    expect(e.date.inainte.linii).toEqual([
+      [articole[100], 100.5],
+      [articole[200], 200.5],
+    ]);
+
+    // Pe tabletă, la fel.
+    marca = await ultimulId();
+    await t.tableta.put(`/api/pos/inventarieri/${inv.id}/linii`, { linii: adoua.map((l, i) => (i === 5 ? { ...l, faptic: 1 } : l)) });
+    [e] = await jurnal('PUT /api/pos/inventarieri/:id/linii', marca);
+    expect(e.date.corp.schimbate).toEqual([[articole[5], 1]]);
+    expect(e.date.inainte.linii).toEqual([[articole[5], 5.5]]);
   });
 
   it('dacă jurnalul nu poate fi scris, cererea reușește oricum', async () => {

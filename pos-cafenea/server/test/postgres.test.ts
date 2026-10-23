@@ -103,18 +103,25 @@ describe.skipIf(!URL_TEST)('PostgreSQL real', () => {
       expect(scurta.stderr).toMatch(/cel puțin 12 caractere/);
     });
 
-    it('cu ADMIN_PAROLA pornește, ascultă doar pe 127.0.0.1 și se oprește curat la SIGTERM', async () => {
-      const url = urlPentru(await bazaNoua());
-      const proces = spawn(process.execPath, ['--import', 'tsx', 'server/src/index.ts'], {
-        cwd: radacina,
-        env: { ...process.env, NODE_ENV: 'production', DATABASE_URL: url, ADMIN_PAROLA: 'o-parola-destul-de-lunga', HOST: '', PORT: '0' },
-      });
+    // Un test căzut nu lasă servere pornite în urmă.
+    const porniti: import('node:child_process').ChildProcess[] = [];
+    afterAll(() => {
+      for (const p of porniti) if (p.exitCode === null) p.kill('SIGKILL');
+    });
+
+    /** Pornește serverul de producție; `HOST: undefined` scoate variabila din mediu (nu o lasă goală). */
+    const pornesteServer = async (url: string, env: Record<string, string | undefined>) => {
+      const mediu: Record<string, string | undefined> = { ...process.env, NODE_ENV: 'production', DATABASE_URL: url, PORT: '0', JURNAL: '1', ...env };
+      for (const [k, v] of Object.entries(mediu)) if (v === undefined) delete mediu[k];
+      const proces = spawn(process.execPath, ['--import', 'tsx', 'server/src/index.ts'], { cwd: radacina, env: mediu as NodeJS.ProcessEnv });
+      porniti.push(proces);
       let iesire = '';
-      const adresa = await new Promise<string>((rezolva, respinge) => {
+      // index.ts scrie „Ascultă pe <adresa>:<port>” după listen(), deci după toate liniile Fastify.
+      const legat = await new Promise<string>((rezolva, respinge) => {
         const timer = setTimeout(() => respinge(new Error(`serverul nu a pornit: ${iesire}`)), 30_000);
         const citeste = (b: Buffer) => {
           iesire += b.toString();
-          const m = /Server listening at (http:\/\/[^"\s]+)/.exec(iesire);
+          const m = /Ascultă pe (\S+)/.exec(iesire);
           if (m) {
             clearTimeout(timer);
             rezolva(m[1]);
@@ -123,14 +130,33 @@ describe.skipIf(!URL_TEST)('PostgreSQL real', () => {
         proces.stdout.on('data', citeste);
         proces.stderr.on('data', citeste);
       });
-      expect(adresa).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
-      const sanatate = await fetch(`${adresa}/api/sanatate`);
+      const opreste = () =>
+        new Promise<number | null>((rezolva) => {
+          if (proces.exitCode !== null) return rezolva(proces.exitCode);
+          proces.on('exit', (c) => rezolva(c));
+          proces.kill('SIGTERM');
+        });
+      return { legat, iesire: () => iesire, opreste };
+    };
+
+    it('cu ADMIN_PAROLA pornește, ascultă doar pe 127.0.0.1 și se oprește curat la SIGTERM', async () => {
+      const url = urlPentru(await bazaNoua());
+      const s = await pornesteServer(url, { ADMIN_PAROLA: 'o-parola-destul-de-lunga', HOST: undefined });
+      expect(s.legat).toMatch(/^127\.0\.0\.1:\d+$/);
+      // Fastify scrie câte o linie pentru fiecare interfață: pe 0.0.0.0 ar fi mai multe.
+      expect(s.iesire().match(/Server listening at/g)).toHaveLength(1);
+      expect(s.iesire()).toMatch(/Server listening at http:\/\/127\.0\.0\.1:\d+/);
+      const sanatate = await fetch(`http://${s.legat}/api/sanatate`);
       expect(sanatate.status).toBe(200);
-      const cod = await new Promise<number | null>((rezolva) => {
-        proces.on('exit', (c) => rezolva(c));
-        proces.kill('SIGTERM');
-      });
-      expect(cod).toBe(0);
+      expect(await s.opreste()).toBe(0);
+    });
+
+    it('o linie „HOST=” goală nu leagă serverul pe toate interfețele', async () => {
+      const url = urlPentru(await bazaNoua());
+      const s = await pornesteServer(url, { ADMIN_PAROLA: 'o-parola-destul-de-lunga', HOST: '' });
+      expect(s.legat).toMatch(/^127\.0\.0\.1:\d+$/);
+      expect(s.iesire().match(/Server listening at/g)).toHaveLength(1);
+      expect(await s.opreste()).toBe(0);
     });
   });
 

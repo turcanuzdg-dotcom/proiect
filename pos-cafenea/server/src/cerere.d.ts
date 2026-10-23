@@ -7,5 +7,7 @@ declare module 'fastify' {
     dispozitiv?: DispozitivAutentificat;
     /** Starea de dinainte a ce modifică cererea; ajunge în jurnalul de audit (servicii/audit.ts). */
     auditInainte?: unknown;
+    /** Ce se scrie în jurnal în locul corpului cererii (de ex. doar liniile de inventar schimbate). */
+    auditCorp?: unknown;
   }
 }

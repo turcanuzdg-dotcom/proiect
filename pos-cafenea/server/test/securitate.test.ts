@@ -64,6 +64,32 @@ describe('acces', () => {
     await t.admin.post(`/api/sync/erori/${r.cu_eroare[0].id}/rezolvat`);
   });
 
+  it('vânzările offline ale unei bariste promovate între timp la administrator se aplică', async () => {
+    const { id } = await t.admin.post('/api/utilizatori', { nume: 'Barista promovată', rol: 'barista', pin: '2468', locatie_id: null, activ: true });
+    // Tura și vânzarea au fost făcute offline, cu PIN-ul ei; între timp devine administrator (PIN-ul se șterge).
+    const tura = randomUUID();
+    const esp = t.produs('Espresso');
+    const evenimente = [
+      evTuraDeschisa(tura, id),
+      evComanda(tura, id, [{ produs_id: esp.id, cantitate: 1, pret_unitar: esp.pret, modificatori: [] }], 'numerar', { primit: esp.pret }),
+    ];
+    await t.admin.put(`/api/utilizatori/${id}`, { nume: 'Barista promovată', rol: 'admin', login: 'promovata', parola: 'parola-promovatei', pin: null, locatie_id: null, activ: true });
+    const r = await t.tableta.sync(evenimente);
+    expect(r.cu_eroare).toEqual([]);
+    expect(r.acceptate).toHaveLength(2);
+  });
+
+  it('un utilizator fără PIN de tabletă: eroarea spune asta și se repară dându-i un PIN', async () => {
+    const { id } = await t.admin.post('/api/utilizatori', { nume: 'Fără PIN', rol: 'barista', pin: null, locatie_id: null, activ: true });
+    const tura = randomUUID();
+    const r = await t.tableta.sync([evTuraDeschisa(tura, id)]);
+    expect(r.cu_eroare).toHaveLength(1);
+    expect(r.cu_eroare[0].eroare).toMatch(/Fără PIN nu are PIN de tabletă/);
+    await t.admin.put(`/api/utilizatori/${id}`, { nume: 'Fără PIN', rol: 'barista', pin: '1357', locatie_id: null, activ: true });
+    await t.admin.post(`/api/sync/erori/${r.cu_eroare[0].id}/reaplica`);
+    expect((await t.admin.get('/api/sync/erori')).some((e: any) => e.id === r.cu_eroare[0].id)).toBe(false);
+  });
+
   it('un caracter NUL într-un câmp text nu blochează coada: evenimentul e pus deoparte', async () => {
     const tura = randomUUID();
     const esp = t.produs('Espresso');

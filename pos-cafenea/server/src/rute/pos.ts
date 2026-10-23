@@ -5,7 +5,7 @@ import { EroareNegasit } from '../erori';
 import { magistrala } from '../magistrala';
 import { LIMITA_CORP_SYNC } from '../limite';
 import { asociazaDispozitiv, utilizatorPermisTabletei } from '../servicii/acces';
-import { hookAudit } from '../servicii/audit';
+import { auditNumaratori, hookAudit } from '../servicii/audit';
 import { catalogPOS } from '../servicii/catalog';
 import { creeazaInventariere, finalizeazaInventariere, raportInventariere, salveazaNumaratori } from '../servicii/inventar';
 import { proceseazaSync } from '../servicii/sync';
@@ -103,7 +103,9 @@ export async function rutePOS(app: FastifyInstance, db: Db, doarDispozitiv: onRe
     p.put('/api/pos/inventarieri/:id/linii', async (req) => {
       const { id } = idParam.parse(req.params);
       await aLocatiei(id, req.dispozitiv!.locatie_id);
-      await salveazaNumaratori(db, id, linii.parse(req.body).linii);
+      const { linii: lista } = linii.parse(req.body);
+      ({ corp: req.auditCorp, inainte: req.auditInainte } = await auditNumaratori(db, id, lista));
+      await salveazaNumaratori(db, id, lista);
       return raportInventariere(db, id);
     });
 

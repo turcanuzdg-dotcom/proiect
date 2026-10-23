@@ -21,7 +21,7 @@ if ((process.env.NODE_ENV === 'production' || process.env.DATABASE_URL) && !argu
 
 const db = await deschideDb({
   url: process.env.DATABASE_URL,
-  director: process.env.DATABASE_URL ? undefined : (process.env.DIR_DATE ?? path.join(radacina, 'date', 'pglite')),
+  director: process.env.DATABASE_URL ? undefined : (process.env.DIR_DATE || path.join(radacina, 'date', 'pglite')),
 });
 
 if ((await db.query('SELECT 1 FROM locatii LIMIT 1')).length) {
@@ -29,7 +29,7 @@ if ((await db.query('SELECT 1 FROM locatii LIMIT 1')).length) {
   process.exit(1);
 }
 if (!(await db.query(`SELECT 1 FROM utilizatori WHERE rol = 'admin'`)).length) {
-  await salveazaUtilizator(db, { nume: 'Administrator', rol: 'admin', login: 'admin', parola: process.env.ADMIN_PAROLA ?? 'schimba-ma' });
+  await salveazaUtilizator(db, { nume: 'Administrator', rol: 'admin', login: 'admin', parola: process.env.ADMIN_PAROLA || 'schimba-ma' });
 }
 
 const inceput = Date.now();

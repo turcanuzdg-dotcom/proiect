@@ -691,7 +691,7 @@ function TabErori() {
   return (
     <>
       <p className="slab mic" style={{ maxWidth: 720 }}>
-        Operațiunile făcute pe tabletă (inclusiv offline) care n-au putut fi aplicate pe server, de exemplu pentru că un produs a fost șters între timp. Nimic nu se pierde: corectați cauza (refaceți produsul, utilizatorul etc.), apoi „Reaplică”.
+        Operațiunile făcute pe tabletă (inclusiv offline) care n-au putut fi aplicate pe server, de exemplu pentru că un produs a fost șters între timp. Nimic nu se pierde: corectați cauza (refaceți produsul, utilizatorul etc.), apoi „Reaplică”. Dacă eroarea spune că utilizatorul nu are PIN de tabletă, dați-i un PIN în tabul Utilizatori și reaplicați.
       </p>
       <Stare {...r} gol={(d) => d.length === 0} mesajGol="Nicio eroare de sincronizare. Toate operațiunile de pe tablete au fost aplicate.">
         {(lista) => (
@@ -803,13 +803,14 @@ interface IntrareJurnal {
   actiune: string;
   cale: string | null;
   stare_http: number | null;
-  date: { login?: string; corp?: unknown; inainte?: unknown } | null;
+  date: { login?: string; corp?: unknown; inainte?: unknown; incercari?: number; exemple?: string[] } | null;
 }
 
 /** Numele pe înțeles ale acțiunilor; cele necunoscute apar ca atare (metoda și ruta). */
 const ACTIUNI: Record<string, string> = {
   'login.reusit': 'Autentificare în panou',
   'login.esuat': 'Autentificare eșuată',
+  'login.esuat.necunoscut': 'Autentificări eșuate (conturi inexistente)',
   'POST /api/auth/logout': 'Ieșire din panou',
   'POST /api/locatii': 'Locație creată',
   'PUT /api/locatii/:id': 'Locație modificată',
@@ -853,6 +854,7 @@ function titluActiune(e: IntrareJurnal): string {
     const activ = (e.date?.corp as { activ?: boolean } | undefined)?.activ;
     if (activ !== undefined) return activ ? 'Tabletă reactivată (cod nou)' : 'Tabletă dezactivată';
   }
+  if (e.actiune === 'login.esuat.necunoscut' && e.date?.incercari) return `${ACTIUNI[e.actiune]}: ${e.date.incercari}`;
   return ACTIUNI[e.actiune] ?? e.actiune;
 }
 
@@ -860,6 +862,7 @@ function cine(e: IntrareJurnal): string {
   if (e.utilizator) return e.utilizator;
   if (e.dispozitiv) return `${e.dispozitiv}${e.locatie ? ` (${e.locatie})` : ''}`;
   if (e.date?.login) return `„${e.date.login}”`;
+  if (e.date?.exemple?.length) return e.date.exemple.map((x) => `„${x}”`).join(', ');
   return '—';
 }
 
@@ -867,21 +870,26 @@ function TabJurnal() {
   const [cauta, setCauta] = useState('');
   const [filtru, setFiltru] = useState('');
   const [detaliu, setDetaliu] = useState<IntrareJurnal | null>(null);
+  const [esecuri, setEsecuri] = useState(false);
   // Căutarea pleacă la server după o scurtă pauză în tastare.
   useEffect(() => {
     const t = setTimeout(() => setFiltru(cauta.trim()), 300);
     return () => clearTimeout(t);
   }, [cauta]);
-  const r = useDate(() => api.get<IntrareJurnal[]>('/api/jurnal', { cauta: filtru || undefined }), [filtru]);
+  const r = useDate(() => api.get<IntrareJurnal[]>('/api/jurnal', { cauta: filtru || undefined, esecuri_login: esecuri ? '1' : undefined }), [filtru, esecuri]);
 
   return (
     <>
       <p className="slab mic" style={{ maxWidth: 720 }}>
         Cine a schimbat ce, de unde și când: modificările din panou, autentificările și operațiunile tabletelor făcute în afara cozii de
         vânzări (terminal, inventariere, asociere). Jurnalul nu se poate modifica sau șterge și nu conține parole, PIN-uri sau coduri.
-        Se arată ultimele 500 de intrări.
+        Se arată ultimele 500 de intrări. Autentificările eșuate sunt ascunse implicit; încercările pe nume de cont inexistente se
+        adună într-un singur rând pe minut pentru fiecare adresă.
       </p>
       <input type="search" placeholder="Caută (utilizator, tabletă, acțiune, adresă, valoare…)" value={cauta} onChange={(e) => setCauta(e.target.value)} />
+      <label className="mic">
+        <input type="checkbox" checked={esecuri} onChange={(e) => setEsecuri(e.target.checked)} /> Arată și autentificările eșuate
+      </label>
       <Stare {...r} gol={(d) => d.length === 0} mesajGol={filtru ? 'Nicio intrare nu se potrivește căutării.' : 'Jurnalul e gol.'}>
         {(lista) => (
           <div className="tabel-container">

@@ -223,6 +223,13 @@ export class LimitatorHash {
   }
 }
 
+/** Login refuzat pentru parolă greșită; `contExista` spune dacă loginul aparține unui cont activ (pentru jurnal). */
+export class EroareLogin extends EroareUtilizator {
+  constructor(public contExista: boolean) {
+    super('Utilizator sau parolă greșită', 401);
+  }
+}
+
 const protectie = new ProtectieLogin();
 const limitatorHash = new LimitatorHash();
 const SARE_FALSA = 'sare-pentru-conturi-inexistente';
@@ -236,7 +243,7 @@ export async function autentificare(db: Db, login: string, parola: string, adres
   );
   if (!corect) {
     protectie.esec(login, adresa, !!u);
-    throw new EroareUtilizator('Utilizator sau parolă greșită', 401);
+    throw new EroareLogin(!!u);
   }
   if (u.rol !== 'admin') throw new EroareUtilizator('Doar administratorii au acces la panou', 403);
   protectie.reusit(login, adresa);
@@ -365,13 +372,21 @@ export async function activeazaDispozitiv(db: Db, id: number, activ: boolean): P
  * Utilizatorul pe care îl poate declara o tabletă: are PIN și lucrează în locația ei (sau în
  * toate), exact regula după care catalogul îi trimite tabletei lista. Un utilizator dezactivat
  * între timp rămâne valabil, ca vânzările făcute offline înainte de dezactivare să se aplice.
+ * La fel un administrator: rolul de admin șterge PIN-ul (salveazaUtilizator, migrarea 004), dar o
+ * barista promovată poate avea încă vânzări offline în coada tabletei, făcute cu PIN-ul de dinainte.
  */
 export async function utilizatorPermisTabletei(db: Db, utilizatorId: number, locatieId: number): Promise<void> {
-  const r = await db.query(
-    'SELECT 1 FROM utilizatori WHERE id = $1 AND pin_hash IS NOT NULL AND (locatie_id IS NULL OR locatie_id = $2)',
-    [utilizatorId, locatieId],
-  );
-  if (!r.length) throw new EroareUtilizator(`Utilizatorul ${utilizatorId} nu lucrează în această locație`);
+  const u = (
+    await db.query<{ nume: string; rol: string; are_pin: boolean; locatie_id: number | null }>(
+      'SELECT nume, rol, pin_hash IS NOT NULL AS are_pin, locatie_id FROM utilizatori WHERE id = $1',
+      [utilizatorId],
+    )
+  )[0];
+  if (!u) throw new EroareUtilizator(`Utilizatorul ${utilizatorId} nu există`);
+  if (u.locatie_id != null && u.locatie_id !== locatieId) throw new EroareUtilizator(`Utilizatorul ${u.nume} nu lucrează în această locație`);
+  if (!u.are_pin && u.rol !== 'admin') {
+    throw new EroareUtilizator(`Utilizatorul ${u.nume} nu are PIN de tabletă; dați-i un PIN în Setări → Utilizatori, apoi „Reaplică”`);
+  }
 }
 
 // ---- Utilizatori ----

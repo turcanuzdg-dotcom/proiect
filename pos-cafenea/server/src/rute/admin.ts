@@ -4,7 +4,7 @@ import type { Db } from '../db';
 import { EroareUtilizator } from '../erori';
 import { magistrala } from '../magistrala';
 import * as acces from '../servicii/acces';
-import { auditeaza, hookAudit, listaJurnal, stareAnterioara } from '../servicii/audit';
+import { auditeaza, auditNumaratori, hookAudit, JurnalLoginNecunoscut, listaJurnal, stareAnterioara } from '../servicii/audit';
 import { adaugaMiscareBani, listaMiscariBani, rezumatBani } from '../servicii/bani';
 import * as catalog from '../servicii/catalog';
 import { creeazaReceptie, creeazaTransfer, detaliuReceptie, listaReceptii, listaTransferuri } from '../servicii/gestiune';
@@ -79,6 +79,7 @@ export async function ruteAdmin(app: FastifyInstance, db: Db, doarAdmin: onReque
   // Orice modificare făcută din panou ajunge în jurnalul de audit (după răspuns).
   app.addHook('onResponse', hookAudit(db));
 
+  const loginNecunoscut = new JurnalLoginNecunoscut();
   app.post('/api/auth/login', async (req) => {
     const { login, parola } = z.object({ login: z.string().min(1).max(60), parola: z.string().min(1).max(200) }).parse(req.body);
     try {
@@ -86,9 +87,13 @@ export async function ruteAdmin(app: FastifyInstance, db: Db, doarAdmin: onReque
       await auditeaza(db, { utilizator_id: r.utilizator.id, adresa: req.ip, actiune: 'login.reusit', cale: '/api/auth/login', stare_http: 200, date: { login } }, req.log);
       return r;
     } catch (e) {
-      // Încercările refuzate fără verificarea parolei (429: pauză după eșecuri) nu se scriu: un val de
-      // cereri n-ar face decât să umple jurnalul. Cele verificate sunt limitate de scrypt.
-      if (e instanceof EroareUtilizator && e.status !== 429) {
+      // Încercările refuzate fără verificarea parolei (429: pauză după eșecuri) nu se scriu deloc.
+      // Un cont real: un rând pentru fiecare eșec (limitate de pauzele pe cont și pe adresă).
+      // Un login inexistent: doar numărat, cel mult un rând pe minut pentru fiecare adresă (vezi
+      // JurnalLoginNecunoscut), ca un val de nume inventate să nu umple tabelul nemodificabil.
+      if (e instanceof acces.EroareLogin && !e.contExista) {
+        for (const i of loginNecunoscut.esec(req.ip, login)) await auditeaza(db, i, req.log);
+      } else if (e instanceof EroareUtilizator && e.status !== 429) {
         await auditeaza(db, { adresa: req.ip, actiune: 'login.esuat', cale: '/api/auth/login', stare_http: e.status, date: { login } }, req.log);
       }
       throw e;
@@ -278,7 +283,9 @@ export async function ruteAdmin(app: FastifyInstance, db: Db, doarAdmin: onReque
     a.get('/api/inventarieri/:id', async (req) => inventar.raportInventariere(db, idNum.parse(req.params).id));
     a.put('/api/inventarieri/:id/linii', async (req) => {
       const { id } = idNum.parse(req.params);
-      await inventar.salveazaNumaratori(db, id, schemaLiniiInventar.parse(req.body).linii);
+      const { linii } = schemaLiniiInventar.parse(req.body);
+      ({ corp: req.auditCorp, inainte: req.auditInainte } = await auditNumaratori(db, id, linii));
+      await inventar.salveazaNumaratori(db, id, linii);
       return inventar.raportInventariere(db, id);
     });
     a.post('/api/inventarieri/:id/finalizeaza', async (req) => {
@@ -370,8 +377,14 @@ export async function ruteAdmin(app: FastifyInstance, db: Db, doarAdmin: onReque
 
     // ---- Jurnalul de audit (doar citire) ----
     a.get('/api/jurnal', async (req) => {
-      const q = z.object({ cauta: z.string().max(100).optional(), limita: z.coerce.number().int().positive().max(500).optional() }).parse(req.query);
-      return listaJurnal(db, q);
+      const q = z
+        .object({
+          cauta: z.string().max(100).optional(),
+          limita: z.coerce.number().int().positive().max(500).optional(),
+          esecuri_login: z.enum(['0', '1']).optional(),
+        })
+        .parse(req.query);
+      return listaJurnal(db, { cauta: q.cauta, limita: q.limita, esecuriLogin: q.esecuri_login === '1' });
     });
   });
 }
