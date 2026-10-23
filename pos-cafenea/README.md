@@ -30,6 +30,11 @@ npm run dev           # server API pe :3000 și interfața pe http://localhost:5
 
 ## Producție
 
+Pentru serverul clientului (Ubuntu 24.04, Caddy, PostgreSQL 16, copii de siguranță criptate la fiecare
+15 minute) urmați **[deploy/README.md](deploy/README.md)**. Securitatea: [docs/securitate.md](docs/securitate.md);
+protecția datelor (Legea 195/2024): [docs/protectia-datelor.md](docs/protectia-datelor.md); tabletele:
+[docs/tableta.md](docs/tableta.md).
+
 Interfața se construiește pe calculatorul de dezvoltare (sau în CI), nu pe server: uneltele de build
 și de test (Vite, Vitest, TypeScript) sunt devDependencies și nu ajung pe serverul care ține banii.
 

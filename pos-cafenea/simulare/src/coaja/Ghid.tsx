@@ -100,7 +100,7 @@ const CONTINUT: Record<IdPas, Pas> = {
     titlu: 'Închide tura',
     ce: (
       <>
-        Pe tabletă: <b>Meniu → Închide tura</b>. Scrie dozele de pe contorul râșniței, numerarul numărat, totalul de card și câte produse ai anulat sau casat. Încearcă
+        Pe tabletă: <b>Meniu → Închide tura</b> și confirmă cu PIN-ul. Scrie dozele de pe contorul râșniței, numerarul numărat, totalul de card și câte produse ai anulat sau casat. Încearcă
         să scrii intenționat cu 10 lei mai puțin la numerar.
       </>
     ),
