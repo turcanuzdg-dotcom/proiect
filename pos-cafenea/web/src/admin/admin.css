@@ -130,3 +130,6 @@ pre.payload { background: var(--suprafata-2); border: 1px solid var(--linie); bo
 .login .marca { padding: 0; }
 .login .marca h1 { font-size: 20px; }
 .login .marca p { font-weight: 400; font-size: 13px; }
+
+/* „Actualizat la HH:MM · Reîmprospătează” pe rapoarte */
+.actualizat { display: flex; gap: 12px; align-items: center; justify-content: flex-end; margin: 0 0 8px; font-size: 0.9em; }

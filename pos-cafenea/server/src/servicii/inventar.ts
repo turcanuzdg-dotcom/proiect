@@ -1,6 +1,7 @@
 import { rotunjeste } from '@cafenea/shared';
 import type { Db } from '../db';
 import { EroareNegasit, EroareUtilizator } from '../erori';
+import { inchisPana, sqlSold, STOC } from './solduri';
 import { CHEIE_STOC, inregistreazaMiscari, stocLocatie } from './stoc';
 
 /** Pe o locație există o singură inventariere deschisă; tableta și panoul lucrează pe aceeași foaie. */
@@ -54,15 +55,22 @@ export async function salveazaNumaratori(db: Db, id: number, linii: { articol_id
  * Scripticul fiecărui articol numărat, la momentul numărării lui: vânzările făcute după ce
  * barista a numărat un raft nu mai „strică” diferența (registrul are momentul fiecărei mișcări,
  * deci și vânzările offline sincronizate mai târziu cad unde trebuie).
+ * Scripticul la numărare = stocul de acum (sold închis + coadă) minus mișcările datate după numărare,
+ * calculate în aceeași instrucțiune (aceeași imagine a bazei). Se citesc doar mișcările de după
+ * numărare, prin indexul (locație, articol, dată), nu tot istoricul articolului.
  */
 async function liniiNumarate(db: Db, id: number, locatieId: number) {
   return db.query<{ articol_id: number; faptic: number; numarat_la: string; scriptic: number }>(
     `SELECT il.articol_id, il.faptic, il.numarat_la,
-            COALESCE(il.scriptic, (SELECT COALESCE(SUM(m.cantitate), 0) FROM miscari_stoc m
-                                    WHERE m.locatie_id = $2 AND m.articol_id = il.articol_id
-                                      AND m.creata_la <= il.numarat_la))::numeric AS scriptic
-       FROM inventarieri_linii il WHERE il.inventariere_id = $1`,
-    [id, locatieId],
+            COALESCE(il.scriptic,
+                     COALESCE(s.sold, 0)
+                     - COALESCE((SELECT SUM(m.cantitate) FROM miscari_stoc m
+                                  WHERE m.locatie_id = $2 AND m.articol_id = il.articol_id
+                                    AND m.creata_la > il.numarat_la), 0))::numeric AS scriptic
+       FROM inventarieri_linii il
+       LEFT JOIN ${sqlSold(STOC, { n: '$3::bigint', locatie: '$2::int' })} s ON s.articol_id = il.articol_id
+      WHERE il.inventariere_id = $1`,
+    [id, locatieId, await inchisPana(db, STOC)],
   );
 }
 

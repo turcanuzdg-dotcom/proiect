@@ -28,6 +28,9 @@ interface Raport {
   total_net: number;
 }
 
+/** Cât de des se reîmprospătează raportul deschis (scripticul articolelor nenumărate). */
+const INTERVAL_REIMPROSPATARE_MS = 30_000;
+
 const TIPURI: Record<string, string> = { materie_prima: 'Materie primă', ambalaj: 'Ambalaje', marfa: 'Mărfuri' };
 
 /**
@@ -44,9 +47,12 @@ export function Inventar({ onInchide }: { onInchide: () => void }) {
   const [lucreaza, setLucreaza] = useState(false);
   const [confirmare, setConfirmare] = useState(false);
   const deschisa = useRef<number | null>(null);
+  /** Cereri către server în curs (citire, salvare, finalizare): reîmprospătarea periodică le așteaptă. */
+  const inCurs = useRef(0);
 
   /** Eroarea rămâne afișată până la următoarea reușită; întoarce dacă a reușit. */
   const incarca = async (r?: Promise<Raport>) => {
+    inCurs.current++;
     try {
       const nou = await (r ?? cerereJson<Raport>('/api/pos/inventarieri', { token, body: { utilizator_id: app.barista.id } }));
       deschisa.current = nou.stare === 'deschisa' ? nou.id : null;
@@ -56,15 +62,20 @@ export function Inventar({ onInchide }: { onInchide: () => void }) {
     } catch (e) {
       setEroare((e as Error).message);
       return false;
+    } finally {
+      inCurs.current--;
     }
   };
 
   useEffect(() => {
     void incarca();
-    // Scripticul articolelor nenumărate se schimbă la fiecare vânzare: reîmprospătăm periodic.
+    // Scripticul articolelor nenumărate se schimbă la fiecare vânzare: reîmprospătăm periodic, dar rar
+    // (fiecare raport recalculează stocul locației), niciodată două cereri deodată și nu cât ecranul
+    // e ascuns (tableta în repaus, altă aplicație în față).
     const t = window.setInterval(() => {
-      if (deschisa.current) void incarca(cerereJson<Raport>(`/api/pos/inventarieri/${deschisa.current}`, { token }));
-    }, 15_000);
+      if (!deschisa.current || inCurs.current || document.visibilityState === 'hidden') return;
+      void incarca(cerereJson<Raport>(`/api/pos/inventarieri/${deschisa.current}`, { token }));
+    }, INTERVAL_REIMPROSPATARE_MS);
     return () => window.clearInterval(t);
     // Se pornește o singură dată, la deschiderea ferestrei.
   }, []);

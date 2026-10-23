@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react';
 import { Modal } from '../../comun/Modal';
 import { formatCantitate, formatDataOra } from '../../comun/format';
+import { uuid } from '../../comun/uuid';
 import type { PropsPagina } from '../App';
 import { api, mesajEroare } from '../api';
 import { CapPagina, FiltruLocatie, Rand, Stare } from '../componente';
@@ -19,7 +20,7 @@ interface Transfer {
 export function PaginaTransferuri(_: PropsPagina) {
   const [locatie, setLocatie] = useState<number | null>(null);
   const [formular, setFormular] = useState(false);
-  const r = useDate(() => api.get<Transfer[]>('/api/transferuri', { locatie_id: locatie }), [locatie]);
+  const r = useDate(() => api.get<Transfer[]>('/api/transferuri', { locatie_id: locatie }), [locatie], { locatie });
 
   return (
     <>
@@ -98,9 +99,12 @@ function FormularTransfer({ onInchide, onSalvat }: { onInchide: () => void; onSa
   const [eroare, setEroare] = useState<string | null>(null);
   const [avertismente, setAvertismente] = useState<string[] | null>(null);
   const [lucreaza, setLucreaza] = useState(false);
+  // Cheia de idempotență (vezi recepțiile): o salvare repetată nu mută marfa a doua oară.
+  const [cheie] = useState(uuid);
   const stoc = useDate(
     () => (din ? api.get<{ articol_id: number; nume: string; um: string; stoc: number }[]>('/api/stoc', { locatie_id: din }) : Promise.resolve([])),
     [din],
+    { locatie: din },
   );
   const articole = stoc.date ?? [];
   const art = (id: string) => articole.find((a) => String(a.articol_id) === id);
@@ -116,16 +120,17 @@ function FormularTransfer({ onInchide, onSalvat }: { onInchide: () => void; onSa
     if (valide.some((l) => !(numar(l.cantitate) > 0))) return setEroare('Fiecare linie are nevoie de o cantitate pozitivă');
     setLucreaza(true);
     try {
-      const r = await api.post<{ id: number; avertismente: string[] }>('/api/transferuri', {
+      const r = await api.post<{ id: number; avertismente: string[]; repetat: boolean }>('/api/transferuri', {
         din_locatie_id: din,
         in_locatie_id: inLoc,
         observatii: observatii || null,
         linii: valide.map((l) => ({ articol_id: Number(l.articol_id), cantitate: numar(l.cantitate) })),
+        cheie,
       });
       if (r.avertismente.length) {
         setAvertismente(r.avertismente);
       } else {
-        arata('Transferul a fost înregistrat');
+        arata(r.repetat ? 'Transferul fusese deja înregistrat la salvarea anterioară' : 'Transferul a fost înregistrat');
         onSalvat();
       }
     } catch (err) {

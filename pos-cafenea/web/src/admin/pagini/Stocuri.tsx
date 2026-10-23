@@ -143,7 +143,7 @@ function MatriceStocuri({ filtru, onFisa }: { filtru: (a: { nume: string; tip: s
 }
 
 function StocLocatie({ locatieId, numeLocatie, filtru, onFisa }: { locatieId: number; numeLocatie: string; filtru: (a: { nume: string; tip: string }) => boolean; onFisa: OnFisa }) {
-  const r = useDate(() => api.get<RandStoc[]>('/api/stoc', { locatie_id: locatieId }), [locatieId]);
+  const r = useDate(() => api.get<RandStoc[]>('/api/stoc', { locatie_id: locatieId }), [locatieId], { locatie: locatieId });
   return (
     <Stare {...r}>
       {(randuri) => {
@@ -205,6 +205,7 @@ function FisaArticol(props: { locatie_id: number; articol_id: number; nume: stri
         { locatie_id: props.locatie_id, articol_id: props.articol_id },
       ),
     [props.locatie_id, props.articol_id],
+    { locatie: props.locatie_id },
   );
   return (
     <Modal titlu={`Fișa: ${props.nume} · ${props.numeLocatie}`} onInchide={props.onInchide} lat>

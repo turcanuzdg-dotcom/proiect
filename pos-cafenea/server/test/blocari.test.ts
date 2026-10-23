@@ -5,7 +5,9 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { adaugaMiscareBani } from '../src/servicii/bani';
+import { creeazaReceptie } from '../src/servicii/gestiune';
 import { finalizeazaInventariere } from '../src/servicii/inventar';
+import { inchideSolduri, inchisPana, STOC } from '../src/servicii/solduri';
 import { blocheazaCasa, deschideTura, inchideTura } from '../src/servicii/ture';
 import { inregistreazaComanda } from '../src/servicii/vanzari';
 import { evComanda, evTuraDeschisa, pregateste, tableteVechi } from './ajutor';
@@ -146,5 +148,72 @@ describe.skipIf(!URL_TEST)('blocări pe locație (PostgreSQL)', () => {
     const [, r] = await Promise.all([finalizare, sync]);
     expect(r.cu_eroare).toEqual([]);
     expect(await t.stoc(centru, 'Lapte 3,2%')).toBe(scriptic - 250);
+  });
+
+  it('o recepție în lucru nu oprește vânzările cu aceleași articole (FOR NO KEY UPDATE)', async () => {
+    const { depozit } = t.demo.locatii;
+    const tura = randomUUID();
+    expect((await t.tableta.sync([evTuraDeschisa(tura, t.barista, 0, acumMinus(30))])).cu_eroare).toEqual([]);
+    const latte = t.produs('Latte');
+    // Liniile în ordinea inversă rețetei (paharul înaintea laptelui și a cafelei), cum ar veni pe o factură.
+    const linii = ['Pahar 350 ml', 'Lapte 3,2%', 'Capac', 'Cafea boabe'].map((n) => ({ articol_id: t.idArticol(n), cantitate: 100, cost_unitar: 0.1 }));
+    const receptie = t.db.tx(async (tx) => {
+      await creeazaReceptie(tx, { locatie_id: depozit, furnizor: 'Furnizor test', nr_factura: 'B-1', data: '2026-10-22', linii, cheie: randomUUID() }, null);
+      await asteapta(1500);
+    });
+    await asteapta(200);
+    const inceput = Date.now();
+    const r = await t.tableta.sync([evComanda(tura, t.barista, [{ produs_id: latte.id, cantitate: 1, pret_unitar: latte.pret, modificatori: [] }], 'numerar', { la: acumMinus(1) })]);
+    const durata = Date.now() - inceput;
+    expect(r.cu_eroare).toEqual([]);
+    // Cu FOR UPDATE vânzarea aștepta până la sfârșitul recepției (≥ 1,3 s).
+    expect(durata).toBeLessThan(800);
+    await receptie;
+  });
+
+  it('închiderea soldurilor cedează în fața unei tranzacții lungi și nu ține vânzările pe loc', async () => {
+    const { centru } = t.demo.locatii;
+    const tura = randomUUID();
+    expect((await t.tableta.sync([evTuraDeschisa(tura, t.barista, 0, acumMinus(20))])).cu_eroare).toEqual([]);
+    const esp = t.produs('Espresso');
+    const vanzare = () => evComanda(tura, t.barista, [{ produs_id: esp.id, cantitate: 1, pret_unitar: esp.pret, modificatori: [] }], 'numerar', { la: acumMinus(1) });
+    const [{ id: dispozitivId }] = await t.db.query<{ id: number }>('SELECT id FROM dispozitive WHERE locatie_id = $1 AND token IS NOT NULL ORDER BY id LIMIT 1', [centru]);
+    const pana = await inchisPana(t.db, STOC);
+    // O vânzare (de pe altă tabletă) stă 1,2 s în tranzacție după ce a scris în registre.
+    const lunga = t.db.tx(async (tx) => {
+      await inregistreazaComanda(tx, { locatie_id: centru, dispozitiv_id: dispozitivId }, acumMinus(2), vanzare().date);
+      await asteapta(1200);
+    });
+    await asteapta(100);
+    // Închiderea nu poate lua SHARE: renunță după 100 ms, reîncearcă, iar până atunci vânzările trec.
+    const inchidere = inchideSolduri(t.db, { pauzaMs: 150 });
+    const durate: number[] = [];
+    for (let i = 0; i < 4; i++) {
+      await asteapta(120);
+      const inceput = Date.now();
+      expect((await t.tableta.sync([vanzare()])).cu_eroare).toEqual([]);
+      durate.push(Date.now() - inceput);
+    }
+    await lunga;
+    const r = await inchidere;
+    expect(r.stoc).toBeGreaterThan(pana);
+    // O vânzare a așteptat cel mult cât o încercare de blocare (100 ms), plus durata ei.
+    expect(Math.max(...durate)).toBeLessThan(600);
+  });
+
+  it('închiderea renunță cu eroare dacă registrul rămâne ocupat la toate încercările', async () => {
+    const { centru } = t.demo.locatii;
+    const [{ id: dispozitivId }] = await t.db.query<{ id: number }>('SELECT id FROM dispozitive WHERE locatie_id = $1 AND token IS NOT NULL ORDER BY id LIMIT 1', [centru]);
+    const tura = randomUUID();
+    expect((await t.tableta.sync([evTuraDeschisa(tura, t.barista, 0, acumMinus(10))])).cu_eroare).toEqual([]);
+    const esp = t.produs('Espresso');
+    const ev = evComanda(tura, t.barista, [{ produs_id: esp.id, cantitate: 1, pret_unitar: esp.pret, modificatori: [] }], 'numerar', { la: acumMinus(1) });
+    const lunga = t.db.tx(async (tx) => {
+      await inregistreazaComanda(tx, { locatie_id: centru, dispozitiv_id: dispozitivId }, ev.la, ev.date);
+      await asteapta(2500);
+    });
+    await asteapta(100);
+    await expect(inchideSolduri(t.db, { pauzaMs: 50 })).rejects.toMatchObject({ code: '55P03' });
+    await lunga;
   });
 });

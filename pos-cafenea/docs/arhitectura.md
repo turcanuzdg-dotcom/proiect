@@ -131,6 +131,20 @@ flowchart LR
 - **Jurnal de audit.** Orice modificare din panou, autentificările și operațiunile tabletei din afara
   cozii se scriu cu cine, de unde, când și (la suprascrieri) valoarea de dinainte: o toleranță ridicată
   sau o rețetă schimbată se pot urmări. Vânzările de pe tabletă sunt deja păstrate în `evenimente_sync`.
+- **Solduri închise, ca citirile să nu crească odată cu istoricul.** Stocul și banii rămân sume de
+  mișcări, dar serverul păstrează din oră în oră (și la pornire) suma mișcărilor până la un id
+  (`solduri_stoc`, `solduri_bani`, servicii/solduri.ts). Soldul de acum = ultimul sold închis + mișcările
+  cu id mai mare; soldul la un moment trecut scade din el mișcările datate după acel moment, deci
+  vânzările sincronizate târziu, anulările și compensările de inventar cad exact ca în registru (un test
+  compară fiecare citire cu suma întregului registru). Pragul se citește sub o blocare SHARE de cel mult
+  100 ms: dacă registrul e ocupat de o tranzacție lungă, închiderea renunță și reîncearcă, nu ține
+  vânzările pe loc. Soldurile sunt doar o scurtătură (cele înlocuite se șterg după o oră, se pot reface
+  oricând din registre).
+- **Panoul se reîncarcă cu măsură.** O notificare live reîncarcă o pagină cel mult o dată la 10 s
+  (15 s pentru Bani și foaia de inventar), doar cât fila e vizibilă și doar pentru locația afișată;
+  rapoartele nu se reîncarcă singure („Actualizat la HH:MM”, butonul Reîmprospătează). Recepțiile și
+  transferurile poartă o cheie generată la deschiderea formularului: o salvare repetată după un răspuns
+  pierdut întoarce documentul deja creat, fără să dubleze stocul sau costul mediu.
 
 ## Limitări cunoscute (de rezolvat în etapele următoare)
 

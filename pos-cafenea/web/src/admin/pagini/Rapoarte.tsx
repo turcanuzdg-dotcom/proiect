@@ -3,10 +3,13 @@ import { ETICHETE_MOTIVE, type MotivCasare, type RandComparatie, type RandVanzar
 import { adaugaZile, formatCantitate, formatData, formatLei, formatNumar, ziLocala } from '../../comun/format';
 import type { PropsPagina } from '../App';
 import { api } from '../api';
-import { AlegeInterval, CapPagina, FiltruLocatie, Kpi, parametriInterval, presetari, Rand, Stare, Taburi, type IntervalZile } from '../componente';
+import { Actualizat, AlegeInterval, CapPagina, FiltruLocatie, Kpi, parametriInterval, presetari, Rand, Stare, Taburi, type IntervalZile } from '../componente';
 import { useDate } from '../context';
 import { BareOrizontale, BarePereche, GraficColoane, LegendaAB } from '../grafice';
 import { ETICHETE_TIP_ARTICOL, type Articol } from '../tipuri';
+
+/** Rapoartele nu se recalculează la fiecare vânzare: „actualizat la HH:MM” și Reîmprospătează. */
+const FARA_LIVE = { live: false } as const;
 
 type Tab = 'vanzari' | 'comparatie' | 'consum' | 'pierderi';
 const TABURI: { cheie: Tab; titlu: string }[] = [
@@ -61,103 +64,107 @@ function RaportVanzari({ perioada, locatie }: { perioada: IntervalZile; locatie:
   const r = useDate(
     () => api.get<{ randuri: RandVanzari[]; serie: { zi: string; incasari: number; comenzi: number }[] }>('/api/rapoarte/vanzari', { ...p, locatie_id: locatie, grupare }),
     [p.de, p.pana, locatie, grupare],
+    FARA_LIVE,
   );
 
   return (
-    <Stare {...r}>
-      {(d) => {
-        const total = d.randuri.reduce((s, x) => s + x.incasari, 0);
-        const cost = d.randuri.reduce((s, x) => s + x.cost, 0);
-        const comenzi = d.serie.reduce((s, x) => s + x.comenzi, 0);
-        const randuri = [...d.randuri].sort((a, b) => (b[ordonare] ?? -Infinity) - (a[ordonare] ?? -Infinity));
-        // Toate zilele intervalului, și cele fără vânzări, ca axa timpului să nu sară.
-        const pezi = new Map(d.serie.map((x) => [x.zi, x]));
-        const zile: string[] = [];
-        for (let z = perioada.de; z <= perioada.pana && zile.length < 400; z = adaugaZile(z, 1)) zile.push(z);
-        return (
-          <>
-            <div className="card grila-kpi">
-              <Kpi eticheta="Încasări" valoare={formatLei(total)} />
-              <Kpi eticheta="Cost ingrediente" valoare={formatLei(cost)} />
-              <Kpi eticheta="Marjă brută" valoare={formatLei(total - cost)} nota={total ? `${formatNumar(((total - cost) / total) * 100)}% din încasări` : undefined} />
-              <Kpi eticheta="Comenzi" valoare={formatNumar(comenzi)} nota={comenzi ? `bon mediu ${formatLei(total / comenzi)}` : undefined} />
-            </div>
-            {zile.length > 1 && (
-              <div className="card">
-                <GraficColoane
-                  titlu="Încasări pe zile"
-                  formatValoare={formatLei}
-                  puncte={zile.map((z) => {
-                    const x = pezi.get(z);
-                    return {
-                      eticheta: `${z.slice(8, 10)}.${z.slice(5, 7)}`,
-                      etichetaLunga: formatData(`${z}T12:00:00`),
-                      valoare: x?.incasari ?? 0,
-                      detaliu: `${x?.comenzi ?? 0} comenzi`,
-                    };
-                  })}
-                />
+    <>
+      <Actualizat {...r} />
+      <Stare {...r}>
+        {(d) => {
+          const total = d.randuri.reduce((s, x) => s + x.incasari, 0);
+          const cost = d.randuri.reduce((s, x) => s + x.cost, 0);
+          const comenzi = d.serie.reduce((s, x) => s + x.comenzi, 0);
+          const randuri = [...d.randuri].sort((a, b) => (b[ordonare] ?? -Infinity) - (a[ordonare] ?? -Infinity));
+          // Toate zilele intervalului, și cele fără vânzări, ca axa timpului să nu sară.
+          const pezi = new Map(d.serie.map((x) => [x.zi, x]));
+          const zile: string[] = [];
+          for (let z = perioada.de; z <= perioada.pana && zile.length < 400; z = adaugaZile(z, 1)) zile.push(z);
+          return (
+            <>
+              <div className="card grila-kpi">
+                <Kpi eticheta="Încasări" valoare={formatLei(total)} />
+                <Kpi eticheta="Cost ingrediente" valoare={formatLei(cost)} />
+                <Kpi eticheta="Marjă brută" valoare={formatLei(total - cost)} nota={total ? `${formatNumar(((total - cost) / total) * 100)}% din încasări` : undefined} />
+                <Kpi eticheta="Comenzi" valoare={formatNumar(comenzi)} nota={comenzi ? `bon mediu ${formatLei(total / comenzi)}` : undefined} />
               </div>
-            )}
-            <Rand>
-              <Grupare valoare={grupare} onChange={setGrupare} />
-              <label className="camp camp-filtru">
-                <span>Ordonează după</span>
-                <select value={ordonare} onChange={(e) => setOrdonare(e.target.value as typeof ordonare)}>
-                  <option value="incasari">Încasări (volum valoric)</option>
-                  <option value="cantitate">Cantitate vândută</option>
-                  <option value="marja">Marjă în lei (profitabilitate)</option>
-                  <option value="marja_procent">Marjă %</option>
-                </select>
-              </label>
-            </Rand>
-            {randuri.length === 0 ? (
-              <div className="gol card">Nicio vânzare în intervalul ales.</div>
-            ) : (
-              <div className="tabel-container">
-                <table className="tabel">
-                  <thead>
-                    <tr>
-                      <th>{grupare === 'produs' ? 'Produs' : 'Categorie'}</th>
-                      <th className="num">Cantitate</th>
-                      <th className="num">Încasări</th>
-                      <th className="num">% din total</th>
-                      <th className="num">Cost</th>
-                      <th className="num">Marjă</th>
-                      <th className="num">Marjă %</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {randuri.map((x) => (
-                      <tr key={x.cheie}>
-                        <td>{x.nume}</td>
-                        <td className="num">{formatNumar(x.cantitate)}</td>
-                        <td className="num">{formatLei(x.incasari)}</td>
-                        <td className="num slab">{total ? `${formatNumar((x.incasari / total) * 100)}%` : '—'}</td>
-                        <td className="num">{formatLei(x.cost)}</td>
-                        <td className="num">{formatLei(x.marja)}</td>
-                        <td className="num">{x.marja_procent == null ? '—' : `${formatNumar(x.marja_procent)}%`}</td>
+              {zile.length > 1 && (
+                <div className="card">
+                  <GraficColoane
+                    titlu="Încasări pe zile"
+                    formatValoare={formatLei}
+                    puncte={zile.map((z) => {
+                      const x = pezi.get(z);
+                      return {
+                        eticheta: `${z.slice(8, 10)}.${z.slice(5, 7)}`,
+                        etichetaLunga: formatData(`${z}T12:00:00`),
+                        valoare: x?.incasari ?? 0,
+                        detaliu: `${x?.comenzi ?? 0} comenzi`,
+                      };
+                    })}
+                  />
+                </div>
+              )}
+              <Rand>
+                <Grupare valoare={grupare} onChange={setGrupare} />
+                <label className="camp camp-filtru">
+                  <span>Ordonează după</span>
+                  <select value={ordonare} onChange={(e) => setOrdonare(e.target.value as typeof ordonare)}>
+                    <option value="incasari">Încasări (volum valoric)</option>
+                    <option value="cantitate">Cantitate vândută</option>
+                    <option value="marja">Marjă în lei (profitabilitate)</option>
+                    <option value="marja_procent">Marjă %</option>
+                  </select>
+                </label>
+              </Rand>
+              {randuri.length === 0 ? (
+                <div className="gol card">Nicio vânzare în intervalul ales.</div>
+              ) : (
+                <div className="tabel-container">
+                  <table className="tabel">
+                    <thead>
+                      <tr>
+                        <th>{grupare === 'produs' ? 'Produs' : 'Categorie'}</th>
+                        <th className="num">Cantitate</th>
+                        <th className="num">Încasări</th>
+                        <th className="num">% din total</th>
+                        <th className="num">Cost</th>
+                        <th className="num">Marjă</th>
+                        <th className="num">Marjă %</th>
                       </tr>
-                    ))}
-                  </tbody>
-                  <tfoot>
-                    <tr>
-                      <td>Total</td>
-                      <td className="num">{formatNumar(randuri.reduce((s, x) => s + x.cantitate, 0))}</td>
-                      <td className="num">{formatLei(total)}</td>
-                      <td className="num">100%</td>
-                      <td className="num">{formatLei(cost)}</td>
-                      <td className="num">{formatLei(total - cost)}</td>
-                      <td className="num">{total ? `${formatNumar(((total - cost) / total) * 100)}%` : '—'}</td>
-                    </tr>
-                  </tfoot>
-                </table>
-              </div>
-            )}
-          </>
-        );
-      }}
-    </Stare>
+                    </thead>
+                    <tbody>
+                      {randuri.map((x) => (
+                        <tr key={x.cheie}>
+                          <td>{x.nume}</td>
+                          <td className="num">{formatNumar(x.cantitate)}</td>
+                          <td className="num">{formatLei(x.incasari)}</td>
+                          <td className="num slab">{total ? `${formatNumar((x.incasari / total) * 100)}%` : '—'}</td>
+                          <td className="num">{formatLei(x.cost)}</td>
+                          <td className="num">{formatLei(x.marja)}</td>
+                          <td className="num">{x.marja_procent == null ? '—' : `${formatNumar(x.marja_procent)}%`}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot>
+                      <tr>
+                        <td>Total</td>
+                        <td className="num">{formatNumar(randuri.reduce((s, x) => s + x.cantitate, 0))}</td>
+                        <td className="num">{formatLei(total)}</td>
+                        <td className="num">100%</td>
+                        <td className="num">{formatLei(cost)}</td>
+                        <td className="num">{formatLei(total - cost)}</td>
+                        <td className="num">{total ? `${formatNumar(((total - cost) / total) * 100)}%` : '—'}</td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              )}
+            </>
+          );
+        }}
+      </Stare>
+    </>
   );
 }
 
@@ -203,6 +210,7 @@ function RaportComparatie() {
         grupare,
       }),
     [pa.de, pa.pana, pb.de, pb.pana, locatie, grupare],
+    FARA_LIVE,
   );
   const activ = preset.find((x) => x.a.de === a.de && x.a.pana === a.pana && x.b.de === b.de && x.b.pana === b.pana);
   const eticheta = (i: IntervalZile) => `${formatData(`${i.de}T12:00:00`)} – ${formatData(`${i.pana}T12:00:00`)}`;
@@ -236,6 +244,7 @@ function RaportComparatie() {
           </label>
         </Rand>
       </div>
+      <Actualizat {...r} />
       <Stare {...r}>
         {(d) => {
           const randuri = d.randuri.filter((x) => x.nume.toLowerCase().includes(cauta.trim().toLowerCase()));
@@ -332,7 +341,7 @@ interface RandConsum {
 function RaportConsum({ perioada, locatie }: { perioada: IntervalZile; locatie: number | null }) {
   const p = parametriInterval(perioada);
   const [tip, setTip] = useState('');
-  const r = useDate(() => api.get<RandConsum[]>('/api/rapoarte/consum', { ...p, locatie_id: locatie }), [p.de, p.pana, locatie]);
+  const r = useDate(() => api.get<RandConsum[]>('/api/rapoarte/consum', { ...p, locatie_id: locatie }), [p.de, p.pana, locatie], FARA_LIVE);
   return (
     <>
       <Rand>
@@ -348,6 +357,7 @@ function RaportConsum({ perioada, locatie }: { perioada: IntervalZile; locatie: 
           </select>
         </label>
       </Rand>
+      <Actualizat {...r} />
       <Stare {...r} gol={(d) => d.length === 0} mesajGol="Niciun consum în intervalul ales.">
         {(randuri) => {
           const lista = randuri.filter((x) => !tip || x.tip === tip);
@@ -425,27 +435,30 @@ interface Pierderi {
 
 function RaportPierderi({ perioada, locatie }: { perioada: IntervalZile; locatie: number | null }) {
   const p = parametriInterval(perioada);
-  const r = useDate(() => api.get<Pierderi>('/api/rapoarte/pierderi', { ...p, locatie_id: locatie }), [p.de, p.pana, locatie]);
+  const r = useDate(() => api.get<Pierderi>('/api/rapoarte/pierderi', { ...p, locatie_id: locatie }), [p.de, p.pana, locatie], FARA_LIVE);
   return (
-    <Stare {...r}>
-      {(d) => {
-        const casari = d.casari.reduce((s, x) => s + x.valoare_cost, 0);
-        const faraRestituire = d.anulari.find((x) => !x.restituit);
-        const cuRestituire = d.anulari.find((x) => x.restituit);
-        const minusInventar = d.inventar.filter((x) => x.valoare < 0).reduce((s, x) => s + x.valoare, 0);
-        const plusInventar = d.inventar.filter((x) => x.valoare > 0).reduce((s, x) => s + x.valoare, 0);
-        return (
-          <PierderiContinut
-            d={d}
-            casari={casari}
-            faraRestituire={faraRestituire}
-            cuRestituire={cuRestituire}
-            minusInventar={minusInventar}
-            plusInventar={plusInventar}
-          />
-        );
-      }}
-    </Stare>
+    <>
+      <Actualizat {...r} />
+      <Stare {...r}>
+        {(d) => {
+          const casari = d.casari.reduce((s, x) => s + x.valoare_cost, 0);
+          const faraRestituire = d.anulari.find((x) => !x.restituit);
+          const cuRestituire = d.anulari.find((x) => x.restituit);
+          const minusInventar = d.inventar.filter((x) => x.valoare < 0).reduce((s, x) => s + x.valoare, 0);
+          const plusInventar = d.inventar.filter((x) => x.valoare > 0).reduce((s, x) => s + x.valoare, 0);
+          return (
+            <PierderiContinut
+              d={d}
+              casari={casari}
+              faraRestituire={faraRestituire}
+              cuRestituire={cuRestituire}
+              minusInventar={minusInventar}
+              plusInventar={plusInventar}
+            />
+          );
+        }}
+      </Stare>
+    </>
   );
 }
 

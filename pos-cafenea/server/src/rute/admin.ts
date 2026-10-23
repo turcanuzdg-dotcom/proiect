@@ -272,6 +272,8 @@ export async function ruteAdmin(app: FastifyInstance, db: Db, doarAdmin: onReque
           nr_factura: z.string().trim().min(1).max(60),
           data: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
           linii: z.array(z.object({ articol_id: z.number().int().positive(), cantitate, cost_unitar: z.number().finite().min(0) })).min(1).max(500),
+          // Generată de formular la deschidere: o salvare repetată întoarce aceeași recepție.
+          cheie: z.string().uuid().nullish(),
         })
         .parse(req.body);
       const r = await creeazaReceptie(db, d, req.utilizator!.id);
@@ -287,6 +289,7 @@ export async function ruteAdmin(app: FastifyInstance, db: Db, doarAdmin: onReque
           in_locatie_id: z.number().int().positive(),
           observatii: z.string().max(500).nullish(),
           linii: z.array(z.object({ articol_id: z.number().int().positive(), cantitate })).min(1).max(500),
+          cheie: z.string().uuid().nullish(),
         })
         .parse(req.body);
       const r = await creeazaTransfer(db, d, req.utilizator!.id);

@@ -1,4 +1,5 @@
 import type { Db } from '../db';
+import { inchisPana, sqlSold, STOC } from './solduri';
 import { NEVERIFICATA } from './ture';
 
 /** Prima pagină a adminului: vânzările de azi și tot ce cere atenție. */
@@ -32,13 +33,14 @@ export async function panou(db: Db, deAzi: string) {
       ORDER BY t.deschisa_la DESC LIMIT 50`,
   );
   const subPrag = await db.query(
-    `SELECT l.nume AS locatie, a.nume, a.um, a.prag_minim, COALESCE(s.stoc, 0)::numeric AS stoc
+    `SELECT l.nume AS locatie, a.nume, a.um, a.prag_minim, COALESCE(s.sold, 0)::numeric AS stoc
        FROM articole a
        CROSS JOIN locatii l
-       LEFT JOIN (SELECT locatie_id, articol_id, SUM(cantitate) AS stoc FROM miscari_stoc GROUP BY 1, 2) s
+       LEFT JOIN ${sqlSold(STOC, { n: '$1::bigint' })} s
          ON s.articol_id = a.id AND s.locatie_id = l.id
-      WHERE a.activ AND a.prag_minim > 0 AND l.activ AND l.tip = 'punct' AND COALESCE(s.stoc, 0) < a.prag_minim
+      WHERE a.activ AND a.prag_minim > 0 AND l.activ AND l.tip = 'punct' AND COALESCE(s.sold, 0) < a.prag_minim
       ORDER BY l.nume, a.nume LIMIT 100`,
+    [await inchisPana(db, STOC)],
   );
   const eroriSync = (await db.query<{ n: number }>(`SELECT COUNT(*)::int AS n FROM evenimente_sync WHERE stare = 'eroare'`))[0].n;
   const dispozitive = await db.query(

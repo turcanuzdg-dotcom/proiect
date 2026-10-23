@@ -158,6 +158,7 @@ export function PaginaComenzi({ sub }: PropsPagina) {
         ...parametriInterval(perioada), locatie_id: locatie, metoda, pret_abatere: abateri || undefined, card_neconfirmat: neconfirmate || undefined, limita: 500,
       }),
     [perioada.de, perioada.pana, locatie, metoda, abateri, neconfirmate],
+    { locatie },
   );
 
   return (

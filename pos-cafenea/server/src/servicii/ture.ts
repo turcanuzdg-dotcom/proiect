@@ -2,6 +2,7 @@ import { rotunjeste, type DatePlataMarunta, type DateTuraDeschisa, type DateTura
 import type { Db } from '../db';
 import { EroareNegasit, EroareUtilizator } from '../erori';
 import { citesteTolerante } from './setari';
+import { BANI, inchisPana, sqlSold } from './solduri';
 
 /**
  * Blocările pe locație (pg_advisory_xact_lock, eliberate la sfârșitul tranzacției).
@@ -69,9 +70,8 @@ export async function asiguraTura(db: Db, ctx: ContextPOS, turaId: string, la: s
 /** Numerarul care ar trebui să fie în sertar (registrul de bani al locației). */
 export async function soldNumerar(db: Db, locatieId: number, pana?: string | Date): Promise<number> {
   const r = await db.query<{ sold: number }>(
-    `SELECT COALESCE(SUM(suma), 0)::numeric AS sold FROM miscari_bani
-      WHERE locatie_id = $1 AND cont = 'numerar' AND ($2::timestamptz IS NULL OR creata_la <= $2::timestamptz)`,
-    [locatieId, pana ? new Date(pana).toISOString() : null],
+    `SELECT COALESCE((SELECT s.sold FROM ${sqlSold(BANI, { n: '$2::bigint', locatie: '$1::int', dupa: "= 'numerar'", la: pana ? '$3::timestamptz' : undefined })} s), 0)::numeric AS sold`,
+    [locatieId, await inchisPana(db, BANI), ...(pana ? [new Date(pana).toISOString()] : [])],
   );
   return rotunjeste(r[0].sold);
 }

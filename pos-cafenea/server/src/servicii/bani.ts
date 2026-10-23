@@ -1,13 +1,14 @@
 import { rotunjeste, type Cont } from '@cafenea/shared';
 import type { Db } from '../db';
 import { EroareUtilizator } from '../erori';
+import { BANI, inchisPana, sqlSold } from './solduri';
 import { blocheazaCasa, corecteazaNumarariUlterioare } from './ture';
 
 /** Soldul de numerar al fiecărei locații și încasările pe card dintr-un interval. */
 export async function rezumatBani(db: Db, de: string, pana: string) {
   return db.query(
     `SELECT l.id AS locatie_id, l.nume AS locatie,
-            COALESCE((SELECT SUM(suma) FROM miscari_bani m WHERE m.locatie_id = l.id AND m.cont = 'numerar'), 0)::numeric AS sold_numerar,
+            COALESCE(sn.sold, 0)::numeric AS sold_numerar,
             COALESCE(SUM(m.suma) FILTER (WHERE m.cont = 'numerar' AND m.tip IN ('incasare', 'restituire')), 0)::numeric AS incasari_numerar,
             COALESCE(SUM(m.suma) FILTER (WHERE m.cont = 'card' AND m.tip IN ('incasare', 'restituire')), 0)::numeric AS incasari_card,
             COALESCE(SUM(m.suma) FILTER (WHERE m.tip = 'plata_marunta'), 0)::numeric AS plati_marunte,
@@ -15,10 +16,11 @@ export async function rezumatBani(db: Db, de: string, pana: string) {
             COALESCE(SUM(m.suma) FILTER (WHERE m.tip = 'alimentare'), 0)::numeric AS alimentari,
             COALESCE(SUM(m.suma) FILTER (WHERE m.tip = 'diferenta_casa'), 0)::numeric AS diferente
        FROM locatii l
+       LEFT JOIN ${sqlSold(BANI, { n: '$3::bigint', dupa: "= 'numerar'" })} sn ON sn.locatie_id = l.id
        LEFT JOIN miscari_bani m ON m.locatie_id = l.id AND m.creata_la >= $1 AND m.creata_la < $2
       WHERE l.tip = 'punct'
-      GROUP BY l.id ORDER BY l.id`,
-    [de, pana],
+      GROUP BY l.id, sn.sold ORDER BY l.id`,
+    [de, pana, await inchisPana(db, BANI)],
   );
 }
 

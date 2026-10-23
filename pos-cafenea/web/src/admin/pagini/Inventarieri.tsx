@@ -37,7 +37,7 @@ export function PaginaInventarieri({ sub, navigheaza }: PropsPagina) {
   const { arata, locatii } = useAdmin();
   const [locatie, setLocatie] = useState<number | null>(null);
   const [incepe, setIncepe] = useState(false);
-  const r = useDate(() => api.get<Inventariere[]>('/api/inventarieri', { locatie_id: locatie }), [locatie]);
+  const r = useDate(() => api.get<Inventariere[]>('/api/inventarieri', { locatie_id: locatie }), [locatie], { locatie });
   const deschisa = sub[0] ? Number(sub[0]) : null;
 
   return (
@@ -140,7 +140,8 @@ function IncepeInventariere(props: { locatii: { id: number; nume: string }[]; on
 
 function FoaieInventar({ id, onInchide }: { id: number; onInchide: () => void }) {
   const { arata } = useAdmin();
-  const r = useDate(() => api.get<Raport>(`/api/inventarieri/${id}`), [id]);
+  // Raportul unei inventarieri deschise recalculează scripticul: cel mult o dată la 15 s.
+  const r = useDate(() => api.get<Raport>(`/api/inventarieri/${id}`), [id], { minimMs: 15_000 });
   // Doar câmpurile atinse de admin; restul urmează mereu serverul (tableta poate număra în paralel).
   const [editate, setEditate] = useState<Record<number, string>>({});
   const [cauta, setCauta] = useState('');

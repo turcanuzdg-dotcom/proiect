@@ -6,6 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { deschideDb, type Db } from '../src/db';
 import { populeazaDemo } from '../src/demo';
 import { salveazaUtilizator } from '../src/servicii/acces';
+import { inchideSolduri } from '../src/servicii/solduri';
 import { bazaDeTest } from './ajutor';
 
 /**
@@ -196,6 +197,10 @@ describe.skipIf(!URL_TEST)('PostgreSQL real', () => {
         await expect(db.query('ALTER TABLE miscari_bani DISABLE TRIGGER miscari_bani_nemodificabil')).rejects.toThrow(/owner|proprietar/i);
         await expect(db.query('UPDATE miscari_bani SET suma = 0')).rejects.toThrow(/Registrul miscari_bani/);
         await expect(db.query('DROP TABLE jurnal_audit')).rejects.toThrow(/owner|proprietar/i);
+        // Închiderea soldurilor merge cu rolul doar pe date (LOCK ... IN SHARE MODE cere UPDATE pe tabel).
+        const inchis = await inchideSolduri(db);
+        expect(inchis.stoc).toBeGreaterThan(0);
+        expect(inchis.bani).toBeGreaterThan(0);
       } finally {
         await db.close();
       }

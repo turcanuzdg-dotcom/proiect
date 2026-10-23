@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { adaugaZile, formatLei, formatNumar, inceputZi, ziLocala } from '../comun/format';
+import { adaugaZile, formatLei, formatNumar, formatOra, inceputZi, ziLocala } from '../comun/format';
 import { useAdmin } from './context';
 
 export function CapPagina({ titlu, subtitlu, actiuni }: { titlu: string; subtitlu?: ReactNode; actiuni?: ReactNode }) {
@@ -10,6 +10,21 @@ export function CapPagina({ titlu, subtitlu, actiuni }: { titlu: string; subtitl
         {subtitlu && <p className="slab">{subtitlu}</p>}
       </div>
       {actiuni && <div className="actiuni">{actiuni}</div>}
+    </div>
+  );
+}
+
+/**
+ * Pentru paginile care nu se reîncarcă singure (rapoartele): momentul datelor afișate și
+ * reîmprospătarea la cerere. Un raport pe o lună nu se mai recalculează la fiecare vânzare.
+ */
+export function Actualizat({ actualizatLa, incarcare, reincarca }: { actualizatLa: Date | null; incarcare: boolean; reincarca: () => void }) {
+  return (
+    <div className="actualizat slab">
+      <span>{actualizatLa ? `Actualizat la ${formatOra(actualizatLa)}` : 'Se încarcă…'}</span>
+      <button type="button" className="buton-link" onClick={reincarca} disabled={incarcare}>
+        {incarcare ? 'Se reîmprospătează…' : 'Reîmprospătează'}
+      </button>
     </div>
   );
 }

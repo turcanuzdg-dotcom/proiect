@@ -1,5 +1,6 @@
 import type { TipMiscareStoc } from '@cafenea/shared';
 import { insereaza, type Db } from '../db';
+import { inchisPana, sqlSold, STOC } from './solduri';
 
 export interface Miscare {
   locatie_id: number;
@@ -83,21 +84,18 @@ export interface RandStoc {
 }
 
 /**
- * Stocul scriptic al unei locații, acum sau la un moment dat (pentru inventariere).
+ * Stocul scriptic al unei locații, acum sau la un moment dat.
  * Un articol dezactivat rămâne vizibil cât timp mai are stoc (sau a ajuns pe minus).
  */
 export async function stocLocatie(db: Db, locatieId: number, la?: string | Date): Promise<RandStoc[]> {
   const r = await db.query<Omit<RandStoc, 'valoare' | 'sub_prag'>>(
     `SELECT a.id AS articol_id, a.nume, a.um, a.tip, a.activ, a.prag_minim, a.cost_mediu,
-            COALESCE(SUM(m.cantitate), 0)::numeric AS stoc
+            COALESCE(s.sold, 0)::numeric AS stoc
        FROM articole a
-       LEFT JOIN miscari_stoc m
-         ON m.articol_id = a.id AND m.locatie_id = $1
-        AND ($2::timestamptz IS NULL OR m.creata_la <= $2::timestamptz)
-      GROUP BY a.id
-     HAVING a.activ OR COALESCE(SUM(m.cantitate), 0) <> 0
+       LEFT JOIN ${sqlSold(STOC, { n: '$2::bigint', locatie: '$1::int', la: la ? '$3::timestamptz' : undefined })} s ON s.articol_id = a.id
+      WHERE a.activ OR COALESCE(s.sold, 0) <> 0
       ORDER BY a.tip, a.nume`,
-    [locatieId, la ? new Date(la).toISOString() : null],
+    [locatieId, await inchisPana(db, STOC), ...(la ? [new Date(la).toISOString()] : [])],
   );
   return r.map((x) => ({
     ...x,
@@ -112,33 +110,46 @@ export async function stocToateLocatiile(db: Db) {
     'SELECT id, nume, tip FROM locatii WHERE activ ORDER BY tip, id',
   );
   const r = await db.query<{ articol_id: number; locatie_id: number; stoc: number }>(
-    `SELECT articol_id, locatie_id, SUM(cantitate)::numeric AS stoc
-       FROM miscari_stoc GROUP BY articol_id, locatie_id`,
+    `SELECT articol_id, locatie_id, sold::numeric AS stoc FROM ${sqlSold(STOC, { n: '$1::bigint' })} s`,
+    [await inchisPana(db, STOC)],
   );
-  const articole = await db.query(
-    `SELECT a.id, a.nume, a.um, a.tip, a.activ, a.prag_minim, a.cost_mediu FROM articole a
-      WHERE a.activ OR EXISTS (SELECT 1 FROM miscari_stoc m WHERE m.articol_id = a.id GROUP BY m.locatie_id HAVING SUM(m.cantitate) <> 0)
-      ORDER BY a.tip, a.nume`,
+  const articole = await db.query<{ id: number; activ: boolean }>(
+    'SELECT a.id, a.nume, a.um, a.tip, a.activ, a.prag_minim, a.cost_mediu FROM articole a ORDER BY a.tip, a.nume',
   );
   const harta = new Map<string, number>();
-  for (const x of r) harta.set(`${x.articol_id}:${x.locatie_id}`, x.stoc);
+  // Un articol dezactivat apare cât timp are stoc nenul în vreo locație, inclusiv într-una inactivă.
+  const cuStoc = new Set<number>();
+  for (const x of r) {
+    harta.set(`${x.articol_id}:${x.locatie_id}`, x.stoc);
+    if (x.stoc !== 0) cuStoc.add(x.articol_id);
+  }
   return {
     locatii,
-    articole: articole.map((a: any) => ({
-      ...a,
-      stocuri: Object.fromEntries(locatii.map((l) => [l.id, harta.get(`${a.id}:${l.id}`) ?? 0])),
-    })),
+    articole: articole
+      .filter((a) => a.activ || cuStoc.has(a.id))
+      .map((a) => ({
+        ...a,
+        stocuri: Object.fromEntries(locatii.map((l) => [l.id, harta.get(`${a.id}:${l.id}`) ?? 0])),
+      })),
   };
 }
 
+/**
+ * Ultimele mișcări ale articolului, cu soldul după fiecare. Se citesc doar ultimele `limita` rânduri
+ * (prin indexul locație–articol–dată); soldul după un rând = stocul de acum minus ce s-a mișcat după
+ * el, în aceeași ordine (dată, id), deci nu mai e nevoie de suma cumulată peste tot istoricul.
+ */
 export async function fisaArticol(db: Db, locatieId: number, articolId: number, limita = 200) {
   return db.query(
-    `SELECT id, cantitate, tip, document_tip, document_id, cost_unitar, creata_la,
-            SUM(cantitate) OVER (ORDER BY creata_la, id) AS sold
-       FROM miscari_stoc
-      WHERE locatie_id = $1 AND articol_id = $2
-      ORDER BY creata_la DESC, id DESC
-      LIMIT $3`,
-    [locatieId, articolId, limita],
+    `WITH ultime AS (
+       SELECT id, cantitate, tip, document_tip, document_id, cost_unitar, creata_la
+         FROM miscari_stoc WHERE locatie_id = $1 AND articol_id = $2
+        ORDER BY creata_la DESC, id DESC LIMIT $3)
+     SELECT u.*,
+            COALESCE((SELECT s.sold FROM ${sqlSold(STOC, { n: '$4::bigint', locatie: '$1', dupa: '= $2' })} s), 0)
+              - COALESCE(SUM(u.cantitate) OVER (ORDER BY u.creata_la DESC, u.id DESC ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING), 0) AS sold
+       FROM ultime u
+      ORDER BY u.creata_la DESC, u.id DESC`,
+    [locatieId, articolId, limita, await inchisPana(db, STOC)],
   );
 }

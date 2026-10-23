@@ -1,10 +1,11 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { api, citesteToken, mesajEroare } from './api';
+import { Limitator, priveste, type Notificare, type OptiuniLive } from './reincarcare';
 import type { Locatie } from './tipuri';
 
 interface ContextAdmin {
-  /** Crește la fiecare notificare de pe server; paginile își reîncarcă datele. */
-  versiune: number;
+  /** Primește notificările live de pe server; întoarce dezabonarea. */
+  aboneaza: (fn: (n: Notificare) => void) => () => void;
   live: boolean;
   locatii: Locatie[];
   reincarcaLocatii: () => void;
@@ -15,7 +16,11 @@ const Ctx = createContext<ContextAdmin>(null as unknown as ContextAdmin);
 export const useAdmin = () => useContext(Ctx);
 
 export function FurnizorAdmin({ children }: { children: ReactNode }) {
-  const [versiune, setVersiune] = useState(0);
+  const ascultatori = useRef(new Set<(n: Notificare) => void>());
+  const aboneaza = useCallback((fn: (n: Notificare) => void) => {
+    ascultatori.current.add(fn);
+    return () => void ascultatori.current.delete(fn);
+  }, []);
   const [live, setLive] = useState(false);
   const [locatii, setLocatii] = useState<Locatie[]>([]);
   const [toast, setToast] = useState<{ mesaj: string; tip: 'ok' | 'pericol' } | null>(null);
@@ -33,12 +38,11 @@ export function FurnizorAdmin({ children }: { children: ReactNode }) {
 
   useEffect(reincarcaLocatii, [reincarcaLocatii]);
 
-  // Notificări în timp real; mai multe evenimente apropiate produc o singură reîncărcare.
+  // Notificări în timp real, trimise mai departe paginilor (useDate le limitează reîncărcările).
   // Tokenul de sesiune nu intră în URL: se cere un bilet scurt, iar la cădere se cere altul.
   useEffect(() => {
     if (!citesteToken() || typeof EventSource === 'undefined') return;
     let sursa: EventSource | null = null;
-    let timer = 0;
     let reconectare = 0;
     let oprit = false;
     const conecteaza = async () => {
@@ -47,9 +51,14 @@ export function FurnizorAdmin({ children }: { children: ReactNode }) {
         if (oprit) return;
         sursa = new EventSource(`/api/flux?bilet=${encodeURIComponent(bilet)}`);
         sursa.onopen = () => setLive(true);
-        sursa.onmessage = () => {
-          window.clearTimeout(timer);
-          timer = window.setTimeout(() => setVersiune((v) => v + 1), 500);
+        sursa.onmessage = (e) => {
+          let n: Notificare;
+          try {
+            n = JSON.parse(e.data) as Notificare;
+          } catch {
+            return;
+          }
+          for (const fn of [...ascultatori.current]) fn(n);
         };
         sursa.onerror = () => {
           setLive(false);
@@ -64,14 +73,13 @@ export function FurnizorAdmin({ children }: { children: ReactNode }) {
     void conecteaza();
     return () => {
       oprit = true;
-      window.clearTimeout(timer);
       window.clearTimeout(reconectare);
       sursa?.close();
     };
   }, []);
 
   return (
-    <Ctx.Provider value={{ versiune, live, locatii, reincarcaLocatii, arata }}>
+    <Ctx.Provider value={{ aboneaza, live, locatii, reincarcaLocatii, arata }}>
       {children}
       {toast && (
         <div className={`toast${toast.tip === 'pericol' ? ' pericol' : ''}`} role="status">
@@ -83,32 +91,62 @@ export function FurnizorAdmin({ children }: { children: ReactNode }) {
 }
 
 /**
- * Încarcă date și le reîncarcă la schimbarea dependențelor sau la notificările live.
+ * Încarcă date și le reîncarcă la schimbarea dependențelor, la cerere și la notificările live.
  * La reîncărcare păstrează datele vechi (fără „pâlpâire”), marcate cu `incarcare`.
+ * Notificările live reîncarcă pagina cel mult o dată la `minimMs` (implicit 10 s), doar cât fila
+ * e vizibilă și doar pentru locația afișată (vezi Limitator); `live: false` le ignoră (rapoartele:
+ * „actualizat la HH:MM” și butonul Reîmprospătează).
  */
-export function useDate<T>(incarca: () => Promise<T>, deps: unknown[]) {
-  const { versiune } = useAdmin();
+export function useDate<T>(incarca: () => Promise<T>, deps: unknown[], optiuni: OptiuniLive = {}) {
+  const { aboneaza } = useAdmin();
   const [date, setDate] = useState<T | null>(null);
   const [eroare, setEroare] = useState<string | null>(null);
   const [incarcare, setIncarcare] = useState(true);
-  const [manual, setManual] = useState(0);
+  const [actualizatLa, setActualizatLa] = useState<Date | null>(null);
+  const [cerere, setCerere] = useState(0);
+  const opt = useRef(optiuni);
+  opt.current = optiuni;
+  const limitator = useRef<Limitator | null>(null);
+  limitator.current ??= new Limitator(() => setCerere((c) => c + 1), optiuni.minimMs);
+
+  useEffect(() => {
+    const l = limitator.current!;
+    const dezaboneaza = aboneaza((n) => {
+      if (priveste(n, opt.current)) l.semnal();
+    });
+    const laVizibilitate = () => {
+      if (document.visibilityState === 'visible') l.vizibil();
+    };
+    document.addEventListener('visibilitychange', laVizibilitate);
+    return () => {
+      dezaboneaza();
+      document.removeEventListener('visibilitychange', laVizibilitate);
+      l.opreste();
+    };
+  }, [aboneaza]);
 
   useEffect(() => {
     let anulat = false;
+    const l = limitator.current!;
+    l.incepe();
     setIncarcare(true);
     incarca()
       .then((r) => {
         if (anulat) return;
         setDate(r);
         setEroare(null);
+        setActualizatLa(new Date());
       })
       .catch((e) => !anulat && setEroare(mesajEroare(e)))
-      .finally(() => !anulat && setIncarcare(false));
+      .finally(() => {
+        l.incarcat();
+        if (!anulat) setIncarcare(false);
+      });
     return () => {
       anulat = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [...deps, versiune, manual]);
+  }, [...deps, cerere]);
 
-  return { date, eroare, incarcare, reincarca: () => setManual((m) => m + 1) };
+  return { date, eroare, incarcare, actualizatLa, reincarca: () => setCerere((c) => c + 1) };
 }

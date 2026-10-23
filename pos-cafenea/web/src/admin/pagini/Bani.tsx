@@ -37,8 +37,8 @@ export function PaginaBani(_: PropsPagina) {
   const [cont, setCont] = useState('');
   const [formular, setFormular] = useState(false);
   const p = parametriInterval(perioada);
-  const rezumat = useDate(() => api.get<Rezumat[]>('/api/bani/rezumat', p), [p.de, p.pana]);
-  const miscari = useDate(() => api.get<MiscareBani[]>('/api/bani/miscari', { ...p, locatie_id: locatie, cont }), [p.de, p.pana, locatie, cont]);
+  const rezumat = useDate(() => api.get<Rezumat[]>('/api/bani/rezumat', p), [p.de, p.pana], { minimMs: 15_000 });
+  const miscari = useDate(() => api.get<MiscareBani[]>('/api/bani/miscari', { ...p, locatie_id: locatie, cont }), [p.de, p.pana, locatie, cont], { minimMs: 15_000, locatie });
 
   return (
     <>

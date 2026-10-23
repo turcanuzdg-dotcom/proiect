@@ -65,6 +65,7 @@ export function PaginaTure({ sub, navigheaza }: PropsPagina) {
   const r = useDate(
     () => api.get<Tura[]>('/api/ture', { locatie_id: locatie, doar_discrepante: doarDiscrepante || undefined, neverificate: neverificate || undefined }),
     [locatie, doarDiscrepante, neverificate],
+    { locatie },
   );
   const deschisa = sub[0] ?? null;
 

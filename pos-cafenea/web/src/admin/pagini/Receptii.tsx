@@ -2,6 +2,7 @@ import { useState, type FormEvent } from 'react';
 import { rotunjeste } from '@cafenea/shared';
 import { Modal } from '../../comun/Modal';
 import { formatCantitate, formatData, formatDataOra, formatLei, formatNumar, ziLocala } from '../../comun/format';
+import { uuid } from '../../comun/uuid';
 import type { PropsPagina } from '../App';
 import { api, mesajEroare } from '../api';
 import { CapPagina, FiltruLocatie, Rand, Stare } from '../componente';
@@ -24,7 +25,7 @@ export function PaginaReceptii(_: PropsPagina) {
   const [locatie, setLocatie] = useState<number | null>(null);
   const [formular, setFormular] = useState(false);
   const [detaliu, setDetaliu] = useState<number | null>(null);
-  const r = useDate(() => api.get<Receptie[]>('/api/receptii', { locatie_id: locatie }), [locatie]);
+  const r = useDate(() => api.get<Receptie[]>('/api/receptii', { locatie_id: locatie }), [locatie], { locatie });
 
   return (
     <>
@@ -110,6 +111,9 @@ function FormularReceptie({ onInchide, onSalvat }: { onInchide: () => void; onSa
   const [linii, setLinii] = useState<LinieForm[]>([linieNoua()]);
   const [eroare, setEroare] = useState<string | null>(null);
   const [lucreaza, setLucreaza] = useState(false);
+  // Cheia de idempotență, generată la deschiderea formularului: dacă răspunsul se pierde și se apasă
+  // din nou „Salvează”, serverul întoarce recepția deja creată, fără să dubleze stocul.
+  const [cheie] = useState(uuid);
 
   const lista = (articole.date ?? []).filter((a) => a.activ);
   const art = (id: string) => lista.find((a) => String(a.id) === id);
@@ -128,14 +132,15 @@ function FormularReceptie({ onInchide, onSalvat }: { onInchide: () => void; onSa
     }
     setLucreaza(true);
     try {
-      const r = await api.post<{ id: number; total: number }>('/api/receptii', {
+      const r = await api.post<{ id: number; total: number; repetata: boolean }>('/api/receptii', {
         locatie_id: locatie,
         furnizor,
         nr_factura: nr,
         data,
         linii: valide.map((l) => ({ articol_id: Number(l.articol_id), cantitate: numar(l.cantitate), cost_unitar: numar(l.cost_unitar) })),
+        cheie,
       });
-      arata(`Recepția a fost înregistrată (${formatLei(r.total)})`);
+      arata(r.repetata ? `Recepția fusese deja înregistrată la salvarea anterioară (${formatLei(r.total)})` : `Recepția a fost înregistrată (${formatLei(r.total)})`);
       onSalvat();
     } catch (err) {
       setEroare(mesajEroare(err));
