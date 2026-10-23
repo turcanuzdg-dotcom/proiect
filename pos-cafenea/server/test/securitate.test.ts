@@ -11,6 +11,17 @@ afterAll(async () => {
   await t.db.close();
 });
 
+/** Barista → admin din panou; așteaptă rândul din jurnal (scris de onResponse, după răspuns). */
+async function promoveaza(id: number, nume: string, login: string) {
+  await t.admin.put(`/api/utilizatori/${id}`, { nume, rol: 'admin', login, parola: `parola-${login}-lunga`, pin: null, locatie_id: null, activ: true });
+  for (let i = 0; i < 100; i++) {
+    const r = await t.db.query(`SELECT 1 FROM jurnal_audit WHERE cale = $1 AND date->'corp'->>'rol' = 'admin'`, [`/api/utilizatori/${id}`]);
+    if (r.length) return;
+    await new Promise((x) => setTimeout(x, 20));
+  }
+  throw new Error('Promovarea nu a apărut în jurnal');
+}
+
 describe('acces', () => {
   it('tokenul nu mai e acceptat în URL; fluxul de notificări merge cu bilet', async () => {
     expect((await t.app.inject({ method: 'GET', url: `/api/locatii?token=${t.tokenAdmin}` })).statusCode).toBe(401);
@@ -73,10 +84,30 @@ describe('acces', () => {
       evTuraDeschisa(tura, id),
       evComanda(tura, id, [{ produs_id: esp.id, cantitate: 1, pret_unitar: esp.pret, modificatori: [] }], 'numerar', { primit: esp.pret }),
     ];
-    await t.admin.put(`/api/utilizatori/${id}`, { nume: 'Barista promovată', rol: 'admin', login: 'promovata', parola: 'parola-promovatei', pin: null, locatie_id: null, activ: true });
+    await promoveaza(id, 'Barista promovată', 'promovata');
     const r = await t.tableta.sync(evenimente);
     expect(r.cu_eroare).toEqual([]);
     expect(r.acceptate).toHaveLength(2);
+  });
+
+  it('o operație cu data de după promovarea la administrator nu se mai acceptă fără PIN', async () => {
+    const { id } = await t.admin.post('/api/utilizatori', { nume: 'Promovată ieri', rol: 'barista', pin: '1470', locatie_id: null, activ: true });
+    await promoveaza(id, 'Promovată ieri', 'promovata-ieri');
+    const dupa = new Date(Date.now() + 3_600_000).toISOString();
+    const r = await t.tableta.sync([evTuraDeschisa(randomUUID(), id, 500, dupa)]);
+    expect(r.cu_eroare).toHaveLength(1);
+    expect(r.cu_eroare[0].eroare).toMatch(/Promovată ieri nu are PIN de tabletă/);
+    await t.admin.post(`/api/sync/erori/${r.cu_eroare[0].id}/rezolvat`);
+  });
+
+  it('un administrator care n-a fost niciodată barista nu poate fi declarat de o tabletă', async () => {
+    const { id } = await t.admin.post('/api/utilizatori', { nume: 'Admin de la început', rol: 'admin', login: 'admin-inceput', parola: 'parola-adminului-nou', locatie_id: null, activ: true });
+    // Nici cu o dată din trecut (n-a existat nicio promovare), nici online, la inventariere.
+    const r = await t.tableta.sync([evTuraDeschisa(randomUUID(), id, 500, '2020-01-01T08:00:00Z')]);
+    expect(r.cu_eroare).toHaveLength(1);
+    expect(r.cu_eroare[0].eroare).toMatch(/Admin de la început nu are PIN de tabletă/);
+    await t.admin.post(`/api/sync/erori/${r.cu_eroare[0].id}/rezolvat`);
+    await expect(t.tableta.post('/api/pos/inventarieri', { utilizator_id: id })).rejects.toThrow(/nu are PIN de tabletă/);
   });
 
   it('un utilizator fără PIN de tabletă: eroarea spune asta și se repară dându-i un PIN', async () => {

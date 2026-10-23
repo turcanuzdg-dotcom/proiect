@@ -372,10 +372,14 @@ export async function activeazaDispozitiv(db: Db, id: number, activ: boolean): P
  * Utilizatorul pe care îl poate declara o tabletă: are PIN și lucrează în locația ei (sau în
  * toate), exact regula după care catalogul îi trimite tabletei lista. Un utilizator dezactivat
  * între timp rămâne valabil, ca vânzările făcute offline înainte de dezactivare să se aplice.
- * La fel un administrator: rolul de admin șterge PIN-ul (salveazaUtilizator, migrarea 004), dar o
- * barista promovată poate avea încă vânzări offline în coada tabletei, făcute cu PIN-ul de dinainte.
+ *
+ * Un administrator nu are PIN (rolul de admin îl șterge: salveazaUtilizator, migrarea 004), deci nu
+ * apare pe tablete. Singurul caz legitim e o barista promovată care are încă operații offline în
+ * coada tabletei, făcute cu PIN-ul de dinainte: se acceptă doar evenimentele cu `moment` anterior
+ * ultimei promovări barista → admin din jurnalul de audit. Altfel (sau fără `moment`, la cererile
+ * online) e eroarea „nu are PIN”, iar adminul decide prin „Reaplică”.
  */
-export async function utilizatorPermisTabletei(db: Db, utilizatorId: number, locatieId: number): Promise<void> {
+export async function utilizatorPermisTabletei(db: Db, utilizatorId: number, locatieId: number, moment?: string): Promise<void> {
   const u = (
     await db.query<{ nume: string; rol: string; are_pin: boolean; locatie_id: number | null }>(
       'SELECT nume, rol, pin_hash IS NOT NULL AS are_pin, locatie_id FROM utilizatori WHERE id = $1',
@@ -384,9 +388,21 @@ export async function utilizatorPermisTabletei(db: Db, utilizatorId: number, loc
   )[0];
   if (!u) throw new EroareUtilizator(`Utilizatorul ${utilizatorId} nu există`);
   if (u.locatie_id != null && u.locatie_id !== locatieId) throw new EroareUtilizator(`Utilizatorul ${u.nume} nu lucrează în această locație`);
-  if (!u.are_pin && u.rol !== 'admin') {
+  if (!u.are_pin && !(u.rol === 'admin' && moment && (await promovatDupa(db, utilizatorId, moment)))) {
     throw new EroareUtilizator(`Utilizatorul ${u.nume} nu are PIN de tabletă; dați-i un PIN în Setări → Utilizatori, apoi „Reaplică”`);
   }
+}
+
+/** Utilizatorul a fost trecut din barista în admin (din panou) după `moment`? */
+async function promovatDupa(db: Db, utilizatorId: number, moment: string): Promise<boolean> {
+  const r = await db.query<{ promovat: boolean }>(
+    `SELECT $2::timestamptz < MAX(la) AS promovat
+       FROM jurnal_audit
+      WHERE actiune = 'PUT /api/utilizatori/:id' AND cale = $1 AND stare_http = 200
+        AND date->'inainte'->>'rol' = 'barista' AND date->'corp'->>'rol' = 'admin'`,
+    [`/api/utilizatori/${utilizatorId}`, moment],
+  );
+  return r[0]?.promovat === true;
 }
 
 // ---- Utilizatori ----

@@ -127,6 +127,45 @@ describe('jurnalul de audit', () => {
     expect(scrise.filter((e) => e.actiune === 'login.esuat')).toEqual([expect.objectContaining({ adresa, date: { login: 'admin' } })]);
   });
 
+  it('la oprirea aplicației, loginurile inventate numărate și încă nescrise ajung în jurnal', async () => {
+    const app = await construiesteApp({ db: t.db });
+    const adresa = '198.51.100.77';
+    const incearca = (login: string) => app.inject({ method: 'POST', url: '/api/auth/login', payload: { login, parola: 'nu-conteaza' }, remoteAddress: adresa });
+    for (const login of ['inchidere-1', 'inchidere-2', 'inchidere-3']) expect((await incearca(login)).statusCode).toBe(401);
+    await ultimulId();
+    const randuri = () => t.db.query<Intrare>(`SELECT * FROM jurnal_audit WHERE actiune = 'login.esuat.necunoscut' AND adresa = $1 ORDER BY id`, [adresa]);
+    expect((await randuri()).map((r) => r.date.incercari)).toEqual([1]);
+    await app.close();
+    const dupa = await randuri();
+    expect(dupa.map((r) => r.date.incercari)).toEqual([1, 2]);
+    expect(dupa[1].date.exemple).toEqual(['inchidere-2', 'inchidere-3']);
+  });
+
+  it('un login greșit nu așteaptă scrierea în jurnal (cont real și cont inexistent răspund la fel de repede)', async () => {
+    // Scrierile în jurnal durează mult: dacă loginul le-ar aștepta, un cont real (rând la fiecare eșec)
+    // ar răspunde vizibil mai încet decât unul inexistent (de obicei fără rând).
+    const lent: Db = {
+      ...t.db,
+      query: async (sql, params) => {
+        if (sql.includes('INSERT INTO jurnal_audit')) await pauza(1_000);
+        return t.db.query(sql, params);
+      },
+    };
+    const app = await construiesteApp({ db: lent });
+    try {
+      for (const login of ['admin', 'nimeni-lent']) {
+        const inceput = Date.now();
+        const r = await app.inject({ method: 'POST', url: '/api/auth/login', payload: { login, parola: 'gresita-lent' }, remoteAddress: '198.51.100.78' });
+        expect(r.statusCode).toBe(401);
+        expect(Date.now() - inceput).toBeLessThan(700);
+      }
+      await jurnal('login.esuat', 0, 1);
+    } finally {
+      await app.close();
+      await pauza(1_100);
+    }
+  });
+
   it('o setare suprascrisă păstrează valoarea de dinainte', async () => {
     await t.admin.put('/api/setari/tolerante', { numerar: 5, card: 0.5, doze: 2 });
     const marca = await ultimulId();

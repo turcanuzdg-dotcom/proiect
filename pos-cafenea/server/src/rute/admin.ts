@@ -80,6 +80,11 @@ export async function ruteAdmin(app: FastifyInstance, db: Db, doarAdmin: onReque
   app.addHook('onResponse', hookAudit(db));
 
   const loginNecunoscut = new JurnalLoginNecunoscut();
+  // La oprire (app.close() după SIGTERM), încercările numărate și încă nescrise ajung în jurnal
+  // înainte să se închidă baza (index.ts închide întâi aplicația, apoi baza).
+  app.addHook('onClose', async () => {
+    for (const i of loginNecunoscut.vida()) await auditeaza(db, i, app.log);
+  });
   app.post('/api/auth/login', async (req) => {
     const { login, parola } = z.object({ login: z.string().min(1).max(60), parola: z.string().min(1).max(200) }).parse(req.body);
     try {
@@ -91,10 +96,13 @@ export async function ruteAdmin(app: FastifyInstance, db: Db, doarAdmin: onReque
       // Un cont real: un rând pentru fiecare eșec (limitate de pauzele pe cont și pe adresă).
       // Un login inexistent: doar numărat, cel mult un rând pe minut pentru fiecare adresă (vezi
       // JurnalLoginNecunoscut), ca un val de nume inventate să nu umple tabelul nemodificabil.
+      // Scrierea nu se așteaptă: un cont real (cu rând) și unul inexistent (de obicei fără) trebuie să
+      // primească 401 la fel de repede, altfel diferența de timp arată ce conturi există (vezi SARE_FALSA).
+      // auditeaza nu aruncă niciodată (își raportează singură erorile).
       if (e instanceof acces.EroareLogin && !e.contExista) {
-        for (const i of loginNecunoscut.esec(req.ip, login)) await auditeaza(db, i, req.log);
+        for (const i of loginNecunoscut.esec(req.ip, login)) void auditeaza(db, i, req.log);
       } else if (e instanceof EroareUtilizator && e.status !== 429) {
-        await auditeaza(db, { adresa: req.ip, actiune: 'login.esuat', cale: '/api/auth/login', stare_http: e.status, date: { login } }, req.log);
+        void auditeaza(db, { adresa: req.ip, actiune: 'login.esuat', cale: '/api/auth/login', stare_http: e.status, date: { login } }, req.log);
       }
       throw e;
     }

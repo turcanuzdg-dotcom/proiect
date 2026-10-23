@@ -79,6 +79,7 @@ const copie = (h: Hooks): Hooks => ({ onRequest: [...h.onRequest], preHandler: [
 export class RuterSim {
   private rute: Ruta[] = [];
   private inregistrari: Promise<unknown>[] = [];
+  private laInchidere: (() => unknown)[] = [];
 
   /** Instanța „Fastify” pe care o primesc rutePOS și ruteAdmin. */
   instanta(hooks: Hooks = { onRequest: [], preHandler: [], onResponse: [] }): FastifyInstance {
@@ -95,7 +96,9 @@ export class RuterSim {
       put: adauga('PUT'),
       delete: adauga('DELETE'),
       // Ca în Fastify, un hook adăugat într-un plugin se aplică doar rutelor din el (și din copiii lui).
-      addHook: (etapa: Etapa, fn: Handler) => {
+      addHook: (etapa: Etapa | 'onClose', fn: Handler) => {
+        // onClose ține de aplicație, nu de rute: rulează o singură dată, la inchide().
+        if (etapa === 'onClose') return void this.laInchidere.push(fn as unknown as () => unknown);
         if (!(etapa in hooks)) throw new Error(`Simularea nu cunoaște hook-ul ${etapa}`);
         hooks[etapa].push(fn);
       },
@@ -113,6 +116,18 @@ export class RuterSim {
     for (let n = 0; n !== this.inregistrari.length; ) {
       n = this.inregistrari.length;
       await Promise.all(this.inregistrari);
+    }
+  }
+
+  /** Ca app.close() din Fastify: rulează hook-urile onClose (de ex. scrierea loginurilor eșuate numărate). */
+  async inchide() {
+    const h = this.laInchidere.splice(0);
+    for (const fn of h) {
+      try {
+        await fn();
+      } catch (e) {
+        console.error(e);
+      }
     }
   }
 

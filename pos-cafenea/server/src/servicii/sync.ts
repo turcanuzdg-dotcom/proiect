@@ -136,7 +136,7 @@ export async function proceseazaSync(db: Db, ctx: ContextPOS, evenimente: unknow
     }
     try {
       const tipuri = await db.tx(async (t) => {
-        await utilizatorPermisTabletei(t, ev.date.utilizator_id, ctx.locatie_id);
+        await utilizatorPermisTabletei(t, ev.date.utilizator_id, ctx.locatie_id, ev.la);
         const rez = await aplica(t, ctx, ev);
         await t.query(
           `INSERT INTO evenimente_sync (id, dispozitiv_id, locatie_id, tip, la, stare, payload) VALUES ($1, $2, $3, $4, $5, 'aplicat', $6)`,
@@ -213,7 +213,7 @@ export async function reaplicaEveniment(db: Db, evId: string) {
       // Două apăsări pe „Reaplică” în același timp: a doua așteaptă și găsește evenimentul aplicat.
       const stare = (await t.query<{ stare: string }>('SELECT stare FROM evenimente_sync WHERE id = $1 FOR UPDATE', [evId]))[0];
       if (stare?.stare !== 'eroare') throw new EroareUtilizator('Evenimentul a fost deja aplicat sau rezolvat');
-      await utilizatorPermisTabletei(t, ev.date.utilizator_id, ctx.locatie_id);
+      await utilizatorPermisTabletei(t, ev.date.utilizator_id, ctx.locatie_id, ev.la);
       await aplica(t, ctx, ev);
       await t.query(`UPDATE evenimente_sync SET stare = 'aplicat', eroare = NULL WHERE id = $1`, [evId]);
     });

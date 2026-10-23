@@ -133,7 +133,9 @@ Pentru o bază existentă, creată deja de un singur rol: `ALTER DATABASE` / `RE
   se suprascrie ceva: prețuri, rețete, toleranțe, terminale, roluri), autentificările și operațiunile
   tabletelor din afara cozii (terminal, inventariere, asociere). Nu conține parole, PIN-uri sau coduri.
   Eșecurile de login pe conturi reale se scriu câte unul; cele pe nume inexistente doar se numără, cel
-  mult un rând pe minut pentru fiecare adresă, ca un val de nume inventate să nu umple tabelul. La
+  mult un rând pe minut pentru fiecare adresă, ca un val de nume inventate să nu umple tabelul (ce s-a
+  numărat și nu s-a scris încă ajunge în jurnal la oprirea serverului). Răspunsul la un login greșit nu așteaptă
+  scrierea în jurnal, ca timpul lui să nu arate dacă un cont există. La
   inventar se păstrează doar liniile schimbate, cu valorile de dinainte, oricât de lungă e lista.
 - Registrele `miscari_stoc`, `miscari_bani` și `jurnal_audit` nu se pot modifica, șterge sau goli
   nici direct în bază (declanșatori). Jurnalul crește cu fiecare modificare; păstrarea lui pe termen

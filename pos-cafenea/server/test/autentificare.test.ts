@@ -370,4 +370,20 @@ describe('jurnalul loginurilor inexistente (JurnalLoginNecunoscut)', () => {
     const total = r.reduce((s, x) => s + ((x.date as { incercari: number }).incercari ?? 0), 0);
     expect(total).toBe(1_001 - JurnalLoginNecunoscut.MAX_RANDURI_PE_MINUT);
   });
+
+  it('vida (la oprire): tot ce e nescris, inclusiv rândul comun, fără plafonul pe minut', () => {
+    const j = new JurnalLoginNecunoscut();
+    const t0 = 40_000_000;
+    let scrise = 0;
+    // 300 de adrese, câte două încercări: primele MAX_RANDURI_PE_MINUT se scriu imediat, restul așteaptă.
+    for (let k = 0; k < 2; k++) for (let i = 0; i < 300; i++) scrise += j.esec(`198.18.${i >> 8}.${i & 255}`, `v${k}`, t0 + k * 1_000 + i).length;
+    expect(scrise).toBe(JurnalLoginNecunoscut.MAX_RANDURI_PE_MINUT);
+    const ramase = j.vida(t0 + 5_000);
+    expect(ramase.length).toBeGreaterThan(JurnalLoginNecunoscut.MAX_RANDURI_PE_MINUT);
+    expect(ramase.some((r) => r.adresa === null)).toBe(true);
+    const total = ramase.reduce((s, x) => s + (x.date as { incercari: number }).incercari, 0);
+    expect(total + scrise).toBe(600);
+    // A doua golire nu mai are nimic.
+    expect(j.vida(t0 + 6_000)).toEqual([]);
+  });
 });

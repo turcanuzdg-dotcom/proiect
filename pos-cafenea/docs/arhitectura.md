@@ -56,7 +56,9 @@ flowchart LR
 - **Costul mediu ponderat pe toată rețeaua**, recalculat la fiecare recepție.
 - **Tableta e autentificată, nu barista.** Adminul creează tableta și primește un cod de asociere
   (o singură folosire); tableta primește un token. PIN-ul baristei se verifică local (ca să meargă
-  offline) și servește la atribuirea vânzărilor, nu ca protecție puternică.
+  offline) și servește la atribuirea vânzărilor, nu ca protecție puternică. Serverul acceptă doar
+  utilizatori cu PIN din locația tabletei; un administrator (fără PIN) doar pentru operațiile făcute
+  înainte de promovarea lui din barista, după jurnalul de audit.
 - **Același cod de bază de date peste tot**: PostgreSQL în producție, PGlite în dezvoltare și teste.
   Toate testele trec pe amândouă.
 - **Evenimentele care ajung târziu nu strică numărările deja făcute.** O vânzare offline sincronizată

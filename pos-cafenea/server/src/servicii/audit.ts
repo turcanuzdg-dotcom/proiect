@@ -119,6 +119,22 @@ export class JurnalLoginNecunoscut {
     return randuri;
   }
 
+  /**
+   * La oprirea procesului (actualizare, SIGTERM): tot ce s-a numărat și nu s-a scris încă, inclusiv
+   * rândul comun, fără limita pe minut. Altfel s-ar pierde tocmai ultimul minut al unui atac.
+   */
+  vida(acum = Date.now()): IntrareAudit[] {
+    const randuri: IntrareAudit[] = [];
+    for (const c of this.grupuri.values()) {
+      if (c.incercari === 0) continue;
+      randuri.push(this.rand(c));
+      c.incercari = 0;
+      c.exemple = [];
+      c.scris = acum;
+    }
+    return randuri;
+  }
+
   /** Câte grupuri ține minte (pentru teste). */
   marime() {
     return this.grupuri.size;
@@ -133,16 +149,20 @@ export class JurnalLoginNecunoscut {
       return;
     }
     this.minut.randuri += 1;
-    randuri.push({
+    randuri.push(this.rand(c));
+    c.incercari = 0;
+    c.exemple = [];
+    c.scris = acum;
+  }
+
+  private rand(c: ContorLogin): IntrareAudit {
+    return {
       adresa: c.adresa,
       actiune: 'login.esuat.necunoscut',
       cale: '/api/auth/login',
       stare_http: 401,
       date: { incercari: c.incercari, exemple: c.exemple, de_la: new Date(c.de_la).toISOString() },
-    });
-    c.incercari = 0;
-    c.exemple = [];
-    c.scris = acum;
+    };
   }
 
   private adaugaLaComun(c: ContorLogin, acum: number) {

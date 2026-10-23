@@ -153,6 +153,19 @@ describe('oprirea serverului', () => {
   });
 });
 
+/**
+ * Adresa ultimului rând `login.esuat`. Loginul nu așteaptă scrierea în jurnal (ca timpul de răspuns să
+ * nu arate ce conturi există), deci se așteaptă până apare rândul cu adresa așteptată.
+ */
+async function adresaEsec(asteptata: string): Promise<string | undefined> {
+  let adresa: string | undefined;
+  for (let i = 0; i < 100 && adresa !== asteptata; i++) {
+    if (i) await new Promise((r) => setTimeout(r, 20));
+    adresa = (await t.db.query<{ adresa: string }>(`SELECT adresa FROM jurnal_audit WHERE actiune = 'login.esuat' ORDER BY id DESC LIMIT 1`))[0]?.adresa;
+  }
+  return adresa;
+}
+
 describe('adresa clientului și proxy-ul', () => {
   it('un client care ajunge direct la Node nu-și poate alege adresa prin X-Forwarded-For', async () => {
     for (let i = 0; i < 5; i++) {
@@ -161,15 +174,13 @@ describe('adresa clientului și proxy-ul', () => {
     }
     const r = await login('gresita-xff', { remoteAddress: '198.51.100.7', headers: { 'x-forwarded-for': '10.77.0.99' } });
     expect(r.statusCode).toBe(429);
-    const [ultima] = await t.db.query<{ adresa: string }>(`SELECT adresa FROM jurnal_audit WHERE actiune = 'login.esuat' ORDER BY id DESC LIMIT 1`);
-    expect(ultima.adresa).toBe('198.51.100.7');
+    expect(await adresaEsec('198.51.100.7')).toBe('198.51.100.7');
   });
 
   it('prin proxy-ul local (Caddy pe aceeași mașină), adresa vine din X-Forwarded-For', async () => {
     const r = await login('gresita-proxy', { remoteAddress: '127.0.0.1', headers: { 'x-forwarded-for': '203.0.113.44' } });
     expect(r.statusCode).toBe(401);
-    const [ultima] = await t.db.query<{ adresa: string }>(`SELECT adresa FROM jurnal_audit WHERE actiune = 'login.esuat' ORDER BY id DESC LIMIT 1`);
-    expect(ultima.adresa).toBe('203.0.113.44');
+    expect(await adresaEsec('203.0.113.44')).toBe('203.0.113.44');
   });
 
   it('adresele IPv6 din același /64 se numără împreună', async () => {
