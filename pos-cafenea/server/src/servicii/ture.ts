@@ -18,7 +18,10 @@ import { citesteTolerante } from './setari';
  *
  * Ordinea, ca să nu existe blocaj circular: casa se ia prima în tranzacție, înaintea oricărui rând din
  * `ture` (deschiderea, închiderea, vânzarea, anularea, plata mărunță, operațiunile de casă din panou);
- * stocul se ia după ea. Finalizarea inventarierii, singura care ține stocul exclusiv, nu atinge nici casa,
+ * stocul se ia după ea. Singura excepție e rândul tabletei din `dispozitive`, pe care sincronizarea îl
+ * ia înaintea casei (verificaOra în sync.ts), dar doar FOR NO KEY UPDATE: el nu se ciocnește cu KEY SHARE
+ * din INSERT-urile cu cheie străină spre tabletă (ture, comenzi, evenimente_sync) ale unei reaplicări
+ * care ține casa, iar nicio altă tranzacție care ține casa nu ia acest rând în mod exclusiv. Finalizarea inventarierii, singura care ține stocul exclusiv, nu atinge nici casa,
  * nici turele; recepția ia stocul înaintea rândurilor din `articole`. O tranzacție care ține deja o cheie
  * o poate cere din nou, în orice mod, fără să se aștepte pe sine.
  */
@@ -123,7 +126,8 @@ export async function deschideTura(db: Db, ctx: ContextPOS, la: string, d: DateT
   if (existenta) {
     await db.query(
       `UPDATE ture SET utilizator_id = $2, deschisa_la = LEAST(deschisa_la, $3::timestamptz), fond_initial = $4, scriptic_fond = $5,
-              creata_automat = false, are_discrepante = are_discrepante OR $6
+              creata_automat = false, are_discrepante = are_discrepante OR $6,
+              modificata_dupa_verificare = ${MOMENT_MODIFICARE}
         WHERE id = $1`,
       [d.tura_id, d.utilizator_id, la, fond, scriptic, discrepanta],
     );
@@ -190,6 +194,15 @@ export async function corecteazaNumarariUlterioare(db: Db, locatieId: number, la
   await reevalueazaDiscrepante(db, n.id);
 }
 
+/**
+ * Momentul unei modificări pe o tură deja verificată. clock_timestamp(), nu now(): now() e începutul
+ * tranzacției, care poate preceda verificarea adminului validată între timp (READ COMMITTED: UPDATE-ul
+ * vede deja verificata_la). Modificarea ar părea atunci făcută înainte de verificare și tura n-ar mai
+ * ieși la verificare.
+ */
+const MOMENT_MODIFICARE = `CASE WHEN verificata_la IS NOT NULL THEN GREATEST(clock_timestamp(), verificata_la + interval '1 microsecond')
+            ELSE modificata_dupa_verificare END`;
+
 /** Recalculează semnalarea discrepanțelor din valorile declarate și scriptice ale turei. */
 export async function reevalueazaDiscrepante(db: Db, turaId: string): Promise<void> {
   const t = (await db.query<any>('SELECT * FROM ture WHERE id = $1', [turaId]))[0];
@@ -209,7 +222,7 @@ export async function reevalueazaDiscrepante(db: Db, turaId: string): Promise<vo
   // O tură deja verificată ale cărei cifre se schimbă iese din nou la verificare (panou, filtrul „neverificate”).
   await db.query(
     `UPDATE ture SET are_discrepante = $2,
-            modificata_dupa_verificare = CASE WHEN verificata_la IS NOT NULL THEN now() ELSE modificata_dupa_verificare END
+            modificata_dupa_verificare = ${MOMENT_MODIFICARE}
       WHERE id = $1`,
     [turaId, d],
   );

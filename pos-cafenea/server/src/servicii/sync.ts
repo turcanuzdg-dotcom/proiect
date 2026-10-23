@@ -107,7 +107,10 @@ async function verificaOra(db: Db, ctx: ContextPOS, ev: EvenimentPOS): Promise<b
   if (!ctx.dispozitiv_id) return false;
   const d = (
     await db.query<{ creat_la: string | Date; ultimul_la: string | Date | null }>(
-      'SELECT creat_la, ultimul_la FROM dispozitive WHERE id = $1 FOR UPDATE',
+      // FOR NO KEY UPDATE, nu FOR UPDATE: nu intră în conflict cu blocarea KEY SHARE pe care o ia orice
+      // INSERT cu cheie străină spre tabletă (ture, comenzi, evenimente_sync). O reaplicare din panou care
+      // ține casa și inserează pentru această tabletă nu se poate astfel bloca circular cu sincronizarea ei.
+      'SELECT creat_la, ultimul_la FROM dispozitive WHERE id = $1 FOR NO KEY UPDATE',
       [ctx.dispozitiv_id],
     )
   )[0];
@@ -254,16 +257,38 @@ async function salveazaEroare(db: Db, ctx: ContextPOS, evId: string, tip: string
 const COLOANE_EROARE = `e.id, e.dispozitiv_id, e.locatie_id, e.tip, e.la, e.primit_la, e.stare, e.eroare,
        (e.payload->>'trunchiat') IS NOT DISTINCT FROM 'true' AS trunchiat, d.nume AS dispozitiv, l.nume AS locatie`;
 
+/** Câte erori arată lista o dată; restul apar pe măsură ce primele sunt reaplicate sau rezolvate. */
+export const LIMITA_LISTA_ERORI = 200;
+
 /**
  * Lista erorilor, fără conținutul evenimentelor (îl dă detaliuEroareSync), în ordinea în care au fost
  * făcute pe tabletă: „Reaplică” de sus în jos reface ordinea reală (deschiderea turei înaintea vânzărilor
  * și a închiderii), deci o diferență de casă nu se numără de două ori.
+ * Fiecare rând poartă și `total`, numărul tuturor erorilor nerezolvate: peste limită, pagina spune
+ * că lista e trunchiată (de ex. o zi întreagă de vânzări respinse pentru ceasul unei tablete).
  */
 export function listaEroriSync(db: Db) {
   return db.query(
-    `SELECT ${COLOANE_EROARE} FROM evenimente_sync e
+    `SELECT ${COLOANE_EROARE}, COUNT(*) OVER ()::int AS total FROM evenimente_sync e
        LEFT JOIN dispozitive d ON d.id = e.dispozitiv_id LEFT JOIN locatii l ON l.id = e.locatie_id
-      WHERE e.stare = 'eroare' ORDER BY e.la ASC NULLS LAST, e.primit_la ASC LIMIT 200`,
+      WHERE e.stare = 'eroare' ORDER BY e.la ASC NULLS LAST, e.primit_la ASC LIMIT ${LIMITA_LISTA_ERORI}`,
+  );
+}
+
+/**
+ * Operațiunile aplicate din ultimele 7 zile cu ora tabletei dată înapoi (alerta din panou): tableta,
+ * momentul declarat și cel al primirii, tura lor, ca adminul să verifice exact turele atinse.
+ */
+export function listaOreSuspecte(db: Db) {
+  return db.query(
+    `SELECT e.id, e.tip, e.la, e.primit_la, d.nume AS dispozitiv, l.nume AS locatie,
+            t.id AS tura_id, t.deschisa_la AS tura_deschisa_la, u.nume AS barista
+       FROM evenimente_sync e
+       LEFT JOIN dispozitive d ON d.id = e.dispozitiv_id LEFT JOIN locatii l ON l.id = e.locatie_id
+       LEFT JOIN ture t ON t.id::text = e.payload->'date'->>'tura_id'
+       LEFT JOIN utilizatori u ON u.id = t.utilizator_id
+      WHERE e.ora_suspecta AND e.primit_la >= now() - interval '7 days'
+      ORDER BY e.primit_la DESC LIMIT 200`,
   );
 }
 

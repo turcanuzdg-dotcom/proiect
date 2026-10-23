@@ -7,7 +7,7 @@ import { CapPagina, FiltruLocatie, Rand, Stare, Taburi } from '../componente';
 import { useAdmin, useDate } from '../context';
 import type { Locatie } from '../tipuri';
 
-type Tab = 'locatii' | 'utilizatori' | 'tablete' | 'fiscal' | 'tolerante' | 'erori' | 'jurnal';
+type Tab = 'locatii' | 'utilizatori' | 'tablete' | 'fiscal' | 'tolerante' | 'erori' | 'ore' | 'jurnal';
 const TABURI: { cheie: Tab; titlu: string }[] = [
   { cheie: 'locatii', titlu: 'Locații' },
   { cheie: 'utilizatori', titlu: 'Utilizatori' },
@@ -15,6 +15,7 @@ const TABURI: { cheie: Tab; titlu: string }[] = [
   { cheie: 'fiscal', titlu: 'Terminal fiscal' },
   { cheie: 'tolerante', titlu: 'Toleranțe la închidere' },
   { cheie: 'erori', titlu: 'Erori de sincronizare' },
+  { cheie: 'ore', titlu: 'Ora tabletelor' },
   { cheie: 'jurnal', titlu: 'Jurnal' },
 ];
 
@@ -30,6 +31,7 @@ export function PaginaSetari({ sub, navigheaza }: PropsPagina) {
       {tab === 'fiscal' && <TabFiscal />}
       {tab === 'tolerante' && <TabTolerante />}
       {tab === 'erori' && <TabErori />}
+      {tab === 'ore' && <TabOreSuspecte navigheaza={navigheaza} />}
       {tab === 'jurnal' && <TabJurnal />}
     </>
   );
@@ -663,6 +665,8 @@ interface EroareSync {
   trunchiat: boolean;
   /** Doar în detaliu (GET /api/sync/erori/:id): lista nu aduce conținutul evenimentelor. */
   payload?: { date?: Record<string, unknown> } & Record<string, unknown>;
+  /** Doar în listă: toate erorile nerezolvate (lista arată cel mult 200). */
+  total?: number;
 }
 
 const TIPURI_EVENIMENT: Record<string, string> = {
@@ -707,6 +711,12 @@ function TabErori() {
       <Stare {...r} gol={(d) => d.length === 0} mesajGol="Nicio eroare de sincronizare. Toate operațiunile de pe tablete au fost aplicate.">
         {(lista) => (
           <div className="tabel-container">
+            {(lista[0]?.total ?? 0) > lista.length && (
+              <div className="alerta avertisment">
+                Sunt {lista[0].total} erori nerezolvate; se văd primele {lista.length}, cele mai vechi. Reaplicați-le sau marcați-le
+                rezolvate, iar următoarele apar aici.
+              </div>
+            )}
             <table className="tabel">
               <thead>
                 <tr>
@@ -805,6 +815,69 @@ function RezumatEveniment({ e }: { e: EroareSync }) {
         ))}
       </tbody>
     </table>
+  );
+}
+
+// ---------------- Ora tabletelor ----------------
+
+interface OraSuspecta {
+  id: string;
+  tip: string;
+  la: string;
+  primit_la: string;
+  dispozitiv: string | null;
+  locatie: string | null;
+  tura_id: string | null;
+  tura_deschisa_la: string | null;
+  barista: string | null;
+}
+
+/** Operațiunile aplicate cu ora tabletei dată înapoi: tura fiecăreia, ca adminul să o verifice. */
+function TabOreSuspecte({ navigheaza }: { navigheaza: (cale: string) => void }) {
+  const r = useDate(() => api.get<OraSuspecta[]>('/api/sync/ore-suspecte'), []);
+  return (
+    <>
+      <p className="slab mic" style={{ maxWidth: 720 }}>
+        Operațiunile din ultimele 7 zile făcute pe o tabletă al cărei ceas a fost dat înapoi (ora lor e mai veche decât a operațiunilor
+        trimise anterior de aceeași tabletă, sau tura e deschisă înaintea ultimei închideri de pe locație). Au fost aplicate; banii lor au
+        intrat cel mai devreme la deschiderea turei. Verificați „Data și ora automate” pe tabletă și cifrele turelor de mai jos.
+      </p>
+      <Stare {...r} gol={(d) => d.length === 0} mesajGol="Nicio operațiune cu ora suspectă în ultimele 7 zile.">
+        {(lista) => (
+          <div className="tabel-container">
+            <table className="tabel">
+              <thead>
+                <tr>
+                  <th>Ora de pe tabletă</th>
+                  <th>Tableta</th>
+                  <th>Operațiune</th>
+                  <th>Tura</th>
+                </tr>
+              </thead>
+              <tbody>
+                {lista.map((e) => (
+                  <tr key={e.id} className={e.tura_id ? 'clic' : undefined} onClick={() => e.tura_id && navigheaza(`ture/${e.tura_id}`)}>
+                    <td>
+                      {formatDataOra(e.la)}
+                      <div className="slab mic">primită {formatDataOra(e.primit_la)}</div>
+                    </td>
+                    <td>
+                      {e.dispozitiv ?? '—'}
+                      <div className="slab mic">{e.locatie}</div>
+                    </td>
+                    <td>{TIPURI_EVENIMENT[e.tip] ?? e.tip}</td>
+                    <td>
+                      {e.tura_deschisa_la ? `deschisă ${formatDataOra(e.tura_deschisa_la)}` : '—'}
+                      {e.barista && <div className="slab mic">{e.barista}</div>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Stare>
+    </>
   );
 }
 

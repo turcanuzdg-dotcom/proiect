@@ -6,7 +6,7 @@ import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { adaugaMiscareBani } from '../src/servicii/bani';
 import { finalizeazaInventariere } from '../src/servicii/inventar';
-import { inchideTura } from '../src/servicii/ture';
+import { blocheazaCasa, deschideTura, inchideTura } from '../src/servicii/ture';
 import { inregistreazaComanda } from '../src/servicii/vanzari';
 import { evComanda, evTuraDeschisa, pregateste, tableteVechi } from './ajutor';
 
@@ -86,6 +86,25 @@ describe.skipIf(!URL_TEST)('blocări pe locație (PostgreSQL)', () => {
     expect(tura.dif_numerar).toBe(0);
     expect(tura.are_discrepante).toBe(false);
     expect(await c.sold()).toBe(240);
+  });
+
+  it('o reaplicare din panou care ține casa nu se blochează circular cu sincronizarea aceleiași tablete', async () => {
+    const c = await cafeneaCuTura('Cursa Tabletă');
+    const ctx = { locatie_id: c.loc.id, dispozitiv_id: c.dispozitivId };
+    // Ca reaplicaEveniment: casa luată exclusiv, apoi (după o pauză) o tură nouă inserată pentru această tabletă.
+    const tura = randomUUID();
+    const reaplicare = t.db.tx(async (tx) => {
+      await blocheazaCasa(tx, c.loc.id, true);
+      await asteapta(600);
+      await deschideTura(tx, ctx, acumMinus(5), { tura_id: tura, utilizator_id: c.barista, fond_initial: 540 });
+    });
+    await asteapta(150);
+    // Între timp tableta sincronizează: rândul ei din `dispozitive` e luat înaintea casei.
+    const esp = t.produs('Espresso');
+    const vanzare = evComanda(c.tura, c.barista, [{ produs_id: esp.id, cantitate: 1, pret_unitar: 40, modificatori: [] }], 'numerar', { primit: 40, la: acumMinus(30) });
+    const [, r] = await Promise.all([reaplicare, c.sync([vanzare])]);
+    expect(r.acceptate).toEqual([vanzare.id]);
+    expect(await t.db.query('SELECT 1 FROM ture WHERE id = $1', [tura])).toHaveLength(1);
   });
 
   /** Inventariere pe Centru: laptele numărat acum are cu 250 ml mai puțin (un Latte vândut offline, încă nesincronizat). */

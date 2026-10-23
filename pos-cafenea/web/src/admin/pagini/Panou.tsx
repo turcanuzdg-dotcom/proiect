@@ -13,6 +13,8 @@ interface DatePanou {
   preturi_abatute: number;
   /** Operațiuni din ultimele 7 zile cu ora tabletei dată înapoi. */
   ore_suspecte: number;
+  /** Aceleași operațiuni, pe tablete. */
+  ore_suspecte_tablete: { dispozitiv: string; locatie: string; n: number }[];
   dispozitive: { nume: string; locatie: string; ultima_sincronizare: string | null }[];
 }
 
@@ -125,9 +127,12 @@ export function PaginaPanou({ navigheaza }: PropsPagina) {
                         <strong>
                           {d.ore_suspecte} {d.ore_suspecte === 1 ? 'operațiune' : 'operațiuni'} cu ora tabletei dată înapoi
                         </strong>{' '}
-                        în ultimele 7 zile — ceasul unei tablete a fost schimbat. Verificați „Data și ora automate” pe tabletă și
-                        turele din acele zile.
+                        în ultimele 7 zile ({d.ore_suspecte_tablete.map((x) => `${x.dispozitiv}, ${x.locatie}: ${x.n}`).join('; ')}) — ceasul
+                        unei tablete a fost schimbat. Verificați „Data și ora automate” pe tabletă și turele atinse.
                       </span>
+                      <button type="button" className="buton-secundar" onClick={() => navigheaza('setari/ore')}>
+                        Vezi operațiunile
+                      </button>
                     </div>
                   )}
                   {tableteVechi.map((x) => (

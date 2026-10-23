@@ -50,8 +50,23 @@ export async function panou(db: Db, deAzi: string) {
   const [{ n: preturiAbatute }] = await db.query<{ n: number }>(
     `SELECT COUNT(*)::int AS n FROM comenzi WHERE pret_abatere AND creata_la >= now() - interval '7 days'`,
   );
-  const [{ n: oreSuspecte }] = await db.query<{ n: number }>(
-    `SELECT COUNT(*)::int AS n FROM evenimente_sync WHERE ora_suspecta AND primit_la >= now() - interval '7 days'`,
+  // Pe tablete: alerta spune ce tabletă are ceasul schimbat; lista completă e în Setări → Ora tabletelor.
+  const oreSuspecteTablete = await db.query<{ dispozitiv: string; locatie: string; n: number }>(
+    `SELECT COALESCE(d.nume, '—') AS dispozitiv, COALESCE(l.nume, '—') AS locatie, COUNT(*)::int AS n
+       FROM evenimente_sync e
+       LEFT JOIN dispozitive d ON d.id = e.dispozitiv_id LEFT JOIN locatii l ON l.id = e.locatie_id
+      WHERE e.ora_suspecta AND e.primit_la >= now() - interval '7 days'
+      GROUP BY 1, 2 ORDER BY 3 DESC, 1`,
   );
-  return { vanzari, discrepante, sub_prag: subPrag, erori_sync: eroriSync, dispozitive, preturi_abatute: preturiAbatute, ore_suspecte: oreSuspecte };
+  const oreSuspecte = oreSuspecteTablete.reduce((s, x) => s + x.n, 0);
+  return {
+    vanzari,
+    discrepante,
+    sub_prag: subPrag,
+    erori_sync: eroriSync,
+    dispozitive,
+    preturi_abatute: preturiAbatute,
+    ore_suspecte: oreSuspecte,
+    ore_suspecte_tablete: oreSuspecteTablete,
+  };
 }

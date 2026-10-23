@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { LinieComanda } from '@cafenea/shared';
 import { folosesteClientPOSLink } from '../src/servicii/terminal';
+import { reevalueazaDiscrepante } from '../src/servicii/ture';
 import { evComanda, evTuraDeschisa, pregateste, tableteVechi } from './ajutor';
 
 let t: Awaited<ReturnType<typeof pregateste>>;
@@ -169,6 +170,13 @@ describe('ora tabletei', () => {
     expect(ev.ora_suspecta).toBe(true);
     const panou = await t.admin.get('/api/panou?de_azi=2026-01-01');
     expect(panou.ore_suspecte).toBe(panouInainte.ore_suspecte + 1);
+    // Panoul spune tableta; lista arată operațiunea și tura ei, ca adminul s-o verifice.
+    expect(panou.ore_suspecte_tablete).toContainEqual({ dispozitiv: 'Tabletă Cafenea Ceas', locatie: 'Cafenea Ceas', n: 1 });
+    const suspecte = await t.admin.get('/api/sync/ore-suspecte');
+    expect(suspecte.find((x: any) => x.id === vanzare.id)).toMatchObject({
+      tip: 'comanda', dispozitiv: 'Tabletă Cafenea Ceas', locatie: 'Cafenea Ceas', tura_id: s2, barista: 'Vera Cafenea Ceas',
+    });
+    expect(new Date(suspecte.find((x: any) => x.id === vanzare.id).la).toISOString()).toBe(zi(19, 10));
     expect(await c.soldNumerar()).toBe(500);
   });
 });
@@ -243,6 +251,66 @@ describe('deschiderea turei', () => {
     await t.admin.post(`/api/ture/${tura}/verifica`, { nota: 'reverificat' });
     expect(await neverificate()).toBe(false);
     expect((await t.admin.get(`/api/ture/${tura}`)).modificata_dupa_verif).toBe(false);
+  });
+
+  it('o modificare dintr-o tranzacție începută înaintea verificării iese totuși la verificare', async () => {
+    const c = await cafeneaNoua('Cafenea Cursă Verificare');
+    const tura = randomUUID();
+    expect((await c.sync([evTuraDeschisa(tura, c.unu, 500, zi(16, 7)), inchidere(tura, c.unu, 480, zi(16, 20))])).cu_eroare).toEqual([]);
+    // Tranzacția sincronizării a început (now() fixat), apoi verificarea adminului s-a validat, apoi
+    // UPDATE-ul ei vede verificata_la: momentul modificării trebuie să fie după verificare.
+    await t.db.tx(async (tx) => {
+      await tx.query('SELECT now()');
+      await tx.query(`UPDATE ture SET verificata_la = now() + interval '1 minute' WHERE id = $1`, [tura]);
+      await reevalueazaDiscrepante(tx, tura);
+    });
+    expect((await t.admin.get(`/api/ture/${tura}`)).modificata_dupa_verif).toBe(true);
+  });
+
+  it('deschiderea reaplicată a unei ture create automat și deja verificate o scoate din nou la verificare', async () => {
+    const c = await cafeneaNoua('Cafenea Automată');
+    const tura = randomUUID();
+    const esp = t.produs('Espresso');
+    // Deschiderea vine cu ceasul înainte și e respinsă; vânzarea și închiderea creează tura automat.
+    const deschidere = evTuraDeschisa(tura, c.unu, 450, zi(15, 7));
+    const r = await c.sync([
+      { ...deschidere, la: new Date(Date.now() + 60 * 60_000).toISOString() },
+      evComanda(tura, c.unu, [{ produs_id: esp.id, cantitate: 1, pret_unitar: esp.pret, modificatori: [] }], 'numerar', { primit: esp.pret, la: zi(15, 9) }),
+      inchidere(tura, c.unu, 450 + esp.pret, zi(15, 20), 1),
+    ]);
+    expect(r.cu_eroare).toHaveLength(1);
+    expect((await t.admin.get(`/api/ture/${tura}`)).creata_automat).toBe(true);
+    await t.admin.post(`/api/ture/${tura}/verifica`, { nota: 'văzut' });
+    expect((await t.admin.get(`/api/ture/${tura}`)).modificata_dupa_verif).toBeFalsy();
+
+    await t.admin.post(`/api/sync/erori/${deschidere.id}/reaplica`);
+    const dupa = await t.admin.get(`/api/ture/${tura}`);
+    expect(dupa.creata_automat).toBe(false);
+    expect(dupa.fond_initial).toBe(450);
+    expect(dupa.modificata_dupa_verif).toBe(true);
+    expect((await t.admin.get('/api/ture?neverificate=true')).some((x: any) => x.id === tura)).toBe(true);
+  });
+});
+
+describe('lista erorilor de sincronizare', () => {
+  it('fiecare rând spune câte erori nerezolvate sunt în total, ca pagina să arate că lista e trunchiată', async () => {
+    const evs = Array.from({ length: 3 }, () => ({ id: randomUUID(), tip: 'comanda', la: new Date().toISOString(), date: { stricat: true } }));
+    expect((await t.tableta.sync(evs)).cu_eroare).toHaveLength(3);
+    const lista = await t.admin.get('/api/sync/erori');
+    const [{ n }] = await t.db.query<{ n: number }>(`SELECT COUNT(*)::int AS n FROM evenimente_sync WHERE stare = 'eroare'`);
+    expect(n).toBeGreaterThanOrEqual(3);
+    expect(lista.every((e: any) => e.total === n)).toBe(true);
+    for (const e of evs) await t.admin.post(`/api/sync/erori/${e.id}/rezolvat`);
+  });
+
+  it('peste limită, lista arată cele mai vechi erori și totalul real', async () => {
+    const { LIMITA_LISTA_ERORI } = await import('../src/servicii/sync');
+    const evs = Array.from({ length: LIMITA_LISTA_ERORI + 5 }, () => ({ id: randomUUID(), tip: 'comanda', la: new Date().toISOString(), date: { stricat: true } }));
+    expect((await t.tableta.sync(evs)).cu_eroare).toHaveLength(evs.length);
+    const lista = await t.admin.get('/api/sync/erori');
+    expect(lista).toHaveLength(LIMITA_LISTA_ERORI);
+    expect(lista[0].total).toBeGreaterThanOrEqual(evs.length);
+    await t.db.query(`UPDATE evenimente_sync SET stare = 'rezolvat' WHERE id = ANY($1::uuid[])`, [evs.map((e) => e.id)]);
   });
 });
 

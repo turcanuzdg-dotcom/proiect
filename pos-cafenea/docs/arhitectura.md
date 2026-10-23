@@ -87,7 +87,9 @@ flowchart LR
 - **Scrieri simultane pe aceeași locație.** Numărările de casă (deschiderea și închiderea turei) și
   finalizarea inventarierii iau o blocare pe locație (`pg_advisory_xact_lock`), iar vânzările, mișcările de
   casă și de stoc o iau partajat: o mișcare scrisă în paralel e fie văzută de numărare, fie corectată după
-  ea. Ordinea blocărilor e descrisă în `server/src/servicii/ture.ts` (`CHEIE_CASA`).
+  ea. Ordinea blocărilor e descrisă în `server/src/servicii/ture.ts` (`CHEIE_CASA`): casa, apoi turele, apoi
+  stocul; rândul tabletei din `dispozitive` se ia înaintea casei, dar doar `FOR NO KEY UPDATE`, care nu se
+  ciocnește cu cheile străine spre tabletă scrise de o reaplicare din panou.
 - **Securitate pe măsura unei cafenele, nu a unei bănci.** Tokenul de sesiune circulă doar în antet
   (fluxul de notificări folosește bilete de un minut) și stă în bază doar ca amprentă SHA-256, la fel
   ca tokenul tabletelor; o sesiune ține cel mult 30 de zile. Loginul are pauze după încercări greșite

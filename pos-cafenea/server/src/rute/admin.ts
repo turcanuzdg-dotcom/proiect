@@ -15,7 +15,7 @@ import { citesteTolerante, scrieSetare } from '../servicii/setari';
 import { fisaArticol, stocLocatie, stocToateLocatiile } from '../servicii/stoc';
 import { detaliuTura, listaTure, verificaTura } from '../servicii/ture';
 import { listaComenzi } from '../servicii/vanzari';
-import { detaliuEroareSync, listaEroriSync, marcheazaRezolvat, reaplicaEveniment } from '../servicii/sync';
+import { detaliuEroareSync, listaEroriSync, listaOreSuspecte, marcheazaRezolvat, reaplicaEveniment } from '../servicii/sync';
 import * as terminal from '../servicii/terminal';
 import { schemaLiniiInventar } from './pos';
 
@@ -376,6 +376,7 @@ export async function ruteAdmin(app: FastifyInstance, db: Db, doarAdmin: onReque
 
     // ---- Evenimente offline care n-au putut fi aplicate ----
     a.get('/api/sync/erori', async () => listaEroriSync(db));
+    a.get('/api/sync/ore-suspecte', async () => listaOreSuspecte(db));
     a.get('/api/sync/erori/:id', async (req) => detaliuEroareSync(db, idUuid.parse(req.params).id));
     a.post('/api/sync/erori/:id/reaplica', async (req) => {
       await reaplicaEveniment(db, idUuid.parse(req.params).id);
