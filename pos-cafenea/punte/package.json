@@ -6,5 +6,8 @@
   "description": "Puntea locală dintre tableta POS și terminalul de plată / imprimanta fiscală",
   "scripts": {
     "start": "tsx src/index.ts"
+  },
+  "dependencies": {
+    "tsx": "^4.20.0"
   }
 }

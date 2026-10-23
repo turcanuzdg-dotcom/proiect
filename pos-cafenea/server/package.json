@@ -11,9 +11,10 @@
   "dependencies": {
     "@cafenea/shared": "*",
     "@electric-sql/pglite": "^0.3.0",
-    "@fastify/static": "^8.2.0",
+    "@fastify/static": "^10.1.6",
     "fastify": "^5.4.0",
     "pg": "^8.16.0",
+    "tsx": "^4.20.0",
     "zod": "^4.1.0"
   },
   "devDependencies": {

@@ -30,13 +30,22 @@ npm run dev           # server API pe :3000 și interfața pe http://localhost:5
 
 ## Producție
 
+Interfața se construiește pe calculatorul de dezvoltare (sau în CI), nu pe server: uneltele de build
+și de test (Vite, Vitest, TypeScript) sunt devDependencies și nu ajung pe serverul care ține banii.
+
 ```bash
-npm install && npm run build
+# pe calculatorul de dezvoltare: construiește web/dist/, care se copiază pe server lângă cod
+npm ci && npm run build
+
+# pe server: doar dependențele de producție, exact versiunile din package-lock.json
+npm ci --omit=dev --ignore-scripts
 DATABASE_URL=postgres://utilizator:parola@gazda/cafenea \
 ADMIN_LOGIN=admin ADMIN_PAROLA='o parolă lungă' \
 PORT=3000 npm start
 ```
 
+- `npm ci`, nu `npm install`: instalează exact versiunile verificate din `package-lock.json` și nu
+  le schimbă. Serverul rulează TypeScript direct, prin `tsx`, care e dependență de producție.
 - Serverul servește și interfața construită (`web/dist`), deci e un singur proces.
 - Trebuie pus în spatele unui **HTTPS** (de ex. Caddy sau nginx): fără HTTPS tableta nu poate instala
   aplicația și nu poate porni offline.
@@ -98,7 +107,11 @@ https://turcanuzdg-dotcom.github.io/proiect/). Browserul trebuie să permită We
 npm test                 # logică comună, server (pe PGlite), punte
 npm run typecheck
 TEST_DATABASE_URL=postgres://postgres@localhost/postgres npm test   # aceleași teste pe un PostgreSQL real
+npm audit                # trebuie să arate 0 vulnerabilități
 ```
+
+La actualizarea dependențelor, `package-lock.json` se regenerează cu `npx npm@11 install`: npm 10.9,
+cel din Node 22, se oprește cu o eroare internă (`edgesOut`) la unele actualizări.
 
 ## Structura
 
