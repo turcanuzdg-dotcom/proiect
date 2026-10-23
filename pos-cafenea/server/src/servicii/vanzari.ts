@@ -83,16 +83,18 @@ export async function inregistreazaComanda(db: Db, ctx: ContextPOS, la: string, 
   const total = casare ? 0 : rotunjeste(d.total);
   const primit = d.metoda === 'numerar' && d.primit != null ? rotunjeste(d.primit) : null;
   // Vânzarea pe card e confirmată când terminalul a aprobat prin server plata acestei comenzi, de aceeași
-  // sumă. Altfel (Simulator, terminal fără legătură, aprobare inventată) se marchează, nu se respinge.
-  const cardConfirmat =
-    d.metoda !== 'card'
-      ? null
-      : (
-          await db.query(
-            `SELECT 1 FROM operatiuni_terminal WHERE referinta = $1 AND tip = 'plata' AND stare = 'aprobata' AND abs(suma - $2) < 0.005`,
-            [d.comanda_id, total],
-          )
-        ).length > 0;
+  // sumă. Altfel (Simulator, aprobare inventată sau nelămurită) se marchează, nu se respinge. Doar pe
+  // tabletele cu terminal prin server: cu terminal separat (pilotul manual) nicio vânzare pe card nu se
+  // poate confirma, deci rămâne NULL, ca alerta să nu se aprindă la fiecare vânzare și tură.
+  let cardConfirmat: boolean | null = null;
+  if (d.metoda === 'card') {
+    const [r] = await db.query<{ confirmat: boolean; are_terminal: boolean | null }>(
+      `SELECT EXISTS (SELECT 1 FROM operatiuni_terminal WHERE referinta = $1 AND tip = 'plata' AND stare = 'aprobata' AND abs(suma - $2) < 0.005) AS confirmat,
+              (SELECT terminal_device_id IS NOT NULL FROM dispozitive WHERE id = $3) AS are_terminal`,
+      [d.comanda_id, total, ctx.dispozitiv_id],
+    );
+    cardConfirmat = r.confirmat ? true : r.are_terminal ? false : null;
+  }
 
   await db.query(
     `INSERT INTO comenzi (id, locatie_id, tura_id, dispozitiv_id, utilizator_id, nr, creata_la, metoda,
@@ -216,7 +218,8 @@ export async function listaComenzi(db: Db, f: FiltruComenzi) {
   if (f.pana) adauga('c.creata_la < ?', f.pana);
   if (f.metoda) adauga('c.metoda = ?', f.metoda);
   if (f.pret_abatere) cond.push('c.pret_abatere');
-  if (f.card_neconfirmat) cond.push('c.card_confirmat = false');
+  // Aceleași vânzări ca pe Panou și în alerta turei: pe card, neconfirmate, neanulate.
+  if (f.card_neconfirmat) cond.push("c.card_confirmat = false AND c.stare = 'finalizata'");
   p.push(Math.min(f.limita ?? 200, 1000));
   const comenzi = await db.query<any>(
     `SELECT c.*, u.nume AS barista, l.nume AS locatie

@@ -135,3 +135,6 @@ tr.anulata td:nth-child(4) { text-decoration: none; }
 .tabel-inventar td { vertical-align: middle; }
 .intrare-numar { width: 110px; text-align: right; min-height: 44px; font-size: 17px; }
 .banda-avertisment { position: fixed; left: 0; right: 0; bottom: 0; z-index: 60; padding: 10px 16px; background: var(--pericol); color: #fff; font-weight: 600; text-align: center; }
+
+/* Ecranul de PIN al blocării automate acoperă vânzarea (coșul rămâne dedesubt), sub banda de avertisment. */
+.blocare-suprapusa { position: fixed; inset: 0; z-index: 55; overflow: auto; background: var(--fundal); }

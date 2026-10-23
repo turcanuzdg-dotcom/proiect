@@ -26,7 +26,8 @@ export const ramasBlocat = (s: StareBlocarePin, acum: number) => Math.max(0, s.b
 
 /**
  * Blocarea automată: tableta revine la PIN după `minute` fără atingere, dar niciodată cât timp o plată
- * cu cardul, un retur sau închiderea turei sunt deschise (dialoguri care țin „ocupat”).
+ * cu cardul, un retur sau închiderea turei sunt deschise (dialoguri care țin „ocupat”). Ecranul de PIN
+ * acoperă vânzarea, nu o închide: coșul început rămâne după PIN.
  */
 export function trebuieBlocata(ultimaAtingere: number, acum: number, minute: number | undefined, ocupata: boolean): boolean {
   if (ocupata || !minute || minute <= 0) return false;
@@ -44,6 +45,21 @@ export function useFaraBlocare(activ = true) {
     ocupate += 1;
     return () => {
       ocupate -= 1;
+    };
+  }, [activ]);
+}
+
+let inLucru = 0;
+/** Un coș început (sau alt lucru nesalvat) sub ecranul de PIN: o versiune nouă nu reîncarcă pagina peste el. */
+export const lucruNesalvat = () => inLucru > 0;
+
+/** Marchează lucru nesalvat cât timp componenta e afișată și `activ` e adevărat. */
+export function useLucruNesalvat(activ: boolean) {
+  useEffect(() => {
+    if (!activ) return;
+    inLucru += 1;
+    return () => {
+      inLucru -= 1;
     };
   }, [activ]);
 }

@@ -101,15 +101,24 @@ flowchart LR
   `operatiuni_terminal` (o înregistrare pe încercare: în curs, aprobată, refuzată sau nesigură; doar câmpurile
   alese, niciodată răspunsul brut). O plată aprobată se întoarce din registru la reîncercare, una în curs se
   așteaptă (sau 409), una nesigură se verifică pe terminal fără să se retrimită suma. „Ultima tranzacție”
-  aprobă doar cu referința noastră, aprobarea explicită și aceeași sumă; altfel tableta arată „plată
-  neconfirmată” și nu înregistrează vânzarea. Tableta așteaptă 7,5 minute, peste cele circa 7 ale serverului.
-  Returul pe card se face doar în contul plății înregistrate a comenzii (RRN și plafon din registru), o
-  singură dată; fără plată înregistrată se face din meniul terminalului. La sincronizare, o vânzare pe card
-  fără plată aprobată de aceeași sumă primește `card_confirmat = false` (nu se respinge: tableta lucrează
-  offline-first) și apare în Comenzi, pe tură și pe Panou. Terminalul legat în panou are întâietate pe
+  aprobă doar cu referința noastră, aprobarea explicită și aceeași sumă, și refuză doar la un refuz explicit
+  (un cod de răspuns necunoscut lasă plata nesigură); altfel tableta arată „plată neconfirmată” și nu
+  înregistrează vânzarea. Tableta așteaptă 7,5 minute, peste cele circa 7 ale serverului. Erorile pe care o
+  reîncercare nu le schimbă au un `cod` în răspuns (`COD_TERMINAL` din `shared`): o configurare lipsă e
+  eroare, nu plată nesigură; o plată aprobată deja pentru altă sumă (coșul s-a schimbat după un răspuns
+  pierdut) arată suma aprobată și cere readucerea coșului, fără „plată nouă”.
+  Returul pe card e integral, doar în contul plății înregistrate a comenzii (RRN și sumă din registru), o
+  singură dată, și doar de pe terminalul care a încasat. Fără plată înregistrată (pilotul manual, vânzări de
+  dinaintea registrului), pe alt terminal sau după un retur nesigur pe care barista îl lămurește pe terminal,
+  anularea trece pe calea manuală: returul din meniul terminalului, apoi confirmarea pe tabletă. La
+  sincronizare, o vânzare pe card de pe o tabletă cu terminal prin server, fără plată aprobată de aceeași
+  sumă, primește `card_confirmat = false` (nu se respinge: tableta lucrează offline-first) și apare la fel în
+  Comenzi, pe tură și pe Panou; pe tabletele cu terminal separat rămâne NULL (nu se poate confirma). Terminalul legat în panou are întâietate pe
   tabletă; Simulatorul și puntea locală apar doar în dezvoltare sau cu „mod demonstrație” din Setări → Tablete.
 - **Tableta se blochează singură.** După `blocare_automata_min` minute fără atingere (implicit 5, din panou)
-  revine la ecranul de PIN, niciodată în timpul unei plăți, al unui retur sau al închiderii turei. După 5 PIN-uri
+  revine la ecranul de PIN, niciodată cât e deschis dialogul unei plăți cu cardul (și cu rezultat nesigur), al
+  unui retur sau al închiderii turei. Ecranul de PIN acoperă vânzarea fără s-o închidă: coșul început rămâne,
+  iar o versiune nouă nu se aplică peste el. După 5 PIN-uri
   greșite urmează o pauză de 30 s, apoi dublă (numărătoarea stă în IndexedDB). Închiderea turei cere PIN-ul din
   nou. Aplicația caută o versiune nouă la 30 de minute și la revenirea internetului.
 - **Jurnalul de retrimitere al tabletei.** Evenimentele confirmate de server nu se șterg imediat: rămân 7 zile
@@ -127,13 +136,15 @@ flowchart LR
 
 - Integrarea cu terminalul e scrisă după documentația publică POSLink și ISFiscalService și testată
   pe un POSLink simulat; trebuie validată în mediul de test Intelectsoft (vezi mai jos). Schema
-  răspunsului „ultima tranzacție” nu e publicată: o citim defensiv (după referința noastră sau sumă).
+  răspunsului „ultima tranzacție” nu e publicată: o citim defensiv (referința noastră, aprobare sau refuz
+  explicit); lista codurilor de refuz trebuie aflată de la Intelectsoft.
 - Bonul de retur (storno) și copia unui bon nu au comenzi în POSLink: se fac din meniul casei fiscale de
   pe terminal. Plata se restituie pe card prin POSLink (`Refund`), cu RRN-ul plății înregistrate pe server.
 - O plată rămasă „nesigură” (terminalul nu o confirmă și nici nu o refuză explicit) nu se rezolvă singură:
   barista verifică ecranul terminalului și chitanța băncii; dacă plata nu a trecut, tableta trimite o plată nouă
-  (cu altă referință), iar încercarea nesigură rămâne în registru. O anulare pe card fără retur aprobat nu e
-  încă semnalată separat în panou.
+  (cu altă referință), iar încercarea nesigură rămâne în registru. La fel un retur nesigur: barista spune pe
+  tabletă dacă terminalul arată returul făcut sau îl face din meniul terminalului. O anulare pe card fără retur
+  aprobat nu e încă semnalată separat în panou.
 - POSLINK_URL trebuie să fie https (http doar pentru 127.0.0.1/localhost); un răspuns POSLink peste 1 MB nu
   se citește.
 - Plata cu cardul și bonul fiscal au nevoie de internet (POSLink e în cloud). O vânzare în numerar făcută

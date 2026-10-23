@@ -112,6 +112,22 @@ export interface CatalogPOS {
   blocare_automata_min?: number;
 }
 
+// ---- Terminalul prin server: erori pe care tableta le recunoaște după cod, nu după text ----
+
+export const COD_TERMINAL = {
+  /** Comanda nu are o plată aprobată prin server: returul se face din meniul terminalului. */
+  returDinMeniu: 'retur_din_meniu',
+  /** Plata comenzii a fost aprobată deja, pentru altă sumă (`suma_aprobata`): nu se încasează din nou. */
+  plataDejaAprobata: 'plata_deja_aprobata',
+  /** Plata anterioară a comenzii, cu altă sumă, nu e lămurită (`suma_nelamurita`). */
+  plataNelamurita: 'plata_nelamurita',
+  /** Returul se face de pe terminalul care a încasat plata. */
+  returAltTerminal: 'retur_alt_terminal',
+  /** Configurare lipsă (tableta fără terminal, POSLink neconfigurat): nu se rezolvă prin reîncercare. */
+  configurare: 'terminal_neconfigurat',
+} as const;
+export type CodTerminal = (typeof COD_TERMINAL)[keyof typeof COD_TERMINAL];
+
 // ---- Evenimentele trimise de POS (coada offline) ----
 
 export interface LinieComanda {

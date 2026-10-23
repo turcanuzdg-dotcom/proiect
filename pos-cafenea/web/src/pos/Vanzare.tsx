@@ -11,6 +11,7 @@ import {
 } from '@cafenea/shared';
 import { formatOra } from '../comun/format';
 import { uuid } from '../comun/uuid';
+import { useLucruNesalvat } from './blocare';
 import { useAplicatie } from './context';
 import type { RezultatCard } from './echipamente';
 import { AlegeModificatori, Casare, InchidereTura, Istoric, PlataCard, PlataMarunta, PlataNumerar, Setari } from './dialoguri';
@@ -50,6 +51,8 @@ export function Vanzare() {
   // încaseze de două ori (o plată aprobată se întoarce din registru, una nesigură se verifică); după un
   // refuz primește o nouă încercare, și cu altă sumă dacă s-a schimbat coșul.
   const [referintaCard, setReferintaCard] = useState(() => uuid());
+  // Un coș început nu se pierde la o versiune nouă aplicată pe ecranul de PIN.
+  useLucruNesalvat(cos.length > 0);
 
   const modificatori = useMemo(() => new Map(catalog.modificatori.map((m) => [m.id, m])), [catalog]);
   const produse = useMemo(() => {

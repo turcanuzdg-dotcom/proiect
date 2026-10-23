@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
-import { ETICHETE_MOTIVE, LIMITE, MOTIVE_CASARE, formatLei, hashPin, type ModificatorCatalog, type MotivCasare, type ProdusCatalog } from '@cafenea/shared';
+import { COD_TERMINAL, ETICHETE_MOTIVE, LIMITE, MOTIVE_CASARE, formatLei, hashPin, type ModificatorCatalog, type MotivCasare, type ProdusCatalog } from '@cafenea/shared';
 import { useFaraBlocare } from './blocare';
-import { alegeEchipamente, creeazaEchipamente, demonstratiePermisa, type RezultatCard } from './echipamente';
+import { alegeEchipamente, creeazaEchipamente, demonstratiePermisa, urmareRetur, type RezultatCard } from './echipamente';
 import { TastaturaPin } from './ecrane';
 import { formatDataOra, formatOra } from '../comun/format';
 import { Modal } from '../comun/Modal';
@@ -148,10 +148,16 @@ function PlataCardTerminal({
   onReferintaNoua: () => void;
 }) {
   const { echipamente } = useAplicatie();
-  const [stare, setStare] = useState<{ tip: 'asteapta' } | { tip: 'refuzat' | 'nesigur'; mesaj: string }>({ tip: 'asteapta' });
+  const [stare, setStare] = useState<
+    | { tip: 'asteapta' }
+    | { tip: 'refuzat' | 'nesigur'; mesaj: string }
+    // Comanda are deja o plată aprobată (sau încă nelămurită) pentru altă sumă: coșul s-a schimbat între timp.
+    | { tip: 'alta_suma'; nelamurita: boolean; suma?: number; mesaj: string }
+  >({ tip: 'asteapta' });
   const [incercare, setIncercare] = useState(0);
-  // Cât timp plata e la terminal, tableta nu se blochează singură.
-  useFaraBlocare(stare.tip === 'asteapta');
+  // Cât timp dialogul e deschis, tableta nu se blochează singură: nici în așteptare, nici după un rezultat
+  // nesigur, când barista se uită pe terminal sau pe chitanța băncii (blocarea ar pierde coșul și referința).
+  useFaraBlocare();
 
   useEffect(() => {
     let anulat = false;
@@ -161,6 +167,8 @@ function PlataCardTerminal({
       .then(async (r) => {
         if (anulat) return;
         if (r.aprobat) await onAprobat(r);
+        else if (r.cod === COD_TERMINAL.plataDejaAprobata || r.cod === COD_TERMINAL.plataNelamurita)
+          setStare({ tip: 'alta_suma', nelamurita: r.cod === COD_TERMINAL.plataNelamurita, suma: r.suma_anterioara, mesaj: r.mesaj ?? '' });
         else if (r.nesigur) setStare({ tip: 'nesigur', mesaj: r.mesaj ?? 'Nu se poate confirma plata' });
         else setStare({ tip: 'refuzat', mesaj: r.mesaj ?? 'Plata a fost refuzată' });
       })
@@ -179,9 +187,11 @@ function PlataCardTerminal({
         stare.tip !== 'asteapta' && (
           <>
             <button className="buton-secundar" onClick={onInchide}>Înapoi la comandă</button>
-            <button className="buton" onClick={() => setIncercare((i) => i + 1)}>
-              {stare.tip === 'nesigur' ? 'Verifică din nou' : 'Încearcă din nou'}
-            </button>
+            {stare.tip !== 'alta_suma' && (
+              <button className="buton" onClick={() => setIncercare((i) => i + 1)}>
+                {stare.tip === 'nesigur' ? 'Verifică din nou' : 'Încearcă din nou'}
+              </button>
+            )}
           </>
         )
       }
@@ -217,6 +227,32 @@ function PlataCardTerminal({
               Terminalul arată că plata nu a trecut: trimite o plată nouă
             </button>
           </>
+        ) : stare.tip === 'alta_suma' ? (
+          stare.nelamurita ? (
+            <>
+              <div className="alerta avertisment" role="alert">
+                <strong>Plata anterioară a acestei comenzi{stare.suma != null ? `, de ${formatLei(stare.suma)},` : ''} nu este lămurită.</strong> Coșul
+                s-a schimbat între timp. Readuceți coșul la {stare.suma != null ? formatLei(stare.suma) : 'suma de atunci'} și verificați plata din nou.
+              </div>
+              <button
+                className="buton-link"
+                onClick={() => {
+                  if (!window.confirm('Terminalul arată că plata anterioară NU a trecut și clientul nu a plătit? Se va trimite o plată nouă.')) return;
+                  onReferintaNoua();
+                  setIncercare((i) => i + 1);
+                }}
+              >
+                Terminalul arată că plata anterioară nu a trecut: trimite o plată nouă
+              </button>
+            </>
+          ) : (
+            <div className="alerta pericol" role="alert">
+              <strong>Clientul a plătit deja această comandă{stare.suma != null ? `: ${formatLei(stare.suma)}` : ''}.</strong> Terminalul a aprobat plata, dar
+              răspunsul s-a pierdut și apoi coșul s-a schimbat. NU trimiteți o plată nouă. Readuceți coșul la{' '}
+              {stare.suma != null ? formatLei(stare.suma) : 'suma aprobată'} și apăsați din nou „Card”: vânzarea se înregistrează cu plata aprobată. Ce
+              s-a adăugat după aceea se vinde într-o comandă separată.
+            </div>
+          )
         ) : (
           <div className="alerta pericol">{stare.mesaj}</div>
         )}
@@ -490,23 +526,27 @@ function DetaliiComanda({ c }: { c: stocare.ComandaLocala }) {
 
 const MOTIVE_ANULARE = ['Greșeală la comandă', 'Clientul a renunțat', 'Produs nereușit', 'Altele'];
 
-function Anulare({ comanda, onInapoi, onGata }: { comanda: stocare.ComandaLocala; onInapoi: () => void; onGata: () => void }) {
+export function Anulare({ comanda, onInapoi, onGata }: { comanda: stocare.ComandaLocala; onInapoi: () => void; onGata: () => void }) {
   const app = useAplicatie();
   const [motiv, setMotiv] = useState('');
   const [detalii, setDetalii] = useState('');
   const [preparat, setPreparat] = useState<boolean | null>(null);
   const [lucreaza, setLucreaza] = useState(false);
-  const [eroare, setEroare] = useState('');
+  // Returul prin terminal care nu s-a încheiat: de făcut din meniul terminalului (fără plată înregistrată
+  // prin server sau încasată pe alt terminal), nesigur (de verificat) sau refuzat.
+  const [retur, setRetur] = useState<{ tip: 'din_meniu' | 'nesigur' | 'refuzat'; mesaj: string } | null>(null);
   const textMotiv = motiv === 'Altele' ? detalii.trim() : [motiv, detalii.trim()].filter(Boolean).join(': ');
   const valid = !!textMotiv && preparat !== null;
-  // Terminal separat: returul pe card îl face barista din meniul terminalului, tableta doar înregistrează anularea.
-  const returManual = comanda.metoda === 'card' && app.echipamente.manual;
-  useFaraBlocare(lucreaza);
+  // Terminal separat sau comandă fără plată înregistrată prin server: returul pe card îl face barista din
+  // meniul terminalului, tableta doar înregistrează anularea.
+  const returManual = comanda.metoda === 'card' && (app.echipamente.manual || retur?.tip === 'din_meniu');
+  // Un retur nesigur sau refuzat ține dialogul deschis cât barista verifică terminalul.
+  useFaraBlocare(lucreaza || retur !== null);
 
-  const confirma = async () => {
+  /** `returConfirmat`: barista a văzut pe terminal că returul nesigur s-a făcut; nu se mai trimite nimic. */
+  const confirma = async (returConfirmat = false) => {
     if (lucreaza) return;
     setLucreaza(true);
-    setEroare('');
     const curenta = await stocare.citesteComanda(comanda.comanda_id);
     if (!curenta || curenta.stare !== 'finalizata') {
       app.anunta('Comanda a fost deja anulată', true);
@@ -515,16 +555,15 @@ function Anulare({ comanda, onInapoi, onGata }: { comanda: stocare.ComandaLocala
     }
     // Pe card, banii se dau înapoi prin terminal înainte de a înregistra anularea. Serverul restituie doar
     // în contul plății înregistrate a acestei comenzi (RRN și sumă din registrul lui), o singură dată.
-    if (comanda.metoda === 'card' && !returManual) {
+    // Fără plată înregistrată (vânzare din pilotul manual sau de dinaintea registrului), serverul cere
+    // returul din meniul terminalului: dialogul trece pe calea manuală, nu rămâne blocat.
+    if (comanda.metoda === 'card' && !returManual && !returConfirmat) {
       const r: RezultatCard = await app.echipamente
         .returCard(comanda.total, { autorizare: comanda.card_autorizare, rrn: comanda.card_rrn, operation_id: comanda.card_operation_id }, comanda.comanda_id)
-        .catch((e: Error) => ({ aprobat: false, mesaj: e.message }));
-      if (!r.aprobat) {
-        setEroare(
-          r.nesigur
-            ? `Returul nu se poate confirma: ${r.mesaj ?? ''}. Verificați pe terminal, apoi încercați din nou (nu se restituie de două ori).`
-            : `Returul pe card nu a reușit: ${r.mesaj ?? 'terminalul a refuzat'}`,
-        );
+        .catch((e: Error) => ({ aprobat: false, nesigur: true, mesaj: e.message }));
+      const urmare = urmareRetur(r);
+      if (urmare !== 'inregistreaza') {
+        setRetur({ tip: urmare, mesaj: r.mesaj ?? '' });
         setLucreaza(false);
         return;
       }
@@ -557,8 +596,16 @@ function Anulare({ comanda, onInapoi, onGata }: { comanda: stocare.ComandaLocala
       subsol={
         <>
           <button className="buton-secundar" disabled={lucreaza} onClick={onInapoi}>Înapoi</button>
-          <button className="buton-pericol" disabled={!valid || lucreaza} onClick={confirma}>
-            {lucreaza ? 'Se procesează…' : comanda.metoda === 'casare' ? 'Anulează casarea' : `Anulează și restituie ${formatLei(comanda.total)}`}
+          <button className="buton-pericol" disabled={!valid || lucreaza} onClick={() => void confirma()}>
+            {lucreaza
+              ? 'Se procesează…'
+              : comanda.metoda === 'casare'
+                ? 'Anulează casarea'
+                : retur?.tip === 'din_meniu'
+                  ? `Am restituit ${formatLei(comanda.total)} din terminal: anulează`
+                  : retur?.tip === 'nesigur'
+                    ? 'Verifică returul din nou'
+                    : `Anulează și restituie ${formatLei(comanda.total)}`}
           </button>
         </>
       }
@@ -588,11 +635,49 @@ function Anulare({ comanda, onInapoi, onGata }: { comanda: stocare.ComandaLocala
         </div>
         {comanda.metoda === 'card' &&
           (returManual ? (
-            <div className="alerta avertisment">Faceți întâi returul de {formatLei(comanda.total)} din meniul terminalului, apoi confirmați anularea aici.</div>
+            <div className="alerta avertisment" role={retur ? 'alert' : undefined}>
+              {retur?.tip === 'din_meniu' && retur.mesaj ? `${retur.mesaj}. ` : ''}Faceți întâi returul de {formatLei(comanda.total)} din meniul
+              terminalului, apoi confirmați anularea aici.
+            </div>
+          ) : retur?.tip === 'nesigur' ? (
+            <>
+              <div className="alerta avertisment" role="alert">
+                <strong>Returul nu se poate confirma.</strong> {retur.mesaj}. Uitați-vă pe ecranul terminalului și pe chitanță, apoi apăsați
+                „Verifică returul din nou”: același retur nu se trimite a doua oară.
+              </div>
+              <div className="doua-coloane">
+                <button
+                  className="buton-secundar"
+                  disabled={!valid || lucreaza}
+                  onClick={() => {
+                    if (!window.confirm(`Terminalul arată că returul de ${formatLei(comanda.total)} s-a făcut? Se înregistrează anularea, fără alt retur.`)) return;
+                    void confirma(true);
+                  }}
+                >
+                  Terminalul arată că returul s-a făcut
+                </button>
+                <button
+                  className="buton-secundar"
+                  disabled={lucreaza}
+                  onClick={() => {
+                    if (!window.confirm('Terminalul arată că returul NU s-a făcut? Îl veți face din meniul terminalului.')) return;
+                    setRetur({ tip: 'din_meniu', mesaj: '' });
+                  }}
+                >
+                  Returul nu s-a făcut: îl fac din meniul terminalului
+                </button>
+              </div>
+            </>
+          ) : retur?.tip === 'refuzat' ? (
+            <>
+              <div className="alerta pericol" role="alert">Returul pe card nu a reușit: {retur.mesaj || 'terminalul a refuzat'}</div>
+              <button className="buton-link" disabled={lucreaza} onClick={() => setRetur({ tip: 'din_meniu', mesaj: '' })}>
+                Fac returul din meniul terminalului
+              </button>
+            </>
           ) : (
             <p className="slab mic">Suma se returnează pe card prin terminal.</p>
           ))}
-        {eroare && <div className="alerta pericol">{eroare}</div>}
       </div>
     </Modal>
   );

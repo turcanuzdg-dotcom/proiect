@@ -263,9 +263,10 @@ export class ClientPOSLink {
     const stare = String(rap.status ?? rap.state ?? rap.result ?? rap.transactionstatus ?? '').toLowerCase();
     const cod = rap.responsecode ?? rap.rc;
     const aprobata = rap.approved === true || ['approved', 'success', 'successful', 'ok'].includes(stare) || ['00', '000'].includes(String(cod ?? ''));
-    const refuzata =
-      rap.approved === false || ['declined', 'refused', 'rejected', 'failed', 'canceled', 'cancelled', 'error'].includes(stare) || (cod != null && !['00', '000'].includes(String(cod)));
-    if (refuzata && !aprobata) return { stare: 'refuzata' };
+    // Refuz doar la un semnal explicit (approved: false sau un cuvânt de refuz): după un refuz se poate
+    // trimite o plată nouă, deci un cod de răspuns necunoscut (0, '0', 'A0'…) lasă plata nesigură.
+    const refuzata = rap.approved === false || CUVINTE_REFUZ.includes(stare);
+    if (refuzata) return aprobata ? { stare: 'nesigura' } : { stare: 'refuzata' };
     const amount = Number(rap.amount);
     if (!aprobata || rap.rrn == null || rap.rrn === '' || !Number.isFinite(amount) || Math.abs(amount - suma) > 0.001) return { stare: 'nesigura' };
     return {
@@ -334,6 +335,9 @@ export class ClientPOSLink {
     this.verifica(r, 'Operațiunea de numerar pe casa fiscală');
   }
 }
+
+/** Stările „ultimei tranzacții” care înseamnă refuz sigur. */
+const CUVINTE_REFUZ = ['declined', 'refused', 'rejected', 'denied', 'canceled', 'cancelled'];
 
 type RezultatVerificare = { stare: 'aprobata'; rezultat: RezultatPlata } | { stare: 'refuzata' | 'absenta' | 'nesigura' };
 

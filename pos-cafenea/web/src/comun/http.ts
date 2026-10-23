@@ -1,5 +1,12 @@
 export class EroareHttp extends Error {
-  constructor(public status: number, mesaj: string) {
+  constructor(
+    public status: number,
+    mesaj: string,
+    /** Codul erorii trimis de server (de ex. COD_TERMINAL), când există. */
+    public cod?: string,
+    /** Corpul răspunsului de eroare (câmpuri în plus, de ex. suma aprobată deja). */
+    public date?: Record<string, unknown>,
+  ) {
     super(mesaj);
   }
 }
@@ -48,6 +55,9 @@ export async function cerereJson<T = any>(url: string, opt: OptiuniCerere = {}):
   } catch {
     /* răspuns care nu e JSON (de ex. pagina unui proxy) */
   }
-  if (!r.ok) throw new EroareHttp(r.status, date?.eroare ?? `Eroare ${r.status}`);
+  if (!r.ok) {
+    const corp = date && typeof date === 'object' ? (date as Record<string, unknown>) : undefined;
+    throw new EroareHttp(r.status, date?.eroare ?? `Eroare ${r.status}`, typeof corp?.cod === 'string' ? corp.cod : undefined, corp);
+  }
   return date as T;
 }

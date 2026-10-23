@@ -1,7 +1,7 @@
 // Un înlocuitor minim pentru Fastify: rutele reale (server/src/rute) se înregistrează aici și
 // răspund la cererile tabletei și ale panoului direct în browser, fără rețea.
 import type { FastifyInstance } from 'fastify';
-import { raspunsLaEroare } from '../../../server/src/erori';
+import { corpEroare, raspunsLaEroare } from '../../../server/src/erori';
 
 type Handler = (req: CerereSim, reply: RaspunsSim) => unknown;
 
@@ -69,7 +69,7 @@ export interface RezultatCerere {
 /** La fel ca setErrorHandler din server/src/app.ts (aceeași funcție). */
 function raspunsEroare(err: unknown): { status: number; corp: unknown } {
   const r = raspunsLaEroare(err);
-  if (r) return { status: r.status, corp: { eroare: r.eroare } };
+  if (r) return { status: r.status, corp: corpEroare(r) };
   console.error(err);
   return { status: 500, corp: { eroare: 'Eroare internă a serverului' } };
 }

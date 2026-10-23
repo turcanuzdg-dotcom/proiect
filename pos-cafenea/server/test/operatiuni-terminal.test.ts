@@ -5,6 +5,7 @@ import { createServer, type IncomingMessage, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { COD_TERMINAL } from '@cafenea/shared';
 import { ClientPOSLink, configPOSLink, LIMITA_RASPUNS_POSLINK } from '../src/servicii/poslink';
 import { folosesteClientPOSLink } from '../src/servicii/terminal';
 import { evComanda, evTuraDeschisa, pregateste } from './ajutor';
@@ -91,9 +92,10 @@ describe('plata cu cardul, o singură dată pe comandă', () => {
     expect(r).toHaveLength(1);
     expect(r[0]).toMatchObject({ tip: 'plata', stare: 'aprobata', rrn: '428541236789', autorizare: '123456', operation_id: 'op-1', terminal_device_id: 'PAX-1' });
     expect(Number(r[0].suma)).toBe(45);
-    // Aceeași comandă cu altă sumă: nu se încasează nimic în plus.
+    // Aceeași comandă cu altă sumă: nu se încasează nimic în plus, iar tableta află suma deja aprobată.
     const alta = await cerere('/api/pos/terminal/plata', { suma: 50, referinta: ref });
     expect(alta.statusCode).toBe(409);
+    expect(alta.json()).toMatchObject({ cod: COD_TERMINAL.plataDejaAprobata, suma_aprobata: 45 });
   });
 
   it('două cereri simultane pentru aceeași comandă: o singură plată pe terminal; altă sumă primește 409', async () => {
@@ -165,6 +167,22 @@ describe('răspuns pierdut: „ultima tranzacție” nu aprobă decât plata noa
     expect(await plata(ref)).toMatchObject({ aprobat: false, mesaj: 'Plata a fost refuzată pe terminal' });
   });
 
+  it('un cod de răspuns necunoscut, fără stare, nu e refuz: plata rămâne nesigură și nu se retrimite', async () => {
+    for (const cod of [0, '0', 'A0', '05']) {
+      const ref = randomUUID();
+      scenariu.pay = { errorCode: 241 };
+      scenariu.ultima = ultima({ documentNr: ref, responseCode: cod, amount: 45, rrn: 'X' });
+      expect(await plata(ref)).toMatchObject({ aprobat: false, nesigur: true });
+      expect(await plata(ref)).toMatchObject({ aprobat: false, nesigur: true });
+      expect((await randuri(ref)).map((x) => x.stare)).toEqual(['nesigura']);
+    }
+    expect(numar('/payment/Pay')).toBe(4);
+    // Semnale contradictorii (cod de aprobare, stare de refuz): nici aprobare, nici refuz.
+    const ref = randomUUID();
+    scenariu.ultima = ultima({ documentNr: ref, responseCode: '00', status: 'Declined', amount: 45, rrn: 'X' });
+    expect(await plata(ref)).toMatchObject({ aprobat: false, nesigur: true });
+  });
+
   it('un „succes” fără RRN și cod de autorizare e nesigur', async () => {
     const ref = randomUUID();
     scenariu.pay = { errorCode: 0, report: JSON.stringify({ operationId: 'op-x' }) };
@@ -187,7 +205,9 @@ describe('răspuns pierdut: „ultima tranzacție” nu aprobă decât plata noa
     const ref2 = randomUUID();
     scenariu.ultima = { errorCode: 7 };
     await plata(ref2);
-    expect((await cerere('/api/pos/terminal/plata', { suma: 10, referinta: ref2 })).statusCode).toBe(409);
+    const schimbata = await cerere('/api/pos/terminal/plata', { suma: 10, referinta: ref2 });
+    expect(schimbata.statusCode).toBe(409);
+    expect(schimbata.json()).toMatchObject({ cod: COD_TERMINAL.plataNelamurita, suma_nelamurita: 45 });
   });
 
   it('un răspuns POSLink peste 1 MB nu se citește; plata rămâne nesigură', async () => {
@@ -226,21 +246,53 @@ describe('returul pe card', () => {
     expect(retur[0].document_nr).not.toBe(ref);
   });
 
-  it('suma e plafonată la plată minus ce s-a restituit; fiecare încercare rămâne în registru', async () => {
+  it('returul e integral: un retur parțial se refuză, iar o cerere repetată nu restituie a doua oară', async () => {
     const ref = randomUUID();
     await plata(ref);
-    expect((await cerere('/api/pos/terminal/retur', { referinta: ref, suma: 46 })).statusCode).toBe(409);
+    for (const suma of [46, 20, 20]) {
+      const r = await cerere('/api/pos/terminal/retur', { referinta: ref, suma });
+      expect(r.statusCode).toBe(409);
+      expect(r.json().eroare).toMatch(/integral \(45\.00 lei\)/);
+    }
+    expect(numar('/Refund')).toBe(0);
+    // Un refuz al băncii rămâne în registru; încercarea următoare trimite din nou suma întreagă.
     scenariu.refund = { errorCode: 12, errorMessage: 'Refuzat de bancă' };
-    expect((await t.tableta.post('/api/pos/terminal/retur', { referinta: ref, suma: 20 })).aprobat).toBe(false);
+    expect((await t.tableta.post('/api/pos/terminal/retur', { referinta: ref, suma: 45 })).aprobat).toBe(false);
     scenariu.refund = { errorCode: 0, report: JSON.stringify({ rrn: 'R-2', authCode: '1', operationId: 'op-r2' }) };
-    expect((await t.tableta.post('/api/pos/terminal/retur', { referinta: ref, suma: 20 })).aprobat).toBe(true);
-    expect((await cerere('/api/pos/terminal/retur', { referinta: ref, suma: 30 })).statusCode).toBe(409);
-    expect(await t.tableta.post('/api/pos/terminal/retur', { referinta: ref })).toMatchObject({ aprobat: true, suma: 25 });
+    expect(await t.tableta.post('/api/pos/terminal/retur', { referinta: ref, suma: 45 })).toMatchObject({ aprobat: true, suma: 45, rrn: 'R-2' });
+    // Aceeași cerere, repetată (răspuns pierdut), cu sau fără sumă: returul înregistrat, nimic în plus.
+    expect(await t.tableta.post('/api/pos/terminal/retur', { referinta: ref, suma: 45 })).toMatchObject({ aprobat: true, rrn: 'R-2' });
+    expect(await t.tableta.post('/api/pos/terminal/retur', { referinta: ref })).toMatchObject({ aprobat: true, rrn: 'R-2' });
+    expect(numar('/Refund')).toBe(2);
     expect((await randuri(ref)).filter((x) => x.tip === 'retur').map((x) => [x.stare, Number(x.suma)])).toEqual([
-      ['refuzata', 20],
-      ['aprobata', 20],
-      ['aprobata', 25],
+      ['refuzata', 45],
+      ['aprobata', 45],
     ]);
+    scenariu.refund = { errorCode: 0, report: JSON.stringify({ rrn: 'R-1', authCode: '654321', operationId: 'op-r' }) };
+  });
+
+  it('returul pleacă doar la terminalul care a încasat plata (două tablete în aceeași cafenea)', async () => {
+    const ref = randomUUID();
+    await plata(ref);
+    const centru = (await t.admin.get('/api/dispozitive')).find((d: any) => d.nume === 'Tabletă Centru');
+    const noua = await t.admin.post('/api/dispozitive', { nume: 'Tabletă Centru 2', locatie_id: centru.locatie_id });
+    await t.admin.put(`/api/dispozitive/${noua.id}/terminal`, { terminal_device_id: 'PAX-7' });
+    const asociere = await t.app.inject({ method: 'POST', url: '/api/pos/asociere', payload: { cod: noua.cod_asociere } });
+    const r = await t.app.inject({ method: 'POST', url: '/api/pos/terminal/retur', payload: { referinta: ref }, headers: { authorization: `Bearer ${asociere.json().token}` } });
+    expect(r.statusCode).toBe(409);
+    expect(r.json()).toMatchObject({ cod: COD_TERMINAL.returAltTerminal, terminal: 'PAX-1' });
+    expect(numar('/Refund')).toBe(0);
+    // Terminalul care a încasat, mutat pe a doua tabletă: returul pleacă de acolo, cu RRN-ul plății.
+    await t.admin.put(`/api/dispozitive/${centru.id}/terminal`, { terminal_device_id: 'PAX-9' });
+    await t.admin.put(`/api/dispozitive/${noua.id}/terminal`, { terminal_device_id: 'PAX-1' });
+    try {
+      const ok = await t.app.inject({ method: 'POST', url: '/api/pos/terminal/retur', payload: { referinta: ref }, headers: { authorization: `Bearer ${asociere.json().token}` } });
+      expect(ok.json()).toMatchObject({ aprobat: true });
+      expect(apeluri.find((a) => a.cale.endsWith('/Refund'))!.corp).toMatchObject({ DeviceID: 'PAX-1', rrn: '428541236789' });
+    } finally {
+      await t.admin.put(`/api/dispozitive/${noua.id}/terminal`, { terminal_device_id: null });
+      await t.admin.put(`/api/dispozitive/${centru.id}/terminal`, { terminal_device_id: 'PAX-1' });
+    }
   });
 
   it('un retur cu răspuns pierdut se verifică pe terminal, nu se retrimite', async () => {
@@ -262,7 +314,7 @@ describe('returul pe card', () => {
     for (const referinta of [ref, randomUUID()]) {
       const r = await cerere('/api/pos/terminal/retur', { referinta, suma: 45, rrn: '428541236789' });
       expect(r.statusCode).toBe(409);
-      expect(r.json().eroare).toBe('Returul pe card se face din meniul terminalului');
+      expect(r.json()).toMatchObject({ eroare: 'Returul pe card se face din meniul terminalului', cod: COD_TERMINAL.returDinMeniu });
     }
     expect(numar('/Refund')).toBe(0);
   });
@@ -320,6 +372,36 @@ describe('vânzările pe card confirmate de terminal', () => {
     expect((await t.admin.get(`/api/ture/${tura}`)).card_neconfirmat).toEqual({ nr: 2, suma: 2 * pret });
     const p = await t.admin.get(`/api/panou?de_azi=${encodeURIComponent(new Date(Date.now() - 86_400_000).toISOString())}`);
     expect(p.card_neconfirmat).toBeGreaterThanOrEqual(2);
+  });
+});
+
+describe('vânzările pe card de pe tabletele fără terminal prin server', () => {
+  it('rămân nemarcate (NULL), iar Panou, Comenzi și tura numără aceleași vânzări', async () => {
+    const centru = (await t.admin.get('/api/dispozitive')).find((d: any) => d.nume === 'Tabletă Centru');
+    const manuala = await t.admin.post('/api/dispozitive', { nume: 'Tabletă pilot manual', locatie_id: centru.locatie_id });
+    const token = (await t.app.inject({ method: 'POST', url: '/api/pos/asociere', payload: { cod: manuala.cod_asociere } })).json().token;
+    const tura = randomUUID();
+    const acum = new Date().toISOString();
+    const linie = [{ produs_id: t.produs('Espresso').id, cantitate: 1, pret_unitar: t.produs('Espresso').pret, modificatori: [] }];
+    const card = evComanda(tura, t.barista, linie, 'card', { la: acum });
+    const r = await t.app.inject({
+      method: 'POST',
+      url: '/api/pos/sync',
+      payload: { evenimente: [evTuraDeschisa(tura, t.barista, 500, acum), card] },
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(r.json().cu_eroare).toEqual([]);
+    const [rand] = await t.db.query<{ card_confirmat: boolean | null }>('SELECT card_confirmat FROM comenzi WHERE id = $1', [card.date.comanda_id]);
+    expect(rand.card_confirmat).toBeNull();
+    expect((await t.admin.get(`/api/ture/${tura}`)).card_neconfirmat).toEqual({ nr: 0, suma: 0 });
+    const lista = await t.admin.get(`/api/comenzi?card_neconfirmat=true&de=${encodeURIComponent(new Date(Date.now() - 6 * 86_400_000).toISOString())}`);
+    expect(lista.map((c: any) => c.id)).not.toContain(card.date.comanda_id);
+    const p = await t.admin.get(`/api/panou?de_azi=${encodeURIComponent(new Date(Date.now() - 86_400_000).toISOString())}`);
+    expect(p.card_neconfirmat).toBe(lista.length);
+    // O plată prin server de pe această tabletă e o eroare de configurare, nu o plată nesigură.
+    const plataFara = await t.app.inject({ method: 'POST', url: '/api/pos/terminal/plata', payload: { suma: 5, referinta: randomUUID() }, headers: { authorization: `Bearer ${token}` } });
+    expect(plataFara.statusCode).toBe(409);
+    expect(plataFara.json().cod).toBe(COD_TERMINAL.configurare);
   });
 });
 

@@ -1,6 +1,7 @@
 // Terminalul bancar în regim fiscal al fiecărei tablete (PAX A930 cu IS Fiscal, prin POSLink):
 // plata cu cardul, bonul fiscal, raportul Z. Cheia API stă doar pe server.
 
+import { COD_TERMINAL } from '@cafenea/shared';
 import type { Db } from '../db';
 import { EroareUtilizator } from '../erori';
 import { ClientPOSLink, configPOSLink, MESAJ_NESIGUR, uuidDocument, type BonFiscalDeTrimis, type RezultatBon, type RezultatPlata } from './poslink';
@@ -27,14 +28,14 @@ export function poslinkConfigurat(): boolean {
 function client(): ClientPOSLink {
   if (clientDeTest) return clientDeTest;
   const cfg = configPOSLink();
-  if (!cfg) throw new EroareUtilizator('POSLink nu este configurat pe server (variabila POSLINK_API_KEY)', 503);
+  if (!cfg) throw new EroareUtilizator('POSLink nu este configurat pe server (variabila POSLINK_API_KEY)', 503, COD_TERMINAL.configurare);
   return new ClientPOSLink(cfg);
 }
 
 async function terminalulTabletei(db: Db, dispozitivId: number): Promise<string> {
   const r = await db.query<{ terminal_device_id: string | null }>('SELECT terminal_device_id FROM dispozitive WHERE id = $1', [dispozitivId]);
   if (!r[0]?.terminal_device_id) {
-    throw new EroareUtilizator('Tableta nu are un terminal asociat; setați ID-ul terminalului în panou (Setări → Tablete)', 409);
+    throw new EroareUtilizator('Tableta nu are un terminal asociat; setați ID-ul terminalului în panou (Setări → Tablete)', 409, COD_TERMINAL.configurare);
   }
   return r[0].terminal_device_id;
 }
@@ -168,14 +169,19 @@ export async function plataCard(db: Db, dispozitivId: number, suma: number, refe
     const aprobata = anterioare.find((o) => o.stare === 'aprobata');
     if (aprobata) {
       if (Math.abs(Number(aprobata.suma) - suma) > 0.001) {
-        throw new EroareUtilizator(`Plata pentru această comandă a fost deja aprobată, pentru ${Number(aprobata.suma).toFixed(2)} lei`, 409);
+        // Coșul s-a schimbat după o aprobare al cărei răspuns s-a pierdut: clientul a plătit deja această sumă.
+        throw new EroareUtilizator(`Plata pentru această comandă a fost deja aprobată, pentru ${Number(aprobata.suma).toFixed(2)} lei`, 409, COD_TERMINAL.plataDejaAprobata, {
+          suma_aprobata: Number(aprobata.suma),
+        });
       }
       return dinOperatiune(aprobata);
     }
     const ultima = anterioare.at(-1);
     if (ultima && (ultima.stare === 'nesigura' || ultima.stare === 'in_curs')) {
       if (Math.abs(Number(ultima.suma) - suma) > 0.001) {
-        throw new EroareUtilizator('Plata anterioară a acestei comenzi nu e lămurită; verificați terminalul înainte de a schimba suma', 409);
+        throw new EroareUtilizator('Plata anterioară a acestei comenzi nu e lămurită; verificați terminalul înainte de a schimba suma', 409, COD_TERMINAL.plataNelamurita, {
+          suma_nelamurita: Number(ultima.suma),
+        });
       }
       return verificaNesigura(db, ultima);
     }
@@ -186,34 +192,42 @@ export async function plataCard(db: Db, dispozitivId: number, suma: number, refe
 
 /**
  * Restituirea pe card a unei comenzi (referinta = id-ul comenzii). Se face doar în contul plății aprobate
- * a acelei comenzi din registrul terminalului: RRN-ul, operationId și plafonul vin de acolo, niciodată
- * din cerere. Suma: cel mult plata minus ce s-a restituit deja. Un retur aprobat se întoarce din nou
- * (aceeași comandă, fără o a doua restituire); unul nesigur se verifică înainte de orice retrimitere.
+ * a acelei comenzi din registrul terminalului: RRN-ul, operationId și suma vin de acolo, niciodată din
+ * cerere. Returul e integral (anularea comenzii), deci cel mult unul aprobat pe comandă: o cerere repetată
+ * primește returul înregistrat, iar unul nesigur se verifică înainte de orice retrimitere. Un retur parțial
+ * sau fără plată înregistrată (vânzare din pilotul manual, de dinaintea registrului) se face din meniul
+ * terminalului; codul erorii îi spune tabletei să ceară asta baristei.
  */
 export async function returCard(db: Db, dispozitivId: number, referinta: string, sumaCeruta?: number | null): Promise<RezultatPlata & { suma?: number }> {
   const deviceId = await terminalulTabletei(db, dispozitivId);
   const c = client();
   const locatie = (await db.query<{ locatie_id: number }>('SELECT locatie_id FROM dispozitive WHERE id = $1', [dispozitivId]))[0].locatie_id;
   const plata = (await operatiuni(db, referinta, 'plata')).find((o) => o.stare === 'aprobata');
-  if (!plata || plata.locatie_id !== locatie) throw new EroareUtilizator('Returul pe card se face din meniul terminalului', 409);
-  const platit = Number(plata.suma);
-  return oSinguraData(`retur:${referinta}`, sumaCeruta ?? platit, dispozitivId, 'Returul este în curs pe terminal', async () => {
+  if (!plata || plata.locatie_id !== locatie) {
+    throw new EroareUtilizator('Returul pe card se face din meniul terminalului', 409, COD_TERMINAL.returDinMeniu);
+  }
+  // RRN-ul plății e cunoscut doar de terminalul care a încasat-o (și de lotul lui bancar).
+  if (plata.terminal_device_id !== deviceId) {
+    throw new EroareUtilizator(`Plata s-a încasat pe terminalul ${plata.terminal_device_id}; returul se face de acolo`, 409, COD_TERMINAL.returAltTerminal, {
+      terminal: plata.terminal_device_id,
+    });
+  }
+  // Fără RRN, POSLink nu are după ce restitui (o aprobare veche, recuperată fără el).
+  if (!plata.rrn) throw new EroareUtilizator('Plata nu are RRN; returul pe card se face din meniul terminalului', 409, COD_TERMINAL.returDinMeniu);
+  const suma = Number(plata.suma);
+  if (sumaCeruta != null && Math.abs(sumaCeruta - suma) > 0.001) {
+    throw new EroareUtilizator(`Returul pe card se face integral (${suma.toFixed(2)} lei); un retur parțial se face din meniul terminalului`, 409);
+  }
+  return oSinguraData(`retur:${referinta}`, suma, dispozitivId, 'Returul este în curs pe terminal', async () => {
     const retururi = await operatiuni(db, referinta, 'retur');
+    // Comanda e deja restituită: aceeași cerere repetată primește returul înregistrat.
+    const aprobat = retururi.find((o) => o.stare === 'aprobata');
+    if (aprobat) return { ...dinOperatiune(aprobat), suma: Number(aprobat.suma) };
     const neincheiat = retururi.find((o) => o.stare === 'nesigura' || o.stare === 'in_curs');
     if (neincheiat) {
       const r = await verificaNesigura(db, neincheiat);
       if (r.aprobat || r.nesigur) return { ...r, suma: Number(neincheiat.suma) };
     }
-    const dejaRestituit = (await operatiuni(db, referinta, 'retur')).filter((o) => o.stare === 'aprobata');
-    const restituit = dejaRestituit.reduce((s, o) => s + Number(o.suma), 0);
-    const ramas = Math.round((platit - restituit) * 100) / 100;
-    // Comanda e deja restituită integral: aceeași cerere repetată primește returul înregistrat.
-    if (ramas <= 0.001 && dejaRestituit.length) {
-      const ultimul = dejaRestituit.at(-1)!;
-      return { ...dinOperatiune(ultimul), suma: Number(ultimul.suma) };
-    }
-    const suma = Math.round((sumaCeruta ?? ramas) * 100) / 100;
-    if (suma > ramas + 0.001) throw new EroareUtilizator(`Se pot restitui cel mult ${ramas.toFixed(2)} lei pentru această comandă`, 409);
     const documentNr = uuidDocument();
     const id = await deschideOperatiune(db, { referinta, tip: 'retur', document_nr: documentNr, dispozitiv_id: dispozitivId, terminal_device_id: deviceId, suma });
     const r = await executa(db, id, () => c.restituie(deviceId, suma, { rrn: plata.rrn, operation_id: plata.operation_id }, documentNr));

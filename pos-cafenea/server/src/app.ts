@@ -4,7 +4,7 @@ import Fastify, { type FastifyReply, type FastifyRequest } from 'fastify';
 import fastifyStatic from '@fastify/static';
 import { bazaRaspunde } from './db-comun';
 import type { Db } from './db';
-import { raspunsLaEroare } from './erori';
+import { corpEroare, raspunsLaEroare } from './erori';
 import { LIMITA_CORP } from './limite';
 import { magistrala, type Notificare } from './magistrala';
 import { creeazaBilet, detinatorBilet, dispozitivDinToken, utilizatorDinToken } from './servicii/acces';
@@ -72,7 +72,7 @@ export async function construiesteApp({ db, dirWeb, jurnal = false, trustProxy =
 
   app.setErrorHandler((err, _req, reply) => {
     const r = raspunsLaEroare(err);
-    if (r) return reply.status(r.status).send({ eroare: r.eroare });
+    if (r) return reply.status(r.status).send(corpEroare(r));
     app.log.error(err);
     return reply.status(500).send({ eroare: 'Eroare internă a serverului' });
   });

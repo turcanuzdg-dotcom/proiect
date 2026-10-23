@@ -1,4 +1,4 @@
-import type { CatalogPOS } from '@cafenea/shared';
+import { COD_TERMINAL, type CatalogPOS, type CodTerminal } from '@cafenea/shared';
 import { cerereJson, EroareHttp } from '../comun/http';
 import type { ConfigEchipamente } from './stocare';
 
@@ -16,6 +16,42 @@ export interface RezultatCard {
   mesaj?: string;
   /** Rezultatul nu se poate confirma: nu e plată, dar nici refuz; reîncercarea verifică din nou. */
   nesigur?: boolean;
+  /** Motivul unui rezultat pe care o reîncercare nu-l schimbă (COD_TERMINAL), primit de la server. */
+  cod?: CodTerminal;
+  /** La `plata_deja_aprobata` / `plata_nelamurita`: suma deja aprobată, respectiv cea încă nelămurită. */
+  suma_anterioara?: number;
+  /** La `retur_alt_terminal`: terminalul care a încasat plata. */
+  terminal?: string;
+}
+
+/** Ce urmează după un retur pe card: anularea se înregistrează, se face din meniul terminalului, se verifică… */
+export type UrmareRetur = 'inregistreaza' | 'din_meniu' | 'nesigur' | 'refuzat';
+
+export function urmareRetur(r: RezultatCard): UrmareRetur {
+  if (r.aprobat) return 'inregistreaza';
+  if (r.cod === COD_TERMINAL.returDinMeniu || r.cod === COD_TERMINAL.returAltTerminal) return 'din_meniu';
+  return r.nesigur ? 'nesigur' : 'refuzat';
+}
+
+/**
+ * Un răspuns de eroare de la server, la plata prin server. Doar ce se poate lămuri printr-o reîncercare
+ * (fără răspuns, 5xx, „plata e în curs”) e nesigur; o configurare lipsă sau o plată deja aprobată pentru
+ * altă sumă nu se schimbă apăsând „Verifică din nou”.
+ */
+export function rezultatDinEroarePlata(e: unknown): RezultatCard {
+  const mesaj = (e as Error).message;
+  if (!(e instanceof EroareHttp)) return { aprobat: false, mesaj, nesigur: true };
+  const suma = (k: string) => (typeof e.date?.[k] === 'number' ? (e.date[k] as number) : undefined);
+  switch (e.cod) {
+    case COD_TERMINAL.configurare:
+      return { aprobat: false, mesaj, cod: e.cod };
+    case COD_TERMINAL.plataDejaAprobata:
+      return { aprobat: false, mesaj, cod: e.cod, suma_anterioara: suma('suma_aprobata') };
+    case COD_TERMINAL.plataNelamurita:
+      return { aprobat: false, mesaj, cod: e.cod, suma_anterioara: suma('suma_nelamurita') };
+  }
+  const definitiv = e.status >= 400 && e.status < 500 && e.status !== 409;
+  return { aprobat: false, mesaj, ...(definitiv ? {} : { nesigur: true }) };
 }
 
 export interface ReferintePlata {
@@ -158,8 +194,7 @@ class PrinServer implements Echipamente {
     } catch (e) {
       // Fără răspuns de la server nu știm ce s-a întâmplat pe terminal: reîncercarea cu aceeași referință
       // se alătură plății în curs sau întoarce rezultatul înregistrat, fără să încaseze a doua oară.
-      const definitiv = e instanceof EroareHttp && e.status >= 400 && e.status < 500 && e.status !== 409;
-      return { aprobat: false, mesaj: (e as Error).message, ...(definitiv ? {} : { nesigur: true }) };
+      return rezultatDinEroarePlata(e);
     }
   }
   /** Serverul ia RRN-ul și suma din plata înregistrată a comenzii; tableta trimite doar comanda. */
@@ -167,7 +202,11 @@ class PrinServer implements Echipamente {
     try {
       return await this.cere<RezultatCard>('/retur', { referinta, suma }, 150_000);
     } catch (e) {
-      return { aprobat: false, mesaj: (e as Error).message };
+      // Fără plată înregistrată prin server (sau încasată pe alt terminal): returul se face din meniul terminalului.
+      if (e instanceof EroareHttp && (e.cod === COD_TERMINAL.returDinMeniu || e.cod === COD_TERMINAL.returAltTerminal)) {
+        return { aprobat: false, mesaj: e.message, cod: e.cod, terminal: typeof e.date?.terminal === 'string' ? e.date.terminal : undefined };
+      }
+      return { aprobat: false, mesaj: (e as Error).message, ...(e instanceof EroareHttp && e.status !== 0 && e.status < 500 ? {} : { nesigur: true }) };
     }
   }
   async tiparesteBon(bon: BonFiscal): Promise<RezultatTiparire> {

@@ -4,7 +4,7 @@ import { cerereJson } from '../comun/http';
 import { uuid } from '../comun/uuid';
 import { actualizare } from './actualizare';
 import { ContextAplicatie, type Aplicatie } from './context';
-import { tabletaOcupata, trebuieBlocata } from './blocare';
+import { lucruNesalvat, tabletaOcupata, trebuieBlocata } from './blocare';
 import { alegeEchipamente, creeazaEchipamente } from './echipamente';
 import { Asociere, Autentificare, DeschidereTura } from './ecrane';
 import { ceasGresit, Sincronizator, STARE_SYNC_INITIALA, type StareSync } from './sincronizare';
@@ -22,6 +22,8 @@ export function App() {
   const [config, setConfig] = useState<stocare.ConfigTableta>();
   const [catalog, setCatalog] = useState<CatalogPOS>();
   const [barista, setBarista] = useState<stocare.BaristaActiv>();
+  // Blocarea automată: ecranul de PIN acoperă vânzarea, fără s-o închidă (coșul și dialogurile rămân).
+  const [blocata, setBlocata] = useState(false);
   const [tura, setTura] = useState<stocare.TuraLocala>();
   // Alegerea salvată pe tabletă; cea folosită de fapt o decide și catalogul (alegeEchipamente).
   const [echipamenteSalvate, setEchipamenteSalvate] = useState<stocare.ConfigEchipamente>();
@@ -101,10 +103,11 @@ export function App() {
   }, [config, incarcaCatalog]);
 
   // Blocarea automată: după câteva minute fără atingere, tableta revine la ecranul de PIN (tura rămâne
-  // deschisă). Nu în timpul unei plăți cu cardul, al unui retur sau al închiderii turei.
+  // deschisă). Nu cât timp e deschis un dialog de plată cu cardul, de retur sau de închidere a turei.
+  // Barista se scoate din memoria tabletei (o repornire cere PIN-ul), dar vânzarea rămâne sub ecranul de PIN.
   const minuteBlocare = catalog?.blocare_automata_min ?? 5;
   useEffect(() => {
-    if (!barista || !tura) return;
+    if (!barista || !tura || blocata) return;
     let ultimaAtingere = Date.now();
     const atingere = () => {
       ultimaAtingere = Date.now();
@@ -115,20 +118,21 @@ export function App() {
       if (tabletaOcupata()) ultimaAtingere = Date.now();
       else if (trebuieBlocata(ultimaAtingere, Date.now(), minuteBlocare, false)) {
         void stocare.sterge('barista');
-        setBarista(undefined);
+        setBlocata(true);
       }
     }, 10_000);
     return () => {
       evenimente.forEach((e) => window.removeEventListener(e, atingere));
       window.clearInterval(timer);
     };
-  }, [barista, tura, minuteBlocare]);
+  }, [barista, tura, minuteBlocare, blocata]);
 
-  // Versiunea nouă se aplică doar pe ecranul de PIN, când nu e nimic în lucru.
+  // Versiunea nouă se aplică doar pe ecranul de PIN, când nu e nimic în lucru (nici un coș început sub
+  // ecranul blocării automate).
   useEffect(() => actualizare.aboneaza(() => setActualizareGata(true)), []);
   useEffect(() => {
-    if (actualizareGata && faza.tip === 'gata' && !barista) actualizare.aplica();
-  }, [actualizareGata, faza, barista]);
+    if (actualizareGata && faza.tip === 'gata' && (!barista || (blocata && !tabletaOcupata() && !lucruNesalvat()))) actualizare.aplica();
+  }, [actualizareGata, faza, barista, blocata]);
 
   const asociata = async (cfg: stocare.ConfigTableta) => {
     // Re-asocierea păstrează coada de evenimente netrimise: pleacă cu tokenul nou.
@@ -160,10 +164,12 @@ export function App() {
         void stocare.sterge('barista');
         setTura(undefined);
         setBarista(undefined);
+        setBlocata(false);
       },
       blocheaza() {
         void stocare.sterge('barista');
         setBarista(undefined);
+        setBlocata(false);
       },
       async retrimiteJurnal() {
         if (!sincronizator.current) throw new Error('Sincronizarea nu rulează');
@@ -231,9 +237,29 @@ export function App() {
     );
   else if (aplicatie)
     ecran = (
-      <ContextAplicatie.Provider value={aplicatie}>
-        <Vanzare />
-      </ContextAplicatie.Provider>
+      <>
+        {/* Sub ecranul blocării, vânzarea nu primește atingeri sau taste (inert), dar își păstrează starea. */}
+        <div style={{ display: 'contents' }} inert={blocata || undefined}>
+          <ContextAplicatie.Provider value={aplicatie}>
+            <Vanzare />
+          </ContextAplicatie.Provider>
+        </div>
+        {blocata && (
+          <div className="blocare-suprapusa">
+            <Autentificare
+              catalog={catalog}
+              locatie={catalog.locatie.nume}
+              sync={sync}
+              onIntrat={async (b) => {
+                // Coșul rămâne: dacă intră alt barista, vânzarea se înregistrează pe numele lui.
+                await stocare.scrie('barista', b);
+                setBarista(b);
+                setBlocata(false);
+              }}
+            />
+          </div>
+        )}
+      </>
     );
 
   return (
