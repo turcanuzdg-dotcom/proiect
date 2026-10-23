@@ -49,11 +49,18 @@ export interface ComandaLocala {
   anulata_la?: string;
   motiv_anulare?: string;
   stoc_restituit?: boolean;
+  /** Bonul fiscal a fost emis de tabletă (prin terminalul legat sau puntea locală). */
   bon_tiparit: boolean;
+  /**
+   * Terminal separat, fără legătură: bonul fiscal îl emite barista pe terminal, tableta doar amintește.
+   * Comanda nu e „bon netipărit” și nu se retipărește din Istoric.
+   */
+  bon_pe_terminal?: boolean;
 }
 
 export interface ConfigEchipamente {
-  tip: 'simulator' | 'punte' | 'server';
+  /** manual = terminal separat, fără legătură cu tableta (suma se introduce de mână pe terminal). */
+  tip: 'simulator' | 'punte' | 'server' | 'manual';
   url: string;
   /** Secretul afișat de punte la pornire. */
   secret?: string;
@@ -67,22 +74,50 @@ interface Chei {
   barista: BaristaActiv;
   contor: number;
   echipamente: ConfigEchipamente;
+  pin_blocare: StareBlocarePin;
+}
+
+/** Încercările greșite de PIN pe tabletă (vezi blocare.ts). */
+export interface StareBlocarePin {
+  /** PIN-uri greșite de la ultima blocare sau ultima intrare reușită. */
+  esecuri: number;
+  /** Câte blocări au fost la rând: fiecare durează dublu față de cea dinainte. */
+  blocari: number;
+  /** Până când (ms) nu se mai primesc PIN-uri. */
+  blocat_pana: number;
+}
+
+/** Un eveniment confirmat de server, păstrat pentru retrimitere (jurnalul ultimelor 7 zile). */
+export interface EvenimentTrimis {
+  /** Numărul lui din coadă: păstrează ordinea în care a fost făcut. */
+  secv: number;
+  confirmat_la: number;
+  ev: EvenimentPOS;
 }
 
 interface Schema extends DBSchema {
   kv: { key: string; value: unknown };
   coada: { key: number; value: { secv?: number; ev: EvenimentPOS } };
   comenzi: { key: string; value: ComandaLocala; indexes: { tura: string } };
+  trimise: { key: number; value: EvenimentTrimis; indexes: { confirmat_la: number } };
 }
+
+/** Cât timp și câte evenimente confirmate păstrează jurnalul de retrimitere. */
+export const JURNAL_ZILE = 7;
+export const JURNAL_MAXIM = 20_000;
 
 let promisiune: Promise<IDBPDatabase<Schema>> | null = null;
 
 function db() {
-  promisiune ??= openDB<Schema>('pos-cafenea', 1, {
-    upgrade(d) {
-      d.createObjectStore('kv');
-      d.createObjectStore('coada', { keyPath: 'secv', autoIncrement: true });
-      d.createObjectStore('comenzi', { keyPath: 'comanda_id' }).createIndex('tura', 'tura_id');
+  promisiune ??= openDB<Schema>('pos-cafenea', 2, {
+    upgrade(d, versiuneVeche) {
+      if (versiuneVeche < 1) {
+        d.createObjectStore('kv');
+        d.createObjectStore('coada', { keyPath: 'secv', autoIncrement: true });
+        d.createObjectStore('comenzi', { keyPath: 'comanda_id' }).createIndex('tura', 'tura_id');
+      }
+      // Versiunea 2: jurnalul evenimentelor deja confirmate, pentru retrimitere după o restaurare a serverului.
+      if (versiuneVeche < 2) d.createObjectStore('trimise', { keyPath: 'secv' }).createIndex('confirmat_la', 'confirmat_la');
     },
   });
   return promisiune;
@@ -159,12 +194,54 @@ export async function primeleDinCoada(n: number) {
   return rez;
 }
 
-export async function scoateDinCoada(secvente: number[]): Promise<void> {
+/**
+ * Scoate din coadă evenimentele confirmate de server și le mută, în aceeași tranzacție, în jurnalul de
+ * retrimitere (ultimele JURNAL_ZILE zile, cel mult JURNAL_MAXIM evenimente). Dacă serverul e restaurat
+ * dintr-o copie de siguranță mai veche, tableta poate trimite din nou ziua pierdută; serverul recunoaște
+ * după UUID ce are deja, deci retrimiterea nu dublează nimic.
+ */
+export async function scoateDinCoada(secvente: number[], acum = Date.now()): Promise<void> {
   if (!secvente.length) return;
   const d = await db();
-  const tx = d.transaction('coada', 'readwrite');
-  await Promise.all(secvente.map((s) => tx.store.delete(s)));
+  const tx = d.transaction(['coada', 'trimise'], 'readwrite');
+  const coada = tx.objectStore('coada');
+  const trimise = tx.objectStore('trimise');
+  for (const s of secvente) {
+    const x = await coada.get(s);
+    if (!x) continue;
+    await trimise.put({ secv: s, confirmat_la: acum, ev: x.ev });
+    await coada.delete(s);
+  }
+  // Jurnalul rămâne mărginit: pleacă întâi ce e mai vechi de JURNAL_ZILE, apoi cele mai vechi peste limită.
+  let cursor = await trimise.index('confirmat_la').openCursor(IDBKeyRange.upperBound(acum - JURNAL_ZILE * 86_400_000, true));
+  while (cursor) {
+    await cursor.delete();
+    cursor = await cursor.continue();
+  }
+  let peste = (await trimise.count()) - JURNAL_MAXIM;
+  let vechi = peste > 0 ? await trimise.openCursor() : null;
+  while (vechi && peste > 0) {
+    await vechi.delete();
+    peste -= 1;
+    vechi = await vechi.continue();
+  }
   await tx.done;
+}
+
+/** Evenimentele din jurnal, în ordinea în care au fost făcute, începând după secvența `dupa`. */
+export async function evenimenteDinJurnal(n: number, dupa = 0): Promise<EvenimentTrimis[]> {
+  const d = await db();
+  const rez: EvenimentTrimis[] = [];
+  let cursor = await d.transaction('trimise').store.openCursor(IDBKeyRange.lowerBound(dupa, true));
+  while (cursor && rez.length < n) {
+    rez.push(cursor.value);
+    cursor = await cursor.continue();
+  }
+  return rez;
+}
+
+export async function numarInJurnal(): Promise<number> {
+  return (await db()).count('trimise');
 }
 
 export async function numarInCoada(): Promise<number> {

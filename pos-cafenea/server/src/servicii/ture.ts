@@ -362,7 +362,14 @@ export async function detaliuTura(db: Db, id: string) {
     `SELECT cont, tip, COUNT(*)::int AS nr, SUM(suma)::numeric AS suma FROM miscari_bani WHERE tura_id = $1 GROUP BY cont, tip ORDER BY cont, tip`,
     [id],
   );
-  return { ...t, bani };
+  // Vânzările pe card ale turei fără plată aprobată de terminal (Simulator, terminal fără legătură sau
+  // aprobare care nu se poate confirma): pot explica o diferență la card.
+  const [neconfirmat] = await db.query<{ nr: number; suma: number }>(
+    `SELECT COUNT(*)::int AS nr, COALESCE(SUM(total), 0)::numeric AS suma FROM comenzi
+      WHERE tura_id = $1 AND stare = 'finalizata' AND card_confirmat = false`,
+    [id],
+  );
+  return { ...t, bani, card_neconfirmat: { nr: neconfirmat.nr, suma: Number(neconfirmat.suma) } };
 }
 
 export async function verificaTura(db: Db, id: string, utilizatorId: number, nota: string | null) {

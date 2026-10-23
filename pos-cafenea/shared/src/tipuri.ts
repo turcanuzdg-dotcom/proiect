@@ -104,6 +104,12 @@ export interface CatalogPOS {
   modificatori: ModificatorCatalog[];
   baristi: BaristCatalog[];
   generat_la: string;
+  /** Tableta are un terminal fiscal legat în panou (POSLink): se folosește el, fără altă alegere. */
+  terminal_prin_server?: boolean;
+  /** Simulatorul și puntea locală se pot alege pe tabletă (instruire). */
+  mod_demonstratie?: boolean;
+  /** Minute fără atingere după care tableta revine la ecranul de PIN. */
+  blocare_automata_min?: number;
 }
 
 // ---- Evenimentele trimise de POS (coada offline) ----

@@ -28,7 +28,7 @@ flowchart LR
 | **1. Două module sincronizate în timp real** | POS (`web/src/pos`) și panou (`web/src/admin`) pe același API. Panoul primește notificări prin SSE (`/api/flux`) și se reîmprospătează singur la fiecare vânzare. | gata |
 | **2. Trimiterea sumei la terminal, bon tipărit direct** | Terminalul clientului e un **PAX A930** (Android) cu softul fiscal IntelectSoft și acceptare Moldindconbank, în „regim fiscal”: același aparat încasează cardul și tipărește bonul fiscal. Integrarea se face prin **POSLink** (API REST Intelectsoft, gratuit pentru terminalele în regim fiscal), din server: `server/src/servicii/poslink.ts` + `terminal.ts`. Tableta trimite suma, serverul o pune pe terminal și așteaptă aprobarea (până la 5 minute); dacă răspunsul se pierde, verifică „ultima tranzacție” ca să nu încaseze de două ori; apoi trimite bonul fiscal cu liniile, cota TVA pe produs și plata (numerar cu rest, sau card cu RRN). Raportul Z și închiderea zilei bancare, la închiderea turei. Dacă imprimanta/terminalul nu răspunde, vânzarea rămâne salvată și bonul se poate emite din Istoric. | gata, testat pe un POSLink simulat; **de validat în mediul de test Intelectsoft** |
 | Numerar cu afișare rest | Dialog cu sume rapide (exact, 50, 100, 200…) și restul afișat mare. | gata |
-| Card | Suma pleacă automat la terminal (POSLink `payment/Pay`), cu aceeași referință la fiecare reîncercare; refuzul se poate reîncerca. | gata |
+| Card | Suma pleacă automat la terminal (POSLink `payment/Pay`), cu aceeași referință la fiecare reîncercare; refuzul se poate reîncerca. Fiecare plată și fiecare retur rămân în registrul `operatiuni_terminal`: o plată aprobată nu se mai trimite a doua oară, iar o vânzare pe card fără plată aprobată e marcată „card neconfirmat”. La pilotul fără POSLink: „terminal separat”, suma se tastează pe terminal și tableta amintește bonul fiscal. | gata |
 | Casare fără încasare (protocol, degustări, personal, rebut) | Buton separat; motiv obligatoriu, notă opțională. Scade ingredientele, nu introduce bani, nu emite bon fiscal. | gata |
 | Descărcare automată pe rețetar, cu „Lapte de ovăz” și „Extra shot” | `shared/src/calcul.ts`: rețetă + modificatori. Un modificator poate **înlocui** un ingredient (lapte → lapte de ovăz, în cantitatea din rețeta produsului) și/sau **adăuga/scădea** (extra shot +9 g cafea și +1 doză; fără zahăr −1 plic). Costul ingredientelor se salvează pe fiecare linie vândută. | gata, testat |
 | **3. Închiderea turei** (doze râșniță, numerar, total card, retururi/casări) | Fereastră „oarbă”: barista introduce ce a numărat fără să vadă cifrele sistemului. Serverul calculează scripticul (numerar din registru, card din tranzacții, doze din rețetar, anulări și casări din comenzi), salvează diferențele și marchează tura pentru admin peste pragurile din Setări → Toleranțe. Adminul o marchează „verificată” cu o notă. | gata, testat |
@@ -97,6 +97,25 @@ flowchart LR
   anulează tokenul, tableta poate declara doar bariste din locația ei, iar puntea de echipamente cere un
   secret și verifică originea paginii. În producție serverul ascultă doar local, în spatele Caddy (HTTPS),
   și trimite un Content-Security-Policy strict.
+- **Cardul se verifică pe server, nu pe tabletă.** Plata trece prin server, care o scrie în
+  `operatiuni_terminal` (o înregistrare pe încercare: în curs, aprobată, refuzată sau nesigură; doar câmpurile
+  alese, niciodată răspunsul brut). O plată aprobată se întoarce din registru la reîncercare, una în curs se
+  așteaptă (sau 409), una nesigură se verifică pe terminal fără să se retrimită suma. „Ultima tranzacție”
+  aprobă doar cu referința noastră, aprobarea explicită și aceeași sumă; altfel tableta arată „plată
+  neconfirmată” și nu înregistrează vânzarea. Tableta așteaptă 7,5 minute, peste cele circa 7 ale serverului.
+  Returul pe card se face doar în contul plății înregistrate a comenzii (RRN și plafon din registru), o
+  singură dată; fără plată înregistrată se face din meniul terminalului. La sincronizare, o vânzare pe card
+  fără plată aprobată de aceeași sumă primește `card_confirmat = false` (nu se respinge: tableta lucrează
+  offline-first) și apare în Comenzi, pe tură și pe Panou. Terminalul legat în panou are întâietate pe
+  tabletă; Simulatorul și puntea locală apar doar în dezvoltare sau cu „mod demonstrație” din Setări → Tablete.
+- **Tableta se blochează singură.** După `blocare_automata_min` minute fără atingere (implicit 5, din panou)
+  revine la ecranul de PIN, niciodată în timpul unei plăți, al unui retur sau al închiderii turei. După 5 PIN-uri
+  greșite urmează o pauză de 30 s, apoi dublă (numărătoarea stă în IndexedDB). Închiderea turei cere PIN-ul din
+  nou. Aplicația caută o versiune nouă la 30 de minute și la revenirea internetului.
+- **Jurnalul de retrimitere al tabletei.** Evenimentele confirmate de server nu se șterg imediat: rămân 7 zile
+  (cel mult 20 000) într-un depozit separat din IndexedDB. După o restaurare a serverului dintr-o copie de
+  siguranță, Meniu → Echipamente și tabletă → „Retrimite evenimentele din ultimele 7 zile” reface ziua pierdută;
+  serverul recunoaște după UUID ce are deja.
 - **Registrele se apără și în bază.** `miscari_stoc`, `miscari_bani` și `jurnal_audit` au declanșatori
   care refuză UPDATE, DELETE și TRUNCATE: regula „nimic nu se suprascrie” nu mai depinde doar de cod.
   Opțional, serverul lucrează cu un rol PostgreSQL fără drepturi pe schemă (migrațiile trec prin altul).
@@ -110,7 +129,13 @@ flowchart LR
   pe un POSLink simulat; trebuie validată în mediul de test Intelectsoft (vezi mai jos). Schema
   răspunsului „ultima tranzacție” nu e publicată: o citim defensiv (după referința noastră sau sumă).
 - Bonul de retur (storno) și copia unui bon nu au comenzi în POSLink: se fac din meniul casei fiscale de
-  pe terminal. Plata se restituie pe card prin POSLink (`Refund`), cu RRN-ul plății.
+  pe terminal. Plata se restituie pe card prin POSLink (`Refund`), cu RRN-ul plății înregistrate pe server.
+- O plată rămasă „nesigură” (terminalul nu o confirmă și nici nu o refuză explicit) nu se rezolvă singură:
+  barista verifică ecranul terminalului și chitanța băncii; dacă plata nu a trecut, tableta trimite o plată nouă
+  (cu altă referință), iar încercarea nesigură rămâne în registru. O anulare pe card fără retur aprobat nu e
+  încă semnalată separat în panou.
+- POSLINK_URL trebuie să fie https (http doar pentru 127.0.0.1/localhost); un răspuns POSLink peste 1 MB nu
+  se citește.
 - Plata cu cardul și bonul fiscal au nevoie de internet (POSLink e în cloud). O vânzare în numerar făcută
   fără internet rămâne fără bon fiscal până la reconectare („Bon netipărit” în Istoric).
 - Un eveniment respins de server pentru format invalid nu poate fi corectat din panou; se marchează

@@ -23,3 +23,15 @@ export async function scrieSetare(db: Db, cheie: string, valoare: unknown): Prom
 }
 
 export const citesteTolerante = (db: Db) => citesteSetare(db, 'tolerante', TOLERANTE_IMPLICITE);
+
+/** Comportamentul tabletelor, trimis în catalog. */
+export interface SetariTableta {
+  /** Simulatorul și puntea locală apar pe tablete (instruire, demonstrații); altfel doar în dezvoltare. */
+  mod_demonstratie: boolean;
+  /** După câte minute fără atingere tableta revine la ecranul de PIN. */
+  blocare_automata_min: number;
+}
+
+export const SETARI_TABLETA_IMPLICITE: SetariTableta = { mod_demonstratie: false, blocare_automata_min: 5 };
+
+export const citesteSetariTableta = (db: Db) => citesteSetare(db, 'tableta', SETARI_TABLETA_IMPLICITE);

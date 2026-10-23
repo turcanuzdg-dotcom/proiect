@@ -4,7 +4,8 @@ import { cerereJson } from '../comun/http';
 import { uuid } from '../comun/uuid';
 import { actualizare } from './actualizare';
 import { ContextAplicatie, type Aplicatie } from './context';
-import { creeazaEchipamente, type Echipamente } from './echipamente';
+import { tabletaOcupata, trebuieBlocata } from './blocare';
+import { alegeEchipamente, creeazaEchipamente } from './echipamente';
 import { Asociere, Autentificare, DeschidereTura } from './ecrane';
 import { ceasGresit, Sincronizator, STARE_SYNC_INITIALA, type StareSync } from './sincronizare';
 import * as stocare from './stocare';
@@ -22,7 +23,8 @@ export function App() {
   const [catalog, setCatalog] = useState<CatalogPOS>();
   const [barista, setBarista] = useState<stocare.BaristaActiv>();
   const [tura, setTura] = useState<stocare.TuraLocala>();
-  const [echipamente, setEchipamente] = useState<Echipamente>(() => creeazaEchipamente(undefined));
+  // Alegerea salvată pe tabletă; cea folosită de fapt o decide și catalogul (alegeEchipamente).
+  const [echipamenteSalvate, setEchipamenteSalvate] = useState<stocare.ConfigEchipamente>();
   const [sync, setSync] = useState<StareSync>(STARE_SYNC_INITIALA);
   const [toast, setToast] = useState<{ mesaj: string; pericol?: boolean } | null>(null);
   const [reasociere, setReasociere] = useState(false);
@@ -33,6 +35,12 @@ export function App() {
   const configRef = useRef<stocare.ConfigTableta | undefined>(undefined);
   configRef.current = config;
   const tokenTableta = useCallback(() => configRef.current?.token, []);
+  // Terminalul legat în panou are întâietate: la fiecare catalog nou (legare sau dezlegare de terminal,
+  // modul demonstrație) se reface alegerea, oricare ar fi cea salvată pe tabletă.
+  const echipamente = useMemo(
+    () => creeazaEchipamente(alegeEchipamente(catalog, echipamenteSalvate), tokenTableta),
+    [catalog?.terminal_prin_server, catalog?.mod_demonstratie, echipamenteSalvate, tokenTableta],
+  );
 
   const anunta = useCallback((mesaj: string, pericol = false) => {
     setToast({ mesaj, pericol });
@@ -40,20 +48,15 @@ export function App() {
   }, []);
 
   const incarcaCatalog = useCallback(async (token: string) => {
-    const c = await cerereJson<CatalogPOS & { terminal_prin_server?: boolean }>('/api/pos/catalog', { token, timeout: 15_000 });
+    const c = await cerereJson<CatalogPOS>('/api/pos/catalog', { token, timeout: 15_000 });
     await stocare.scrie('catalog', c);
     setCatalog(c);
-    // Tableta are un terminal fiscal legat în panou și nu s-a ales nimic aici: îl folosim din oficiu.
-    if (c.terminal_prin_server && !(await stocare.citeste('echipamente'))) {
-      await stocare.scrie('echipamente', { tip: 'server', url: '' });
-      setEchipamente(creeazaEchipamente({ tip: 'server', url: '' }, tokenTableta));
-    }
     return c;
-  }, [tokenTableta]);
+  }, []);
 
   const reincarcaEchipamente = useCallback(async () => {
-    setEchipamente(creeazaEchipamente(await stocare.citeste('echipamente'), tokenTableta));
-  }, [tokenTableta]);
+    setEchipamenteSalvate(await stocare.citeste('echipamente'));
+  }, []);
 
   // Pornire: totul se citește din memoria tabletei, deci merge și fără internet.
   useEffect(() => {
@@ -97,6 +100,30 @@ export function App() {
     };
   }, [config, incarcaCatalog]);
 
+  // Blocarea automată: după câteva minute fără atingere, tableta revine la ecranul de PIN (tura rămâne
+  // deschisă). Nu în timpul unei plăți cu cardul, al unui retur sau al închiderii turei.
+  const minuteBlocare = catalog?.blocare_automata_min ?? 5;
+  useEffect(() => {
+    if (!barista || !tura) return;
+    let ultimaAtingere = Date.now();
+    const atingere = () => {
+      ultimaAtingere = Date.now();
+    };
+    const evenimente = ['pointerdown', 'keydown', 'touchstart'] as const;
+    evenimente.forEach((e) => window.addEventListener(e, atingere, { passive: true }));
+    const timer = window.setInterval(() => {
+      if (tabletaOcupata()) ultimaAtingere = Date.now();
+      else if (trebuieBlocata(ultimaAtingere, Date.now(), minuteBlocare, false)) {
+        void stocare.sterge('barista');
+        setBarista(undefined);
+      }
+    }, 10_000);
+    return () => {
+      evenimente.forEach((e) => window.removeEventListener(e, atingere));
+      window.clearInterval(timer);
+    };
+  }, [barista, tura, minuteBlocare]);
+
   // Versiunea nouă se aplică doar pe ecranul de PIN, când nu e nimic în lucru.
   useEffect(() => actualizare.aboneaza(() => setActualizareGata(true)), []);
   useEffect(() => {
@@ -137,6 +164,10 @@ export function App() {
       blocheaza() {
         void stocare.sterge('barista');
         setBarista(undefined);
+      },
+      async retrimiteJurnal() {
+        if (!sincronizator.current) throw new Error('Sincronizarea nu rulează');
+        return sincronizator.current.retrimiteJurnal();
       },
     };
   }, [config, catalog, barista, tura, echipamente, sync, anunta, reincarcaEchipamente]);

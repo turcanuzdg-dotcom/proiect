@@ -461,6 +461,7 @@ function TabTablete() {
 
   return (
     <>
+      <SetariTablete />
       <Rand>
         <p className="slab mic" style={{ maxWidth: 640 }}>
           Fiecare tabletă de la tejghea se asociază o singură dată cu o cafenea, printr-un cod. O tabletă pierdută se dezactivează de aici:
@@ -586,6 +587,60 @@ function TabTablete() {
         </Modal>
       )}
     </>
+  );
+}
+
+/** Comportamentul tuturor tabletelor: blocarea automată și modul demonstrație. Ajung la tablete prin catalog. */
+function SetariTablete() {
+  const { arata } = useAdmin();
+  const r = useDate(() => api.get<{ mod_demonstratie: boolean; blocare_automata_min: number }>('/api/setari/tableta'), []);
+  const [minute, setMinute] = useState<string | null>(null);
+  const [demo, setDemo] = useState<boolean | null>(null);
+
+  const salveaza = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!r.date) return;
+    const m = Number(minute ?? r.date.blocare_automata_min);
+    if (!Number.isInteger(m) || m < 1 || m > 240) return arata('Blocarea automată: între 1 și 240 de minute', 'pericol');
+    try {
+      await api.put('/api/setari/tableta', { mod_demonstratie: demo ?? r.date.mod_demonstratie, blocare_automata_min: m });
+      arata('Setările tabletelor au fost salvate; tabletele le primesc la următoarea sincronizare');
+      setMinute(null);
+      setDemo(null);
+      r.reincarca();
+    } catch (err) {
+      arata(mesajEroare(err), 'pericol');
+    }
+  };
+
+  return (
+    <Stare {...r}>
+      {(t) => (
+        <form className="card randuri-form" style={{ maxWidth: 640, marginBottom: 16 }} onSubmit={salveaza}>
+          <div className="doua-coloane">
+            <label className="camp">
+              <span>Blocare automată după (minute fără atingere)</span>
+              <input inputMode="numeric" value={minute ?? String(t.blocare_automata_min)} onChange={(e) => setMinute(e.target.value)} />
+            </label>
+            <label className="bifa">
+              <input type="checkbox" checked={demo ?? t.mod_demonstratie} onChange={(e) => setDemo(e.target.checked)} />
+              Mod demonstrație (Simulator și punte locală pe tablete)
+            </label>
+          </div>
+          <p className="slab mic">
+            Tableta revine la ecranul de PIN după minutele de mai sus (niciodată în timpul unei plăți sau al închiderii turei). Modul
+            demonstrație e doar pentru instruire: Simulatorul aprobă orice plată cu cardul și nu emite bonuri fiscale. Tabletele cu terminal
+            legat mai jos îl folosesc oricum pe acela.
+          </p>
+          {(demo ?? t.mod_demonstratie) && <div className="alerta avertisment">Cu modul demonstrație pornit, o baristă poate înregistra plăți cu cardul neîncasate.</div>}
+          <div>
+            <button type="submit" className="buton">
+              Salvează
+            </button>
+          </div>
+        </form>
+      )}
+    </Stare>
   );
 }
 
@@ -912,6 +967,7 @@ const ACTIUNI: Record<string, string> = {
   'PUT /api/dispozitive/:id/terminal': 'Terminal legat de tabletă',
   'PUT /api/setari/fiscal': 'Setări fiscale',
   'PUT /api/setari/tolerante': 'Toleranțe la închidere',
+  'PUT /api/setari/tableta': 'Setările tabletelor (blocare, demonstrație)',
   'POST /api/articole': 'Articol creat',
   'PUT /api/articole/:id': 'Articol modificat',
   'POST /api/categorii': 'Categorie creată',

@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
-import { ETICHETE_MOTIVE, LIMITE, MOTIVE_CASARE, formatLei, type ModificatorCatalog, type MotivCasare, type ProdusCatalog } from '@cafenea/shared';
-import { creeazaEchipamente, type RezultatCard } from './echipamente';
+import { ETICHETE_MOTIVE, LIMITE, MOTIVE_CASARE, formatLei, hashPin, type ModificatorCatalog, type MotivCasare, type ProdusCatalog } from '@cafenea/shared';
+import { useFaraBlocare } from './blocare';
+import { alegeEchipamente, creeazaEchipamente, demonstratiePermisa, type RezultatCard } from './echipamente';
+import { TastaturaPin } from './ecrane';
 import { formatDataOra, formatOra } from '../comun/format';
 import { Modal } from '../comun/Modal';
 import { useAplicatie } from './context';
@@ -113,10 +115,43 @@ export function PlataNumerar({ total, onConfirma, onInchide }: { total: number; 
   );
 }
 
-export function PlataCard({ total, referinta, onAprobat, onInchide }: { total: number; referinta: string; onAprobat: (card: RezultatCard) => Promise<void>; onInchide: () => void }) {
+export function PlataCard({
+  total,
+  referinta,
+  onAprobat,
+  onInchide,
+  onReferintaNoua,
+}: {
+  total: number;
+  referinta: string;
+  onAprobat: (card: RezultatCard) => Promise<void>;
+  onInchide: () => void;
+  /** Barista a văzut pe terminal că plata nesigură nu a trecut: următoarea încercare e o plată nouă. */
+  onReferintaNoua: () => void;
+}) {
   const { echipamente } = useAplicatie();
-  const [stare, setStare] = useState<{ tip: 'asteapta' } | { tip: 'refuzat'; mesaj: string }>({ tip: 'asteapta' });
+  if (echipamente.manual) return <PlataCardManuala total={total} onAprobat={onAprobat} onInchide={onInchide} />;
+  return <PlataCardTerminal total={total} referinta={referinta} onAprobat={onAprobat} onInchide={onInchide} onReferintaNoua={onReferintaNoua} />;
+}
+
+function PlataCardTerminal({
+  total,
+  referinta,
+  onAprobat,
+  onInchide,
+  onReferintaNoua,
+}: {
+  total: number;
+  referinta: string;
+  onAprobat: (card: RezultatCard) => Promise<void>;
+  onInchide: () => void;
+  onReferintaNoua: () => void;
+}) {
+  const { echipamente } = useAplicatie();
+  const [stare, setStare] = useState<{ tip: 'asteapta' } | { tip: 'refuzat' | 'nesigur'; mesaj: string }>({ tip: 'asteapta' });
   const [incercare, setIncercare] = useState(0);
+  // Cât timp plata e la terminal, tableta nu se blochează singură.
+  useFaraBlocare(stare.tip === 'asteapta');
 
   useEffect(() => {
     let anulat = false;
@@ -126,9 +161,10 @@ export function PlataCard({ total, referinta, onAprobat, onInchide }: { total: n
       .then(async (r) => {
         if (anulat) return;
         if (r.aprobat) await onAprobat(r);
+        else if (r.nesigur) setStare({ tip: 'nesigur', mesaj: r.mesaj ?? 'Nu se poate confirma plata' });
         else setStare({ tip: 'refuzat', mesaj: r.mesaj ?? 'Plata a fost refuzată' });
       })
-      .catch((e: Error) => !anulat && setStare({ tip: 'refuzat', mesaj: `Terminalul nu răspunde: ${e.message}` }));
+      .catch((e: Error) => !anulat && setStare({ tip: 'nesigur', mesaj: `Terminalul nu răspunde: ${e.message}` }));
     return () => {
       anulat = true;
     };
@@ -138,12 +174,14 @@ export function PlataCard({ total, referinta, onAprobat, onInchide }: { total: n
   return (
     <Modal
       titlu="Plată cu cardul"
-      onInchide={stare.tip === 'refuzat' ? onInchide : undefined}
+      onInchide={stare.tip !== 'asteapta' ? onInchide : undefined}
       subsol={
-        stare.tip === 'refuzat' && (
+        stare.tip !== 'asteapta' && (
           <>
             <button className="buton-secundar" onClick={onInchide}>Înapoi la comandă</button>
-            <button className="buton" onClick={() => setIncercare((i) => i + 1)}>Încearcă din nou</button>
+            <button className="buton" onClick={() => setIncercare((i) => i + 1)}>
+              {stare.tip === 'nesigur' ? 'Verifică din nou' : 'Încearcă din nou'}
+            </button>
           </>
         )
       }
@@ -157,11 +195,76 @@ export function PlataCard({ total, referinta, onAprobat, onInchide }: { total: n
           <>
             <div className="rotita" aria-hidden />
             <p>Clientul apropie sau introduce cardul în terminal…</p>
-            <p className="slab mic">{echipamente.descriere}</p>
+            <p className="slab mic">
+              {echipamente.descriere}. Poate dura până la 7 minute dacă terminalul răspunde greu; nu închideți aplicația. Nu se
+              încasează de două ori: o reîncercare verifică plata aceasta.
+            </p>
+          </>
+        ) : stare.tip === 'nesigur' ? (
+          <>
+            <div className="alerta avertisment" role="alert">
+              <strong>Plata nu este confirmată.</strong> {stare.mesaj}. Vânzarea NU s-a înregistrat. Uitați-vă pe ecranul terminalului
+              și pe chitanța băncii, apoi apăsați „Verifică din nou”: aceeași plată nu se trimite a doua oară.
+            </div>
+            <button
+              className="buton-link"
+              onClick={() => {
+                if (!window.confirm('Terminalul arată că plata NU a trecut și clientul nu a plătit? Se va trimite o plată nouă.')) return;
+                onReferintaNoua();
+                setIncercare((i) => i + 1);
+              }}
+            >
+              Terminalul arată că plata nu a trecut: trimite o plată nouă
+            </button>
           </>
         ) : (
           <div className="alerta pericol">{stare.mesaj}</div>
         )}
+      </div>
+    </Modal>
+  );
+}
+
+/**
+ * Terminal separat, fără legătură: barista introduce suma pe terminal și spune aici dacă plata a trecut.
+ * Vânzarea apare la server ca „card neconfirmat de terminal”, ca adminul s-o compare cu raportul băncii.
+ */
+function PlataCardManuala({ total, onAprobat, onInchide }: { total: number; onAprobat: (card: RezultatCard) => Promise<void>; onInchide: () => void }) {
+  const [cod, setCod] = useState('');
+  const [lucreaza, setLucreaza] = useState(false);
+  useFaraBlocare();
+  return (
+    <Modal
+      titlu="Plată cu cardul"
+      onInchide={lucreaza ? undefined : onInchide}
+      subsol={
+        <>
+          <button className="buton-secundar" disabled={lucreaza} onClick={onInchide}>
+            Plata nu a trecut
+          </button>
+          <button
+            className="buton buton-mare"
+            disabled={lucreaza}
+            onClick={async () => {
+              setLucreaza(true);
+              await onAprobat({ aprobat: true, autorizare: cod.trim() || undefined });
+            }}
+          >
+            Plata a trecut
+          </button>
+        </>
+      }
+    >
+      <div className="randuri-form centrat">
+        <div className="suma-mare">
+          <span className="slab">Introduceți pe terminal suma</span>
+          <strong>{formatLei(total)}</strong>
+        </div>
+        <p>Tableta nu e legată de terminal. Tastați suma pe terminal, așteptați chitanța băncii, apoi confirmați aici.</p>
+        <label className="camp">
+          <span>Cod de autorizare de pe chitanță (opțional)</span>
+          <input value={cod} onChange={(e) => setCod(e.target.value.replace(/[^\w-]/g, '').slice(0, 12))} inputMode="numeric" autoComplete="off" />
+        </label>
       </div>
     </Modal>
   );
@@ -281,7 +384,7 @@ export function Istoric({ onInchide }: { onInchide: () => void }) {
         subsol={
           selectata.stare === 'finalizata' && (
             <>
-              {selectata.metoda !== 'casare' && (!selectata.bon_tiparit || app.echipamente.poateDuplica) && (
+              {selectata.metoda !== 'casare' && !selectata.bon_pe_terminal && !app.echipamente.manual && (!selectata.bon_tiparit || app.echipamente.poateDuplica) && (
                 <button className="buton-secundar" disabled={ocupat} onClick={() => tipareste(selectata)}>
                   {selectata.bon_tiparit ? 'Copie bon (nefiscală)' : 'Tipărește bonul fiscal'}
                 </button>
@@ -342,7 +445,8 @@ function EticheteComanda({ c }: { c: stocare.ComandaLocala }) {
       {c.metoda === 'card' && <span className="insigna info">Card</span>}
       {c.metoda === 'casare' && <span className="insigna avertisment">Casare: {c.motiv_casare ? ETICHETE_MOTIVE[c.motiv_casare] : ''}</span>}
       {c.stare === 'anulata' && <span className="insigna pericol">Anulată</span>}
-      {c.metoda !== 'casare' && !c.bon_tiparit && c.stare === 'finalizata' && <span className="insigna pericol">Bon netipărit</span>}
+      {c.metoda !== 'casare' && c.bon_pe_terminal && <span className="insigna">Bon pe terminal</span>}
+      {c.metoda !== 'casare' && !c.bon_tiparit && !c.bon_pe_terminal && c.stare === 'finalizata' && <span className="insigna pericol">Bon netipărit</span>}
     </span>
   );
 }
@@ -395,6 +499,9 @@ function Anulare({ comanda, onInapoi, onGata }: { comanda: stocare.ComandaLocala
   const [eroare, setEroare] = useState('');
   const textMotiv = motiv === 'Altele' ? detalii.trim() : [motiv, detalii.trim()].filter(Boolean).join(': ');
   const valid = !!textMotiv && preparat !== null;
+  // Terminal separat: returul pe card îl face barista din meniul terminalului, tableta doar înregistrează anularea.
+  const returManual = comanda.metoda === 'card' && app.echipamente.manual;
+  useFaraBlocare(lucreaza);
 
   const confirma = async () => {
     if (lucreaza) return;
@@ -406,13 +513,18 @@ function Anulare({ comanda, onInapoi, onGata }: { comanda: stocare.ComandaLocala
       onGata();
       return;
     }
-    // Pe card, banii se dau înapoi prin terminal înainte de a înregistra anularea.
-    if (comanda.metoda === 'card') {
-      const r = await app.echipamente
+    // Pe card, banii se dau înapoi prin terminal înainte de a înregistra anularea. Serverul restituie doar
+    // în contul plății înregistrate a acestei comenzi (RRN și sumă din registrul lui), o singură dată.
+    if (comanda.metoda === 'card' && !returManual) {
+      const r: RezultatCard = await app.echipamente
         .returCard(comanda.total, { autorizare: comanda.card_autorizare, rrn: comanda.card_rrn, operation_id: comanda.card_operation_id }, comanda.comanda_id)
         .catch((e: Error) => ({ aprobat: false, mesaj: e.message }));
       if (!r.aprobat) {
-        setEroare(`Returul pe card nu a reușit: ${r.mesaj ?? 'terminalul a refuzat'}`);
+        setEroare(
+          r.nesigur
+            ? `Returul nu se poate confirma: ${r.mesaj ?? ''}. Verificați pe terminal, apoi încercați din nou (nu se restituie de două ori).`
+            : `Returul pe card nu a reușit: ${r.mesaj ?? 'terminalul a refuzat'}`,
+        );
         setLucreaza(false);
         return;
       }
@@ -428,11 +540,13 @@ function Anulare({ comanda, onInapoi, onGata }: { comanda: stocare.ComandaLocala
     });
     await app.inregistreaza(ev, { ...curenta, stare: 'anulata', anulata_la: ev.la, motiv_anulare: textMotiv, stoc_restituit: !preparat });
     // Bon de retur doar pentru un bon fiscal emis; altfel n-ar avea ce storna.
-    if (comanda.metoda !== 'casare' && curenta.bon_tiparit) {
+    if (comanda.metoda !== 'casare' && curenta.bon_tiparit && !curenta.bon_pe_terminal) {
       const r = await app.echipamente.tiparesteRetur(bonDin(comanda)).catch((e: Error) => ({ ok: false, mesaj: e.message }));
       if (!r.ok) app.anunta(`Anulat, dar bonul de retur nu s-a tipărit: ${r.mesaj ?? ''}`, true);
     }
-    app.anunta(comanda.metoda === 'numerar' ? `Anulat. Dați clientului ${formatLei(comanda.total)}` : 'Comanda a fost anulată');
+    if (curenta.bon_pe_terminal && comanda.metoda !== 'casare') {
+      app.anunta(`Anulat. Emiteți bonul de retur pe terminal${comanda.metoda === 'numerar' ? ` și dați clientului ${formatLei(comanda.total)}` : ''}.`, true);
+    } else app.anunta(comanda.metoda === 'numerar' ? `Anulat. Dați clientului ${formatLei(comanda.total)}` : 'Comanda a fost anulată');
     onGata();
   };
 
@@ -472,7 +586,12 @@ function Anulare({ comanda, onInapoi, onGata }: { comanda: stocare.ComandaLocala
             </button>
           </div>
         </div>
-        {comanda.metoda === 'card' && <p className="slab mic">Suma se returnează pe card prin terminal.</p>}
+        {comanda.metoda === 'card' &&
+          (returManual ? (
+            <div className="alerta avertisment">Faceți întâi returul de {formatLei(comanda.total)} din meniul terminalului, apoi confirmați anularea aici.</div>
+          ) : (
+            <p className="slab mic">Suma se returnează pe card prin terminal.</p>
+          ))}
         {eroare && <div className="alerta pericol">{eroare}</div>}
       </div>
     </Modal>
@@ -531,6 +650,10 @@ export function InchidereTura({ onInchide }: { onInchide: () => void }) {
   const [confirmare, setConfirmare] = useState(false);
   const [lucreaza, setLucreaza] = useState(false);
   const [gata, setGata] = useState<string | null>(null);
+  // Închiderea turei e semnată de barista turei: PIN-ul se cere din nou (tableta poate fi lăsată deschisă).
+  const eu = app.catalog.baristi.find((b) => b.id === app.barista.id);
+  const [pinConfirmat, setPinConfirmat] = useState(!eu);
+  useFaraBlocare();
   const camp = (k: keyof typeof v) => ({ value: v[k], onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => setV({ ...v, [k]: e.target.value }) });
   const valori = { doze: numar(v.doze), numerar: numar(v.numerar), card: numar(v.card), anulari: numar(v.anulari), casari: numar(v.casari) };
   const valid =
@@ -538,6 +661,18 @@ export function InchidereTura({ onInchide }: { onInchide: () => void }) {
     Number.isInteger(valori.anulari) && Number.isInteger(valori.casari) &&
     valori.doze <= LIMITE.doze && valori.numerar <= LIMITE.bani && valori.card <= LIMITE.bani &&
     valori.anulari <= LIMITE.bucati && valori.casari <= LIMITE.bucati;
+
+  if (!pinConfirmat && eu)
+    return (
+      <Modal titlu="Închiderea turei" onInchide={onInchide}>
+        <div className="randuri-form centrat">
+          <p>
+            {eu.nume}, introduceți PIN-ul ca să închideți tura.
+          </p>
+          <TastaturaPin verifica={(pin) => hashPin(pin, eu.sare) === eu.pin_hash} onCorect={() => setPinConfirmat(true)} />
+        </div>
+      </Modal>
+    );
 
   if (gata)
     return (
@@ -568,6 +703,7 @@ export function InchidereTura({ onInchide }: { onInchide: () => void }) {
       undefined,
       { inchideTura: true },
     );
+    if (app.echipamente.manual) return setGata('Tipăriți acum raportul Z din meniul terminalului (închiderea zilei fiscale).');
     const z = await app.echipamente.raportZ().catch((e: Error) => ({ ok: false, mesaj: e.message }));
     setGata(z.ok ? 'ok' : `Raportul Z al casei de marcat nu s-a tipărit: ${z.mesaj ?? ''}. Tipăriți-l manual.`);
   };
@@ -630,11 +766,37 @@ export function InchidereTura({ onInchide }: { onInchide: () => void }) {
 
 export function Setari({ onInchide }: { onInchide: () => void }) {
   const app = useAplicatie();
-  const [cfg, setCfg] = useState<stocare.ConfigEchipamente>({ tip: 'simulator', url: 'http://127.0.0.1:8099' });
+  const prinServer = !!app.catalog.terminal_prin_server;
+  const demo = demonstratiePermisa(app.catalog);
+  const [cfg, setCfg] = useState<stocare.ConfigEchipamente>({ tip: 'manual', url: 'http://127.0.0.1:8099' });
   const [test, setTest] = useState('');
+  const [retrimitere, setRetrimitere] = useState<{ lucreaza: boolean; mesaj?: string; inJurnal?: number }>({ lucreaza: false });
   useEffect(() => {
-    void stocare.citeste('echipamente').then((c) => c && setCfg(c));
+    // Ce se folosește de fapt (terminalul legat în panou are întâietate), nu doar ce s-a salvat.
+    void stocare.citeste('echipamente').then((c) => setCfg({ url: 'http://127.0.0.1:8099', ...c, tip: alegeEchipamente(app.catalog, c).tip }));
+    void stocare.numarInJurnal().then((n) => setRetrimitere((r) => ({ ...r, inJurnal: n })));
   }, []);
+
+  const salveaza = async () => {
+    await stocare.scrie('echipamente', cfg);
+    await app.reincarcaEchipamente();
+  };
+
+  const retrimite = async () => {
+    if (!window.confirm('Se trimit din nou la server toate operațiunile din ultimele 7 zile. Serverul le recunoaște pe cele pe care le are deja, deci nimic nu se dublează. Continuați?')) return;
+    setRetrimitere((r) => ({ ...r, lucreaza: true, mesaj: undefined }));
+    try {
+      const r = await app.retrimiteJurnal();
+      setRetrimitere((x) => ({
+        ...x,
+        lucreaza: false,
+        mesaj: `Trimise din nou: ${r.trimise} operațiuni${r.respinse ? ` (${r.respinse} respinse; le vede administratorul la Erori sincronizare)` : ''}.`,
+      }));
+    } catch (e) {
+      setRetrimitere((x) => ({ ...x, lucreaza: false, mesaj: `Nu s-a putut trimite: ${(e as Error).message}` }));
+    }
+  };
+
   return (
     <Modal
       titlu="Echipamente și tabletă"
@@ -644,29 +806,27 @@ export function Setari({ onInchide }: { onInchide: () => void }) {
           <button
             className="buton-secundar"
             onClick={async () => {
-              await stocare.scrie('echipamente', cfg);
-              await app.reincarcaEchipamente();
+              if (!prinServer) await salveaza();
               setTest('Se verifică…');
               try {
                 // Instanța nouă, nu cea din contextul de dinainte de salvare.
-                const s = await creeazaEchipamente(cfg, () => app.config.token).verifica();
+                const s = await creeazaEchipamente(alegeEchipamente(app.catalog, cfg), () => app.config.token).verifica();
                 setTest(`Terminal: ${s.terminal} · Imprimantă: ${s.imprimanta}`);
               } catch (e) {
                 setTest(`Nu răspunde: ${(e as Error).message}`);
               }
             }}
           >
-            Salvează și testează
+            {prinServer ? 'Verifică terminalul' : 'Salvează și testează'}
           </button>
           <button
             className="buton"
             onClick={async () => {
-              await stocare.scrie('echipamente', cfg);
-              await app.reincarcaEchipamente();
+              if (!prinServer) await salveaza();
               onInchide();
             }}
           >
-            Salvează
+            {prinServer ? 'Închide' : 'Salvează'}
           </button>
         </>
       }
@@ -674,25 +834,42 @@ export function Setari({ onInchide }: { onInchide: () => void }) {
       <div className="randuri-form">
         <div className="camp">
           <span>Legătura cu terminalul de plată și imprimanta fiscală</span>
-          <div className="lista-optiuni">
-            <button className={`optiune${cfg.tip === 'server' ? ' bifata' : ''}`} onClick={() => setCfg({ ...cfg, tip: 'server' })}>
-              Terminal fiscal prin server
-            </button>
-            <button className={`optiune${cfg.tip === 'punte' ? ' bifata' : ''}`} onClick={() => setCfg({ ...cfg, tip: 'punte' })}>
-              Punte locală
-            </button>
-            <button className={`optiune${cfg.tip === 'simulator' ? ' bifata' : ''}`} onClick={() => setCfg({ ...cfg, tip: 'simulator' })}>
-              Simulator (fără echipamente)
-            </button>
-          </div>
-          {cfg.tip === 'server' && (
+          {prinServer ? (
             <p className="slab mic">
-              Terminalul bancar în regim fiscal (de ex. PAX A930 cu IS Fiscal) legat de această tabletă în panou, la Setări → Tablete. Plata cu
-              cardul, bonul fiscal și raportul Z se fac pe el, prin POSLink. Are nevoie de internet.
+              <strong>Terminal fiscal prin server (POSLink).</strong> Terminalul bancar în regim fiscal (de ex. PAX A930 cu IS Fiscal) e legat
+              de această tabletă în panou, la Setări → Tablete; alegerea nu se poate schimba de pe tabletă. Plata cu cardul, bonul fiscal și
+              raportul Z se fac pe el. Are nevoie de internet.
             </p>
+          ) : (
+            <>
+              <div className="lista-optiuni">
+                <button className={`optiune${cfg.tip === 'manual' ? ' bifata' : ''}`} onClick={() => setCfg({ ...cfg, tip: 'manual' })}>
+                  Terminal separat (fără legătură)
+                </button>
+                {demo && (
+                  <>
+                    <button className={`optiune${cfg.tip === 'punte' ? ' bifata' : ''}`} onClick={() => setCfg({ ...cfg, tip: 'punte' })}>
+                      Punte locală
+                    </button>
+                    <button className={`optiune${cfg.tip === 'simulator' ? ' bifata' : ''}`} onClick={() => setCfg({ ...cfg, tip: 'simulator' })}>
+                      Simulator (fără echipamente)
+                    </button>
+                  </>
+                )}
+              </div>
+              {cfg.tip === 'manual' && (
+                <p className="slab mic">
+                  Suma se introduce de mână pe terminal; după fiecare vânzare tableta amintește să emiteți bonul fiscal pe terminal. Când
+                  administratorul leagă terminalul de tabletă în panou (Setări → Tablete), tableta îl folosește singură.
+                </p>
+              )}
+              {demo && cfg.tip !== 'manual' && (
+                <div className="alerta avertisment">Mod demonstrație: plățile nu sunt reale, iar bonurile fiscale nu se emit.</div>
+              )}
+            </>
           )}
         </div>
-        {cfg.tip === 'punte' ? (
+        {!prinServer && cfg.tip === 'punte' ? (
           <div className="doua-coloane">
             <label className="camp">
               <span>Adresa punții</span>
@@ -703,7 +880,7 @@ export function Setari({ onInchide }: { onInchide: () => void }) {
               <input value={cfg.secret ?? ''} onChange={(e) => setCfg({ ...cfg, secret: e.target.value.trim() })} autoComplete="off" />
             </label>
           </div>
-        ) : cfg.tip === 'simulator' ? (
+        ) : !prinServer && cfg.tip === 'simulator' ? (
           <label className="bifa">
             <input type="checkbox" checked={!!cfg.simuleazaRefuz} onChange={(e) => setCfg({ ...cfg, simuleazaRefuz: e.target.checked })} />
             Simulează refuzul plăților cu cardul (pentru instruire)
@@ -717,6 +894,20 @@ export function Setari({ onInchide }: { onInchide: () => void }) {
           <br />
           Evenimente nesincronizate: {app.sync.inAsteptare}
           {app.sync.respinse > 0 && ` · respinse de server: ${app.sync.respinse} (le vede administratorul)`}
+        </div>
+        <div className="camp">
+          <span>Refacerea datelor pe server</span>
+          <p className="slab mic">
+            Tableta păstrează operațiunile trimise în ultimele 7 zile{retrimitere.inJurnal != null ? ` (${retrimitere.inJurnal})` : ''}. Dacă
+            serverul a fost restaurat dintr-o copie de siguranță, administratorul vă poate cere să le trimiteți din nou.
+          </p>
+          <div>
+            <button className="buton-secundar" disabled={retrimitere.lucreaza || !app.sync.online} onClick={retrimite}>
+              {retrimitere.lucreaza ? 'Se trimit…' : 'Retrimite evenimentele din ultimele 7 zile'}
+            </button>
+          </div>
+          {!app.sync.online && <p className="slab mic">Are nevoie de conexiune la server.</p>}
+          {retrimitere.mesaj && <div className="alerta">{retrimitere.mesaj}</div>}
         </div>
       </div>
     </Modal>

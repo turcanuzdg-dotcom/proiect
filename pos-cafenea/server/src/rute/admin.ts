@@ -11,7 +11,7 @@ import { creeazaReceptie, creeazaTransfer, detaliuReceptie, listaReceptii, lista
 import * as inventar from '../servicii/inventar';
 import { panou } from '../servicii/panou';
 import { comparaPerioade, raportConsum, raportPierderi, raportVanzari, serieZilnica } from '../servicii/rapoarte';
-import { citesteTolerante, scrieSetare } from '../servicii/setari';
+import { citesteSetariTableta, citesteTolerante, scrieSetare } from '../servicii/setari';
 import { fisaArticol, stocLocatie, stocToateLocatiile } from '../servicii/stoc';
 import { detaliuTura, listaTure, verificaTura } from '../servicii/ture';
 import { listaComenzi } from '../servicii/vanzari';
@@ -187,6 +187,16 @@ export async function ruteAdmin(app: FastifyInstance, db: Db, doarAdmin: onReque
       return t;
     });
 
+    // Tabletele: modul demonstrație (Simulator, punte locală) și blocarea automată; ajung în catalog.
+    a.get('/api/setari/tableta', async () => citesteSetariTableta(db));
+    a.put('/api/setari/tableta', async (req) => {
+      const t = z.object({ mod_demonstratie: z.boolean(), blocare_automata_min: z.number().int().min(1).max(240) }).parse(req.body);
+      req.auditInainte = await stareAnterioara(db, 'setare', 'tableta');
+      await scrieSetare(db, 'tableta', t);
+      anunta('catalog');
+      return t;
+    });
+
     // ---- Rețetar ----
     a.get('/api/articole', async () => catalog.listaArticole(db));
     a.post('/api/articole', async (req) => catalog.salveazaArticol(db, schemaArticol.parse(req.body)));
@@ -309,7 +319,7 @@ export async function ruteAdmin(app: FastifyInstance, db: Db, doarAdmin: onReque
     // ---- Vânzări, ture, bani ----
     a.get('/api/comenzi', async (req) => {
       const f = z
-        .object({ locatie_id: locOpt, tura_id: z.string().uuid().optional(), de: data.optional(), pana: data.optional(), metoda: z.enum(['numerar', 'card', 'casare']).optional(), pret_abatere: z.stringbool().optional(), limita: z.coerce.number().int().positive().optional() })
+        .object({ locatie_id: locOpt, tura_id: z.string().uuid().optional(), de: data.optional(), pana: data.optional(), metoda: z.enum(['numerar', 'card', 'casare']).optional(), pret_abatere: z.stringbool().optional(), card_neconfirmat: z.stringbool().optional(), limita: z.coerce.number().int().positive().optional() })
         .parse(req.query);
       return listaComenzi(db, f);
     });

@@ -55,9 +55,10 @@ function sincronizeaza(predicat: (s: StareSync) => boolean, catalogSchimbat = ()
 }
 
 afterEach(async () => {
-  // Golim coada între teste, ca fiecare să pornească de la zero.
+  // Golim coada (și jurnalul de retrimitere) între teste, ca fiecare să pornească de la zero.
   const r = await stocare.primeleDinCoada(1000);
   await stocare.scoateDinCoada(r.map((x) => x.secv));
+  await stocare.scoateDinCoada([-1], Date.now() + 30 * 86_400_000);
   vi.unstubAllGlobals();
   vi.stubGlobal('window', { addEventListener() {}, removeEventListener() {} });
   vi.stubGlobal('navigator', { onLine: true });
@@ -188,5 +189,56 @@ describe('sincronizarea', () => {
     serverFals([{ acceptate: [], cu_eroare: [], catalog_versiune: 'v1', ora_server: new Date(Date.now() + 60_000).toISOString() }]);
     const bun = await sincronizeaza((st) => st.decalajCeas != null);
     expect(ceasGresit(bun)).toBe(false);
+  });
+});
+
+describe('jurnalul de retrimitere (ultimele 7 zile)', () => {
+  it('evenimentele confirmate trec din coadă în jurnal, în aceeași ordine', async () => {
+    const evs = [ev('tura_deschisa'), ev('comanda'), ev()];
+    for (const e of evs) await stocare.inregistreaza(e);
+    serverFals([{ acceptate: [], cu_eroare: [], catalog_versiune: 'v1', ora_server: new Date().toISOString() }]);
+    (fetch as any).mockImplementation(async (_url: string, init: RequestInit) => {
+      const lot = JSON.parse(String(init.body)).evenimente as EvenimentPOS[];
+      return new Response(JSON.stringify(accepta(lot)), { status: 200 });
+    });
+    await sincronizeaza((st) => st.online && st.inAsteptare === 0);
+    expect(await stocare.numarInCoada()).toBe(0);
+    expect((await stocare.evenimenteDinJurnal(10)).map((x) => x.ev.id)).toEqual(evs.map((e) => e.id));
+  });
+
+  it('jurnalul uită ce e mai vechi de 7 zile', async () => {
+    const vechi = ev();
+    await stocare.inregistreaza(vechi);
+    const [x] = await stocare.primeleDinCoada(1);
+    await stocare.scoateDinCoada([x.secv], Date.now() - 8 * 86_400_000);
+    const nou = ev();
+    await stocare.inregistreaza(nou);
+    const [y] = await stocare.primeleDinCoada(1);
+    await stocare.scoateDinCoada([y.secv]);
+    expect((await stocare.evenimenteDinJurnal(10)).map((e) => e.ev.id)).toEqual([nou.id]);
+  });
+
+  it('„Retrimite” trimite tot jurnalul în ordine, fără să-l golească, și numără respingerile', async () => {
+    const evs = Array.from({ length: 130 }, () => ev());
+    for (const e of evs) await stocare.inregistreaza(e);
+    await stocare.scoateDinCoada((await stocare.primeleDinCoada(1000)).map((x) => x.secv));
+    const primite: EvenimentPOS[][] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: string, init: RequestInit) => {
+        const lot = JSON.parse(String(init.body)).evenimente as EvenimentPOS[];
+        primite.push(lot);
+        // Serverul restaurat le primește din nou; unul e respins (ajunge la Erori sincronizare).
+        const r = accepta(lot.filter((e) => e.id !== evs[50].id));
+        return new Response(JSON.stringify({ ...r, cu_eroare: lot.some((e) => e.id === evs[50].id) ? [{ id: evs[50].id, eroare: 'x' }] : [] }), { status: 200 });
+      }),
+    );
+    const s = new Sincronizator('token', () => 'v1', () => {});
+    const r = await s.retrimiteJurnal();
+    s.opreste();
+    expect(r).toEqual({ trimise: 130, respinse: 1 });
+    expect(primite.map((l) => l.length)).toEqual([100, 30]);
+    expect(primite.flat().map((e) => e.id)).toEqual(evs.map((e) => e.id));
+    expect(await stocare.numarInJurnal()).toBe(130);
   });
 });

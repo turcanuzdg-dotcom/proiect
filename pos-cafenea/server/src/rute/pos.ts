@@ -48,9 +48,11 @@ export async function rutePOS(app: FastifyInstance, db: Db, doarDispozitiv: onRe
       const d = z.object({ suma: bani, referinta: z.string().uuid() }).parse(req.body);
       return terminal.plataCard(db, req.dispozitiv!.id, d.suma, d.referinta);
     });
+    // Returul pe card: referința e comanda restituită; RRN-ul, plata și plafonul le ia serverul din
+    // registrul terminalului (câmpurile rrn/operation_id trimise de tablete mai vechi se ignoră).
     p.post('/api/pos/terminal/retur', async (req) => {
-      const d = z.object({ suma: bani, referinta: z.string().uuid(), rrn: z.string().max(100).nullish(), operation_id: z.string().max(100).nullish() }).parse(req.body);
-      return terminal.returCard(db, req.dispozitiv!.id, d.suma, { rrn: d.rrn, operation_id: d.operation_id }, d.referinta);
+      const d = z.object({ referinta: z.string().uuid(), suma: bani.nullish() }).parse(req.body);
+      return terminal.returCard(db, req.dispozitiv!.id, d.referinta, d.suma);
     });
     p.post('/api/pos/terminal/bon', async (req) => {
       const d = z

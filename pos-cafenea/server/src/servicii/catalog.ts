@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { sha256Hex, type CatalogPOS, type DefinitieModificator, type LinieReteta, type TipArticol, type UM } from '@cafenea/shared';
 import { insereaza, type Db } from '../db';
 import { EroareNegasit, EroareUtilizator } from '../erori';
+import { citesteSetariTableta } from './setari';
 import { areTerminal, poslinkConfigurat } from './terminal';
 
 // ---- Articole (materie primă, ambalaje, mărfuri) ----
@@ -243,13 +244,15 @@ export async function catalogPOS(db: Db, locatieId: number): Promise<CatalogPOS>
 }
 
 /**
- * Catalogul văzut de o anumită tabletă: cel al locației plus dacă tableta are terminal fiscal prin
- * server. Versiunea le cuprinde pe amândouă, ca legarea (sau dezlegarea) unui terminal în panou să
+ * Catalogul văzut de o anumită tabletă: cel al locației, dacă tableta are terminal fiscal prin server
+ * și setările tabletelor (modul demonstrație, blocarea automată). Versiunea le cuprinde pe toate, ca legarea (sau dezlegarea) unui terminal în panou să
  * ajungă la tabletă la următoarea sincronizare, nu abia la o schimbare de meniu. Aceeași funcție dă
  * versiunea pentru GET /api/pos/catalog și pentru răspunsul sincronizării.
  */
 export async function catalogTableta(db: Db, locatieId: number, dispozitivId: number | null) {
   const catalog = await catalogPOS(db, locatieId);
   const terminal_prin_server = poslinkConfigurat() && dispozitivId != null && (await areTerminal(db, dispozitivId));
-  return { ...catalog, versiune: sha256Hex(`${catalog.versiune}|terminal:${terminal_prin_server}`).slice(0, 12), terminal_prin_server };
+  const { mod_demonstratie, blocare_automata_min } = await citesteSetariTableta(db);
+  const versiune = sha256Hex(`${catalog.versiune}|terminal:${terminal_prin_server}|demo:${mod_demonstratie}|blocare:${blocare_automata_min}`).slice(0, 12);
+  return { ...catalog, versiune, terminal_prin_server, mod_demonstratie, blocare_automata_min };
 }

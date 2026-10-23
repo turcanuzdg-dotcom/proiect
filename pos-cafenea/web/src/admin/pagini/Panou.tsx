@@ -16,6 +16,9 @@ interface DatePanou {
   /** Aceleași operațiuni, pe tablete. */
   ore_suspecte_tablete: { dispozitiv: string; locatie: string; n: number }[];
   dispozitive: { nume: string; locatie: string; ultima_sincronizare: string | null }[];
+  /** Vânzări pe card din ultimele 7 zile, pe tablete cu terminal prin server, fără plată aprobată de terminal. */
+  card_neconfirmat: number;
+  card_neconfirmat_suma: number;
 }
 
 const ORA = 3_600_000;
@@ -32,7 +35,7 @@ export function PaginaPanou({ navigheaza }: PropsPagina) {
           const total = d.vanzari.reduce((s, v) => s + v.total, 0);
           const comenzi = d.vanzari.reduce((s, v) => s + v.comenzi, 0);
           const tableteVechi = d.dispozitive.filter((x) => !x.ultima_sincronizare || Date.now() - new Date(x.ultima_sincronizare).getTime() > ORA);
-          const nrAlerte = d.discrepante.length + d.sub_prag.length + (d.erori_sync ? 1 : 0) + (d.preturi_abatute ? 1 : 0) + (d.ore_suspecte ? 1 : 0) + tableteVechi.length;
+          const nrAlerte = d.discrepante.length + d.sub_prag.length + (d.erori_sync ? 1 : 0) + (d.preturi_abatute ? 1 : 0) + (d.ore_suspecte ? 1 : 0) + (d.card_neconfirmat ? 1 : 0) + tableteVechi.length;
           return (
             <>
               <div className="card grila-kpi">
@@ -118,6 +121,19 @@ export function PaginaPanou({ navigheaza }: PropsPagina) {
                       </span>
                       <button type="button" className="buton-secundar" onClick={() => navigheaza('comenzi/abateri')}>
                         Vezi comenzile
+                      </button>
+                    </div>
+                  )}
+                  {d.card_neconfirmat > 0 && (
+                    <div className="alerta pericol">
+                      <span>
+                        <strong>
+                          {d.card_neconfirmat} {d.card_neconfirmat === 1 ? 'vânzare' : 'vânzări'} pe card neconfirmate de terminal ({formatLei(d.card_neconfirmat_suma)})
+                        </strong>{' '}
+                        în ultimele 7 zile, pe tablete legate de terminal — banii pot lipsi din contul bancar. Comparați cu raportul băncii.
+                      </span>
+                      <button type="button" className="buton-secundar" onClick={() => navigheaza('comenzi/card-neconfirmat')}>
+                        Vezi vânzările
                       </button>
                     </div>
                   )}

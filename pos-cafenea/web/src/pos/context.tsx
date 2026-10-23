@@ -19,6 +19,8 @@ export interface Aplicatie {
   inchideTura(): void;
   blocheaza(): void;
   reincarcaEchipamente(): Promise<void>;
+  /** Trimite din nou evenimentele confirmate din ultimele 7 zile (după o restaurare a serverului). */
+  retrimiteJurnal(): Promise<{ trimise: number; respinse: number }>;
 }
 
 export const ContextAplicatie = createContext<Aplicatie | null>(null);

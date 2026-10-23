@@ -59,6 +59,14 @@ export async function panou(db: Db, deAzi: string) {
       GROUP BY 1, 2 ORDER BY 3 DESC, 1`,
   );
   const oreSuspecte = oreSuspecteTablete.reduce((s, x) => s + x.n, 0);
+  // Vânzări pe card fără plată aprobată de terminal, pe tabletele care au terminal prin server (la cele
+  // cu terminal separat, fără legătură, nicio vânzare pe card nu se poate confirma).
+  const [cardNeconfirmat] = await db.query<{ n: number; suma: number }>(
+    `SELECT COUNT(*)::int AS n, COALESCE(SUM(c.total), 0)::numeric AS suma
+       FROM comenzi c JOIN dispozitive d ON d.id = c.dispozitiv_id
+      WHERE c.card_confirmat = false AND c.stare = 'finalizata' AND d.terminal_device_id IS NOT NULL
+        AND c.creata_la >= now() - interval '7 days'`,
+  );
   return {
     vanzari,
     discrepante,
@@ -68,5 +76,7 @@ export async function panou(db: Db, deAzi: string) {
     preturi_abatute: preturiAbatute,
     ore_suspecte: oreSuspecte,
     ore_suspecte_tablete: oreSuspecteTablete,
+    card_neconfirmat: cardNeconfirmat.n,
+    card_neconfirmat_suma: Number(cardNeconfirmat.suma),
   };
 }

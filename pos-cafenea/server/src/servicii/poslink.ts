@@ -11,10 +11,57 @@ export interface ConfigPOSLink {
   cheie: string;
 }
 
+/**
+ * Cheia API și aprobările plăților circulă doar criptat: o adresă http:// e refuzată, în afară de
+ * mașina locală (un POSLink simulat în teste sau în dezvoltare).
+ */
 export function configPOSLink(): ConfigPOSLink | null {
   const cheie = process.env.POSLINK_API_KEY;
   if (!cheie) return null;
-  return { url: (process.env.POSLINK_URL ?? 'https://poslink.eservicii.md/POSLink').replace(/\/$/, ''), cheie };
+  const url = (process.env.POSLINK_URL ?? 'https://poslink.eservicii.md/POSLink').replace(/\/$/, '');
+  verificaAdresaPOSLink(url);
+  return { url, cheie };
+}
+
+export function verificaAdresaPOSLink(url: string): void {
+  let u: URL;
+  try {
+    u = new URL(url);
+  } catch {
+    throw new Error(`POSLINK_URL nu este o adresă validă: ${url}`);
+  }
+  const local = u.hostname === '127.0.0.1' || u.hostname === 'localhost' || u.hostname === '[::1]';
+  if (u.protocol !== 'https:' && !(u.protocol === 'http:' && local)) {
+    throw new Error('POSLINK_URL trebuie să fie https:// (http:// doar pentru 127.0.0.1 sau localhost)');
+  }
+}
+
+/** Cât citim, cel mult, dintr-un răspuns POSLink (octeți): un răspuns normal are câțiva KB. */
+export const LIMITA_RASPUNS_POSLINK = 1024 * 1024;
+
+/** Citește corpul răspunsului până la `limita` octeți; peste ea, cererea se întrerupe. */
+async function citesteLimitat(r: Response, limita: number): Promise<string> {
+  if (!r.body) return '';
+  const cititor = r.body.getReader();
+  const bucati: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await cititor.read();
+    if (done) break;
+    total += value.length;
+    if (total > limita) {
+      await cititor.cancel().catch(() => {});
+      throw new EroarePOSLink(-1, 'POSLink a trimis un răspuns prea mare');
+    }
+    bucati.push(value);
+  }
+  const tot = new Uint8Array(total);
+  let poz = 0;
+  for (const b of bucati) {
+    tot.set(b, poz);
+    poz += b.length;
+  }
+  return new TextDecoder().decode(tot);
 }
 
 /** Răspunsul standard POSLink: errorCode 0 = succes; `report` vine ca text JSON. */
@@ -51,7 +98,15 @@ export interface RezultatPlata {
   mesaj?: string;
   /** true când aprobarea a fost regăsită prin „ultima tranzacție”, după un răspuns pierdut. */
   recuperata?: boolean;
+  /**
+   * Rezultatul nu se poate confirma (răspuns pierdut, „ultima tranzacție” neconcludentă): plata NU se
+   * consideră făcută, dar nici refuzată. O nouă încercare cu aceeași referință verifică din nou, fără să
+   * trimită suma a doua oară la terminal.
+   */
+  nesigur?: boolean;
 }
+
+export const MESAJ_NESIGUR = 'Nu se poate confirma plata: verificați ecranul terminalului și chitanța băncii';
 
 export interface LinieBonFiscal {
   nume: string;
@@ -108,7 +163,7 @@ export class ClientPOSLink {
           signal: ctrl.signal,
         });
       }
-      const text = await r.text();
+      const text = await citesteLimitat(r, LIMITA_RASPUNS_POSLINK);
       let corp: any;
       try {
         corp = JSON.parse(text);
@@ -155,42 +210,73 @@ export class ClientPOSLink {
     try {
       r = await this.cere('POST', '/Device/payment/Pay', { DeviceID: deviceId, amount: suma, documentNr }, 5.5 * 60_000);
     } catch (e) {
-      if (e instanceof EroarePOSLink && e.cod === 241) {
-        const regasita = await this.cautaInUltimaTranzactie(deviceId, documentNr, suma).catch(() => null);
-        if (regasita) return { ...regasita, recuperata: true };
-        return { aprobat: false, mesaj: e.message };
-      }
+      // Răspunsul s-a pierdut: plata poate să fi trecut. Doar terminalul poate spune.
+      if (e instanceof EroarePOSLink && e.cod === 241) return this.verificaPlata(deviceId, documentNr, suma, e.message);
       throw e;
     }
-    if (r.errorCode === 241) {
-      const regasita = await this.cautaInUltimaTranzactie(deviceId, documentNr, suma).catch(() => null);
-      if (regasita) return { ...regasita, recuperata: true };
-      return { aprobat: false, mesaj: MESAJE[241] };
-    }
+    if (r.errorCode === 241) return this.verificaPlata(deviceId, documentNr, suma, MESAJE[241]);
     if (r.errorCode !== 0) return { aprobat: false, mesaj: MESAJE[r.errorCode] ?? r.errorMessage ?? `Refuzat (${r.errorCode})` };
     const rap = (r.report ?? {}) as Record<string, any>;
-    const rezultat: RezultatPlata = { aprobat: true, autorizare: rap.authCode ? String(rap.authCode) : undefined, rrn: rap.rrn ? String(rap.rrn) : undefined, operation_id: rap.operationId ? String(rap.operationId) : undefined };
+    // Un „succes” fără RRN și cod de autorizare nu e o aprobare: se verifică pe terminal.
+    if (!rap.rrn || !rap.authCode) return this.verificaPlata(deviceId, documentNr, suma, null);
+    const rezultat: RezultatPlata = { aprobat: true, autorizare: String(rap.authCode), rrn: String(rap.rrn), operation_id: rap.operationId ? String(rap.operationId) : undefined };
     await this.inchideDocument(deviceId, documentNr, rezultat.operation_id).catch(() => {});
     return rezultat;
   }
 
-  /** Schema răspunsului „ultima tranzacție” nu e publicată: căutăm defensiv referința noastră. */
-  private async cautaInUltimaTranzactie(deviceId: string, documentNr: string, suma: number): Promise<RezultatPlata | null> {
+  /**
+   * Verifică o operațiune al cărei rezultat nu se știe, după „ultima tranzacție” a terminalului.
+   * Întoarce aprobarea (recuperata), un refuz definitiv sau `nesigur`; niciodată nu trimite din nou suma.
+   * `mesajAbsenta`: mesajul (refuz) când ultima tranzacție e alta, deci operațiunea noastră nu a ajuns la
+   * terminal; null când terminalul a răspuns deja „succes” și o lipsă înseamnă doar că nu se poate confirma.
+   */
+  async verificaPlata(deviceId: string, documentNr: string, suma: number, mesajAbsenta: string | null): Promise<RezultatPlata> {
+    let gasita: RezultatVerificare;
+    try {
+      gasita = await this.cautaInUltimaTranzactie(deviceId, documentNr, suma);
+    } catch {
+      gasita = { stare: 'nesigura' };
+    }
+    if (gasita.stare === 'aprobata') {
+      await this.inchideDocument(deviceId, documentNr, gasita.rezultat.operation_id).catch(() => {});
+      return { ...gasita.rezultat, recuperata: true };
+    }
+    if (gasita.stare === 'refuzata') return { aprobat: false, mesaj: 'Plata a fost refuzată pe terminal' };
+    if (gasita.stare === 'absenta' && mesajAbsenta) return { aprobat: false, mesaj: mesajAbsenta };
+    return { aprobat: false, nesigur: true, mesaj: MESAJ_NESIGUR };
+  }
+
+  /**
+   * Schema răspunsului „ultima tranzacție” nu e publicată: îl citim defensiv. O aprobare se acceptă doar
+   * cu referința noastră, cu aprobarea explicită, cu RRN și cu aceeași sumă; o tranzacție a altui client
+   * de aceeași sumă nu mai trece drept plata noastră.
+   */
+  private async cautaInUltimaTranzactie(deviceId: string, documentNr: string, suma: number): Promise<RezultatVerificare> {
     const r = await this.cere('GET', '/Device/payment/LastTransaction', { DeviceId: deviceId }, 30_000);
-    if (r.errorCode !== 0) return null;
+    // Nicio tranzacție pe terminal: a noastră nu a ajuns acolo.
+    if (r.errorCode === 165) return { stare: 'absenta' };
+    if (r.errorCode !== 0) return { stare: 'nesigura' };
     const rap = aplatizeaza((r.report ?? r) as Record<string, unknown>);
     const doc = rap.documentnr ?? rap.documentnumber ?? rap.document;
+    if (doc == null) return { stare: 'nesigura' };
+    if (String(doc).toLowerCase() !== documentNr.toLowerCase()) return { stare: 'absenta' };
+    const stare = String(rap.status ?? rap.state ?? rap.result ?? rap.transactionstatus ?? '').toLowerCase();
+    const cod = rap.responsecode ?? rap.rc;
+    const aprobata = rap.approved === true || ['approved', 'success', 'successful', 'ok'].includes(stare) || ['00', '000'].includes(String(cod ?? ''));
+    const refuzata =
+      rap.approved === false || ['declined', 'refused', 'rejected', 'failed', 'canceled', 'cancelled', 'error'].includes(stare) || (cod != null && !['00', '000'].includes(String(cod)));
+    if (refuzata && !aprobata) return { stare: 'refuzata' };
     const amount = Number(rap.amount);
-    if (doc != null && String(doc).toLowerCase() !== documentNr.toLowerCase()) return null;
-    if (doc == null && (!Number.isFinite(amount) || Math.abs(amount - suma) > 0.001)) return null;
-    const rezultat: RezultatPlata = {
-      aprobat: true,
-      autorizare: rap.authcode != null ? String(rap.authcode) : undefined,
-      rrn: rap.rrn != null ? String(rap.rrn) : undefined,
-      operation_id: rap.operationid != null ? String(rap.operationid) : undefined,
+    if (!aprobata || rap.rrn == null || rap.rrn === '' || !Number.isFinite(amount) || Math.abs(amount - suma) > 0.001) return { stare: 'nesigura' };
+    return {
+      stare: 'aprobata',
+      rezultat: {
+        aprobat: true,
+        autorizare: rap.authcode != null ? String(rap.authcode) : undefined,
+        rrn: String(rap.rrn),
+        operation_id: rap.operationid != null ? String(rap.operationid) : undefined,
+      },
     };
-    await this.inchideDocument(deviceId, documentNr, rezultat.operation_id).catch(() => {});
-    return rezultat;
   }
 
   async inchideDocument(deviceId: string, documentNr: string, operationId?: string): Promise<void> {
@@ -201,7 +287,15 @@ export class ClientPOSLink {
   /** Restituire pe card (ziua bancară deschisă): are nevoie de RRN și de operationId ale plății. */
   async restituie(deviceId: string, suma: number, plata: { rrn?: string | null; operation_id?: string | null }, documentNr: string): Promise<RezultatPlata> {
     if (!plata.rrn) return { aprobat: false, mesaj: 'Plata originală nu are RRN; restituirea se face manual pe terminal' };
-    const r = await this.cere('POST', '/Device/payment/Refund', { DeviceID: deviceId, documentNr, operationId: plata.operation_id ?? '', rrn: plata.rrn, amount: suma, currency: 'MDL' }, 90_000);
+    let r: RaspunsPOSLink;
+    try {
+      r = await this.cere('POST', '/Device/payment/Refund', { DeviceID: deviceId, documentNr, operationId: plata.operation_id ?? '', rrn: plata.rrn, amount: suma, currency: 'MDL' }, 90_000);
+    } catch (e) {
+      // Răspuns pierdut: returul poate să fi trecut; se verifică înainte de orice nouă trimitere.
+      if (e instanceof EroarePOSLink && e.cod === 241) return { aprobat: false, nesigur: true, mesaj: 'Nu se poate confirma returul: verificați ecranul terminalului' };
+      throw e;
+    }
+    if (r.errorCode === 241) return { aprobat: false, nesigur: true, mesaj: 'Nu se poate confirma returul: verificați ecranul terminalului' };
     if (r.errorCode !== 0) return { aprobat: false, mesaj: MESAJE[r.errorCode] ?? r.errorMessage ?? `Refuzat (${r.errorCode})` };
     const rap = (r.report ?? {}) as Record<string, any>;
     return { aprobat: true, autorizare: rap.authCode ? String(rap.authCode) : undefined, rrn: rap.rrn ? String(rap.rrn) : undefined, operation_id: rap.operationId ? String(rap.operationId) : undefined };
@@ -217,7 +311,9 @@ export class ClientPOSLink {
   async bonFiscal(deviceId: string, bon: BonFiscalDeTrimis, callback?: string): Promise<RezultatBon> {
     const Receipt = construiesteBon(bon);
     const r = await this.cere('POST', '/Device/Invoice/Pay', { DeviceID: deviceId, Receipt, ...(callback ? { CallbackURI: callback } : {}) }, 90_000);
-    if (r.errorCode === 46 || /Uid/i.test(String(r.errorMessage ?? '')) && r.errorCode !== 0) {
+    // Doar codul 46 înseamnă „bon cu același Uid deja emis”; orice altă eroare (chiar dacă pomenește
+    // Uid-ul, de ex. un format respins) lasă bonul netipărit, ca să apară „Bon netipărit” pe tabletă.
+    if (r.errorCode === 46) {
       return { ok: true, deja_emis: true, mesaj: 'Bonul fusese deja emis' };
     }
     if (r.errorCode !== 0) return { ok: false, mesaj: MESAJE[r.errorCode] ?? r.errorMessage ?? `Eroare ${r.errorCode}` };
@@ -238,6 +334,8 @@ export class ClientPOSLink {
     this.verifica(r, 'Operațiunea de numerar pe casa fiscală');
   }
 }
+
+type RezultatVerificare = { stare: 'aprobata'; rezultat: RezultatPlata } | { stare: 'refuzata' | 'absenta' | 'nesigura' };
 
 function aplatizeaza(o: Record<string, unknown>): Record<string, unknown> {
   const rez: Record<string, unknown> = {};

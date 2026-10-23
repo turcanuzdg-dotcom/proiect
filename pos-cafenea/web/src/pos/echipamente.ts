@@ -1,10 +1,11 @@
-import { cerereJson } from '../comun/http';
+import type { CatalogPOS } from '@cafenea/shared';
+import { cerereJson, EroareHttp } from '../comun/http';
 import type { ConfigEchipamente } from './stocare';
 
-// Legătura cu terminalul de plată și imprimanta fiscală. Browserul tabletei nu poate vorbi
-// direct cu ele (port serial/USB/TCP), așa că trece printr-o „punte” locală (directorul punte/)
-// care implementează protocolul concret al băncii și al casei de marcat. Până știm modelele,
-// se folosește simulatorul.
+// Legătura cu terminalul de plată și imprimanta fiscală. În producție: terminalul bancar în regim
+// fiscal legat în panou (POSLink, prin server) sau, la pilot, un terminal separat fără legătură, pe
+// care barista introduce suma de mână. Simulatorul și puntea locală (directorul punte/) aprobă orice
+// plată, deci apar doar în dezvoltare sau cu modul demonstrație pornit din panou.
 
 export interface RezultatCard {
   aprobat: boolean;
@@ -13,6 +14,8 @@ export interface RezultatCard {
   rrn?: string;
   operation_id?: string;
   mesaj?: string;
+  /** Rezultatul nu se poate confirma: nu e plată, dar nici refuz; reîncercarea verifică din nou. */
+  nesigur?: boolean;
 }
 
 export interface ReferintePlata {
@@ -41,6 +44,11 @@ export interface Echipamente {
   readonly descriere: string;
   /** Poate tipări o copie nefiscală a unui bon emis. */
   readonly poateDuplica: boolean;
+  /**
+   * Terminal separat, fără legătură: suma se introduce de mână pe terminal, barista confirmă pe tabletă
+   * dacă plata a trecut, iar bonul fiscal, returul și raportul Z se fac din meniul terminalului.
+   */
+  readonly manual: boolean;
   /** Trimite suma la terminal și așteaptă clientul să apropie cardul. */
   platesteCard(suma: number, referinta: string): Promise<RezultatCard>;
   returCard(suma: number, plata: ReferintePlata, referinta: string): Promise<RezultatCard>;
@@ -58,6 +66,7 @@ const asteapta = (ms: number) => new Promise((r) => setTimeout(r, ms));
 class Simulator implements Echipamente {
   readonly descriere = 'Simulator (fără echipamente reale)';
   readonly poateDuplica = true;
+  readonly manual = false;
   constructor(private refuza = false) {}
 
   async platesteCard(): Promise<RezultatCard> {
@@ -93,6 +102,7 @@ class Simulator implements Echipamente {
 class Punte implements Echipamente {
   readonly descriere: string;
   readonly poateDuplica = true;
+  readonly manual = false;
   constructor(
     private url: string,
     private secret: string,
@@ -134,21 +144,28 @@ class PrinServer implements Echipamente {
   readonly descriere = 'Terminal fiscal prin server (POSLink)';
   // POSLink nu are comandă de copie; copia se face din meniul casei fiscale de pe terminal.
   readonly poateDuplica = false;
+  readonly manual = false;
   constructor(private token: () => string | undefined) {}
   private cere<T>(cale: string, body?: unknown, timeout = 20_000) {
     return cerereJson<T>(`/api/pos/terminal${cale}`, { token: this.token(), body, timeout, method: body === undefined ? 'GET' : 'POST' });
   }
   async platesteCard(suma: number, referinta: string): Promise<RezultatCard> {
-    // Clientul are până la 5 minute la terminal; serverul verifică „ultima tranzacție” dacă răspunsul se pierde.
+    // Clientul are până la 5 minute la terminal; dacă răspunsul se pierde, serverul mai verifică „ultima
+    // tranzacție” și închide documentul: în cel mai rău caz cam 7 minute. Tableta așteaptă mai mult decât
+    // serverul, ca să nu renunțe în timp ce plata încă se poate aproba.
     try {
-      return await this.cere<RezultatCard>('/plata', { suma, referinta }, 6 * 60_000);
+      return await this.cere<RezultatCard>('/plata', { suma, referinta }, TIMP_PLATA_SERVER);
     } catch (e) {
-      return { aprobat: false, mesaj: (e as Error).message };
+      // Fără răspuns de la server nu știm ce s-a întâmplat pe terminal: reîncercarea cu aceeași referință
+      // se alătură plății în curs sau întoarce rezultatul înregistrat, fără să încaseze a doua oară.
+      const definitiv = e instanceof EroareHttp && e.status >= 400 && e.status < 500 && e.status !== 409;
+      return { aprobat: false, mesaj: (e as Error).message, ...(definitiv ? {} : { nesigur: true }) };
     }
   }
-  async returCard(suma: number, plata: ReferintePlata, referinta: string): Promise<RezultatCard> {
+  /** Serverul ia RRN-ul și suma din plata înregistrată a comenzii; tableta trimite doar comanda. */
+  async returCard(suma: number, _plata: ReferintePlata, referinta: string): Promise<RezultatCard> {
     try {
-      return await this.cere<RezultatCard>('/retur', { suma, referinta, rrn: plata.rrn ?? null, operation_id: plata.operation_id ?? null }, 120_000);
+      return await this.cere<RezultatCard>('/retur', { referinta, suma }, 150_000);
     } catch (e) {
       return { aprobat: false, mesaj: (e as Error).message };
     }
@@ -195,8 +212,61 @@ class PrinServer implements Echipamente {
   }
 }
 
+/** Cât așteaptă tableta răspunsul serverului la o plată (ms): peste cele ~7 minute ale serverului. */
+export const TIMP_PLATA_SERVER = 7.5 * 60_000;
+
+/**
+ * Terminal separat, fără legătură cu tableta (pilotul fără POSLink): barista introduce suma pe terminal
+ * și confirmă pe tabletă dacă plata a trecut. Bonul fiscal, returul și raportul Z se fac pe terminal.
+ */
+class TerminalSeparat implements Echipamente {
+  readonly descriere = 'Terminal separat (fără legătură)';
+  readonly poateDuplica = false;
+  readonly manual = true;
+  async platesteCard(): Promise<RezultatCard> {
+    return { aprobat: false, mesaj: 'introduceți suma pe terminal' };
+  }
+  async returCard(): Promise<RezultatCard> {
+    return { aprobat: false, mesaj: 'returul se face din meniul terminalului' };
+  }
+  async tiparesteBon(): Promise<RezultatTiparire> {
+    return { ok: false, mesaj: 'bonul fiscal se emite pe terminal' };
+  }
+  async tiparesteRetur(): Promise<RezultatTiparire> {
+    return { ok: false, mesaj: 'bonul de retur se emite pe terminal' };
+  }
+  async tiparesteDuplicat(): Promise<RezultatTiparire> {
+    return { ok: false, mesaj: 'copia bonului se face pe terminal' };
+  }
+  async raportZ(): Promise<RezultatTiparire> {
+    return { ok: false, mesaj: 'raportul Z se tipărește din meniul terminalului' };
+  }
+  async verifica() {
+    return { terminal: 'separat, fără legătură cu tableta', imprimanta: 'pe terminal' };
+  }
+}
+
+/** Simulatorul și puntea locală se pot alege doar în dezvoltare sau cu modul demonstrație din panou. */
+export const demonstratiePermisa = (catalog: Pick<CatalogPOS, 'mod_demonstratie'> | undefined, dezvoltare = import.meta.env.DEV) =>
+  dezvoltare || !!catalog?.mod_demonstratie;
+
+/**
+ * Echipamentele folosite de fapt: terminalul legat în panou are întâietate față de orice alegere salvată
+ * pe tabletă; Simulatorul și puntea doar cu demonstrația permisă; altfel terminalul separat (manual).
+ */
+export function alegeEchipamente(
+  catalog: Pick<CatalogPOS, 'terminal_prin_server' | 'mod_demonstratie'> | undefined,
+  salvat: ConfigEchipamente | undefined,
+  dezvoltare = import.meta.env.DEV,
+): ConfigEchipamente {
+  if (catalog?.terminal_prin_server) return { tip: 'server', url: '' };
+  if (salvat && (salvat.tip === 'simulator' || salvat.tip === 'punte') && demonstratiePermisa(catalog, dezvoltare)) return salvat;
+  return { tip: 'manual', url: '' };
+}
+
 export function creeazaEchipamente(c: ConfigEchipamente | undefined, token: () => string | undefined = () => undefined): Echipamente {
   if (c?.tip === 'server') return new PrinServer(token);
   if (c?.tip === 'punte' && c.url) return new Punte(c.url, c.secret ?? '');
-  return new Simulator(c?.simuleazaRefuz);
+  if (c?.tip === 'simulator') return new Simulator(c.simuleazaRefuz);
+  return new TerminalSeparat();
 }

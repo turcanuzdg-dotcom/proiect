@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { construiesteApp } from './app';
 import { deschideDb } from './db';
 import { salveazaUtilizator } from './servicii/acces';
+import { configPOSLink } from './servicii/poslink';
 
 const radacina = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const port = Number(process.env.PORT || 3000);
@@ -15,6 +16,14 @@ if (productie && !process.env.DATABASE_URL) {
     'NODE_ENV=production fără DATABASE_URL: serverul nu pornește pe baza locală de dezvoltare (PGlite). ' +
       'Verificați fișierul cu variabilele de mediu al serviciului.',
   );
+  process.exit(1);
+}
+
+// O adresă POSLink necriptată ar trimite cheia API și aprobările plăților în clar: serverul nu pornește.
+try {
+  configPOSLink();
+} catch (e) {
+  console.error((e as Error).message);
   process.exit(1);
 }
 

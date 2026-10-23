@@ -37,6 +37,8 @@ export interface Comanda {
   stoc_restituit: boolean | null;
   /** Un preț de pe tabletă diferă de catalogul de la sincronizare. */
   pret_abatere: boolean;
+  /** Card: true = plată aprobată de terminal pentru această comandă; false = neconfirmată; null la numerar. */
+  card_confirmat?: boolean | null;
   linii: LinieComanda[];
 }
 
@@ -81,6 +83,11 @@ export function TabelComenzi({ comenzi }: { comenzi: Comanda[] }) {
                       <span className={`insigna ${c.metoda === 'card' ? 'info' : ''}`}>{ETICHETE_METODA[c.metoda]}</span>
                     )}{' '}
                     {c.stare === 'anulata' && <span className="insigna pericol">anulată</span>}
+                    {c.metoda === 'card' && c.card_confirmat === false && (
+                      <span className="insigna pericol" title="Nicio plată aprobată de terminal (prin server) pentru această comandă și sumă: comparați cu raportul băncii">
+                        card neconfirmat
+                      </span>
+                    )}{' '}
                     {c.pret_abatere && (
                       <span className="insigna avertisment" title="Prețul trimis de tabletă diferă de catalogul de la sincronizare">
                         preț ≠ catalog
@@ -138,13 +145,19 @@ export function PaginaComenzi({ sub }: PropsPagina) {
   const azi = ziLocala();
   // Din panou („comenzi/abateri”): comenzile din ultimele 7 zile cu prețuri diferite de catalog.
   const dinAlerta = sub[0] === 'abateri';
-  const [perioada, setPerioada] = useState<IntervalZile>({ de: dinAlerta ? adaugaZile(azi, -6) : azi, pana: azi });
+  // Din panou („comenzi/card-neconfirmat”): vânzările pe card fără plată aprobată de terminal, ultimele 7 zile.
+  const dinAlertaCard = sub[0] === 'card-neconfirmat';
+  const [perioada, setPerioada] = useState<IntervalZile>({ de: dinAlerta || dinAlertaCard ? adaugaZile(azi, -6) : azi, pana: azi });
   const [locatie, setLocatie] = useState<number | null>(null);
   const [metoda, setMetoda] = useState('');
   const [abateri, setAbateri] = useState(dinAlerta);
+  const [neconfirmate, setNeconfirmate] = useState(dinAlertaCard);
   const r = useDate(
-    () => api.get<Comanda[]>('/api/comenzi', { ...parametriInterval(perioada), locatie_id: locatie, metoda, pret_abatere: abateri || undefined, limita: 500 }),
-    [perioada.de, perioada.pana, locatie, metoda, abateri],
+    () =>
+      api.get<Comanda[]>('/api/comenzi', {
+        ...parametriInterval(perioada), locatie_id: locatie, metoda, pret_abatere: abateri || undefined, card_neconfirmat: neconfirmate || undefined, limita: 500,
+      }),
+    [perioada.de, perioada.pana, locatie, metoda, abateri, neconfirmate],
   );
 
   return (
@@ -164,6 +177,9 @@ export function PaginaComenzi({ sub }: PropsPagina) {
         </label>
         <label className="bifa">
           <input type="checkbox" checked={abateri} onChange={(e) => setAbateri(e.target.checked)} /> Doar prețuri diferite de catalog
+        </label>
+        <label className="bifa">
+          <input type="checkbox" checked={neconfirmate} onChange={(e) => setNeconfirmate(e.target.checked)} /> Doar card neconfirmat de terminal
         </label>
       </Rand>
       <Stare {...r} gol={(d) => d.length === 0} mesajGol="Nicio comandă în intervalul ales.">

@@ -1,6 +1,6 @@
 import type { RaspunsSync } from '@cafenea/shared';
 import { cerereJson, EroareHttp } from '../comun/http';
-import { numarInCoada, primeleDinCoada, scoateDinCoada } from './stocare';
+import { evenimenteDinJurnal, numarInCoada, primeleDinCoada, scoateDinCoada } from './stocare';
 
 export interface StareSync {
   online: boolean;
@@ -96,6 +96,34 @@ export class Sincronizator {
     // Fără notificare separată: valoarea pleacă la abonați odată cu starea de după lot.
     if (Number.isFinite(server)) this.stare = { ...this.stare, decalajCeas: Math.round(server - (inainte + Date.now()) / 2) };
     return r;
+  }
+
+  /**
+   * Trimite din nou jurnalul evenimentelor deja confirmate (ultimele 7 zile), în ordinea în care au fost
+   * făcute, înaintea cozii obișnuite (care are doar evenimente mai noi). Serverul recunoaște după UUID ce
+   * are deja; după o restaurare din copia de siguranță, refacerea zilei pierdute vine de aici.
+   */
+  async retrimiteJurnal(): Promise<{ trimise: number; respinse: number }> {
+    while (this.ruleaza) await new Promise((r) => setTimeout(r, 200));
+    this.ruleaza = true;
+    clearTimeout(this.timer);
+    let trimise = 0;
+    let respinse = 0;
+    try {
+      let dupa = 0;
+      for (;;) {
+        const lot = await evenimenteDinJurnal(LOT, dupa);
+        if (!lot.length) break;
+        const r = await this.trimite(lot.map((x) => x.ev), 30_000);
+        trimise += lot.length;
+        respinse += r.cu_eroare.length;
+        dupa = lot[lot.length - 1].secv;
+      }
+    } finally {
+      this.ruleaza = false;
+      this.programeaza(300);
+    }
+    return { trimise, respinse };
   }
 
   private async pas() {

@@ -154,7 +154,7 @@ export class TerminalSimulat {
     const autorizare = String(100000 + Math.floor(Math.random() * 900000));
     const rrn = `${new Date().getFullYear() % 100}${String(Date.now()).slice(-6)}${String(this.nrTranzactie).padStart(4, '0')}`;
     const operationId = `op-${Date.now()}-${this.nrTranzactie}`;
-    this.ultima = { documentNr, amount: suma, rrn, authCode: autorizare, operationId };
+    this.ultima = { documentNr, status: 'Approved', amount: suma, rrn, authCode: autorizare, operationId };
     this.banca.tranzactii += 1;
     this.banca.total = rotunjeste(this.banca.total + suma);
     this.schimba({ ecran: { tip: 'aprobat', suma, autorizare } });

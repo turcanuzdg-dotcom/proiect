@@ -167,7 +167,9 @@ La pornire puntea afișează un **secret** (din `PUNTE_SECRET` sau generat o dat
 `punte/.secret`). În POS: Meniu → Echipamente și tabletă → Punte locală, cu adresa și secretul.
 Fără secret, puntea refuză orice comandă, deci o altă pagină din browser sau un calculator din rețea
 nu pot porni plăți sau bonuri. Până se scriu driverele pentru modelele reale, atât puntea cât și
-POS-ul au un simulator.
+POS-ul au un simulator. Fiindcă simulatoarele aprobă orice plată, „Punte locală” și „Simulator” apar pe
+tabletă doar în dezvoltare (`npm run dev`) sau cu **mod demonstrație** pornit în panou (Setări → Tablete).
+Altfel tableta folosește terminalul legat în panou sau, fără el, „Terminal separat (fără legătură)”.
 
 ## Simularea în browser
 

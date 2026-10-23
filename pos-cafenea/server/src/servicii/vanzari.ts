@@ -82,16 +82,27 @@ export async function inregistreazaComanda(db: Db, ctx: ContextPOS, la: string, 
 
   const total = casare ? 0 : rotunjeste(d.total);
   const primit = d.metoda === 'numerar' && d.primit != null ? rotunjeste(d.primit) : null;
+  // Vânzarea pe card e confirmată când terminalul a aprobat prin server plata acestei comenzi, de aceeași
+  // sumă. Altfel (Simulator, terminal fără legătură, aprobare inventată) se marchează, nu se respinge.
+  const cardConfirmat =
+    d.metoda !== 'card'
+      ? null
+      : (
+          await db.query(
+            `SELECT 1 FROM operatiuni_terminal WHERE referinta = $1 AND tip = 'plata' AND stare = 'aprobata' AND abs(suma - $2) < 0.005`,
+            [d.comanda_id, total],
+          )
+        ).length > 0;
 
   await db.query(
     `INSERT INTO comenzi (id, locatie_id, tura_id, dispozitiv_id, utilizator_id, nr, creata_la, metoda,
-                          motiv_casare, nota, total, primit, rest, card_autorizare, doze_cafea, card_rrn, card_operation_id, pret_abatere)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)`,
+                          motiv_casare, nota, total, primit, rest, card_autorizare, doze_cafea, card_rrn, card_operation_id, pret_abatere, card_confirmat)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)`,
     [
       d.comanda_id, ctx.locatie_id, d.tura_id, ctx.dispozitiv_id, d.utilizator_id, d.nr, la, d.metoda,
       casare ? d.motiv_casare : null, d.nota ?? null, total, primit,
       primit != null ? rotunjeste(primit - total) : null, d.card_autorizare ?? null, rotunjeste(doze),
-      d.card_rrn ?? null, d.card_operation_id ?? null, pretAbatere,
+      d.card_rrn ?? null, d.card_operation_id ?? null, pretAbatere, cardConfirmat,
     ],
   );
   await insereaza(db, 'comenzi_linii', ['comanda_id', 'produs_id', 'cantitate', 'pret_unitar', 'modificatori', 'total', 'cost', 'pret_catalog'], randuriLinii);
@@ -187,6 +198,8 @@ export interface FiltruComenzi {
   metoda?: string;
   /** Doar comenzile cu prețuri diferite de catalogul de la sincronizare. */
   pret_abatere?: boolean;
+  /** Doar vânzările pe card fără plată aprobată de terminal. */
+  card_neconfirmat?: boolean;
   limita?: number;
 }
 
@@ -203,6 +216,7 @@ export async function listaComenzi(db: Db, f: FiltruComenzi) {
   if (f.pana) adauga('c.creata_la < ?', f.pana);
   if (f.metoda) adauga('c.metoda = ?', f.metoda);
   if (f.pret_abatere) cond.push('c.pret_abatere');
+  if (f.card_neconfirmat) cond.push('c.card_confirmat = false');
   p.push(Math.min(f.limita ?? 200, 1000));
   const comenzi = await db.query<any>(
     `SELECT c.*, u.nume AS barista, l.nume AS locatie

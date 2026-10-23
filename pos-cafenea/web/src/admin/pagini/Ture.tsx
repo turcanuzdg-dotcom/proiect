@@ -44,6 +44,8 @@ interface Tura {
   vanzari: number;
   nr_comenzi: number;
   bani?: { cont: string; tip: TipMiscareBani; nr: number; suma: number }[];
+  /** Doar în detaliu: vânzările pe card ale turei fără plată aprobată de terminal. */
+  card_neconfirmat?: { nr: number; suma: number };
 }
 
 /** Neverificată sau schimbată după verificare: cere din nou atenția adminului. */
@@ -265,6 +267,15 @@ function DetaliuTura({ id, onInchide }: { id: string; onInchide: () => void }) {
             {t.observatii && (
               <div className="card">
                 <strong>Observațiile baristei:</strong> {t.observatii}
+              </div>
+            )}
+            {t.card_neconfirmat && t.card_neconfirmat.nr > 0 && (
+              <div className="alerta avertisment">
+                <strong>
+                  {t.card_neconfirmat.nr} {t.card_neconfirmat.nr === 1 ? 'vânzare' : 'vânzări'} pe card neconfirmate de terminal: {formatLei(t.card_neconfirmat.suma)}
+                </strong>{' '}
+                — sunt în totalul card al sistemului, dar terminalul (prin server) nu a aprobat nicio plată pentru ele. Comparați cu raportul
+                băncii; la un terminal separat, fără legătură, toate vânzările pe card apar așa.
               </div>
             )}
             {t.bani && t.bani.length > 0 && (

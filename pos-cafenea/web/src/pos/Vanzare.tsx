@@ -46,7 +46,9 @@ export function Vanzare() {
   const [dialog, setDialog] = useState<Dialog>(null);
   const [cauta, setCauta] = useState('');
   // Referința plății cu cardul: aceeași pentru toate încercările unei comenzi, ca terminalul
-  // s-o poată regăsi dacă răspunsul se pierde; devine id-ul comenzii.
+  // s-o poată regăsi dacă răspunsul se pierde; devine id-ul comenzii. Serverul o folosește ca să nu
+  // încaseze de două ori (o plată aprobată se întoarce din registru, una nesigură se verifică); după un
+  // refuz primește o nouă încercare, și cu altă sumă dacă s-a schimbat coșul.
   const [referintaCard, setReferintaCard] = useState(() => uuid());
 
   const modificatori = useMemo(() => new Map(catalog.modificatori.map((m) => [m.id, m])), [catalog]);
@@ -122,11 +124,18 @@ export function Vanzare() {
       barista: app.barista,
       stare: 'finalizata',
       bon_tiparit: false,
+      // Terminal separat: bonul fiscal îl emite barista pe terminal (amintirea de mai jos).
+      ...(app.echipamente.manual && metoda !== 'casare' ? { bon_pe_terminal: true } : {}),
     };
     await app.inregistreaza(ev, locala);
     setCos([]);
     setDialog(null);
 
+    if (metoda !== 'casare' && app.echipamente.manual) {
+      const rest = metoda === 'numerar' && locala.rest ? `Rest: ${formatLei(locala.rest)}. ` : '';
+      app.anunta(`${rest}Emiteți bonul fiscal pe terminal: ${formatLei(total)} (${metoda === 'card' ? 'card' : 'numerar'})`, true);
+      return;
+    }
     if (metoda !== 'casare') {
       const r = await app.echipamente
         .tiparesteBon({
@@ -243,7 +252,13 @@ export function Vanzare() {
       )}
       {dialog?.tip === 'numerar' && <PlataNumerar total={total} onConfirma={(primit) => finalizeaza('numerar', { primit })} onInchide={() => setDialog(null)} />}
       {dialog?.tip === 'card' && (
-        <PlataCard total={total} referinta={referintaCard} onAprobat={(card) => finalizeaza('card', { card })} onInchide={() => setDialog(null)} />
+        <PlataCard
+          total={total}
+          referinta={referintaCard}
+          onAprobat={(card) => finalizeaza('card', { card })}
+          onInchide={() => setDialog(null)}
+          onReferintaNoua={() => setReferintaCard(uuid())}
+        />
       )}
       {dialog?.tip === 'casare' && (
         <Casare cos={cos} onConfirma={(motiv, nota) => finalizeaza('casare', { motiv_casare: motiv, nota })} onInchide={() => setDialog(null)} />

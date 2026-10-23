@@ -111,19 +111,25 @@ describe('terminalul fiscal prin POSLink', () => {
     expect(r.aprobat).toBe(false);
     expect(r.mesaj).toMatch(/nu răspunde/);
     // Plata trecuse de fapt: „ultima tranzacție” o regăsește după referința noastră → nu se încasează a doua oară.
-    scenariu.ultima = { errorCode: 0, report: JSON.stringify({ documentNr: referinta, rrn: '777', authCode: '111111', operationId: 'op-7', amount: 45 }) };
+    scenariu.ultima = { errorCode: 0, report: JSON.stringify({ documentNr: referinta, status: 'Approved', rrn: '777', authCode: '111111', operationId: 'op-7', amount: 45 }) };
     r = await t.tableta.post('/api/pos/terminal/plata', { suma: 45, referinta });
     expect(r).toMatchObject({ aprobat: true, recuperata: true, rrn: '777', autorizare: '111111' });
     scenariu.payRaspuns = { errorCode: 0, report: JSON.stringify({ rrn: '428541236789', authCode: '123456', operationId: 'op-1', amount: 60 }) };
     scenariu.ultima = null;
   });
 
-  it('restituirea pe card cere RRN-ul plății', async () => {
-    const r = await t.tableta.post('/api/pos/terminal/retur', { suma: 60, referinta: randomUUID(), rrn: '428541236789', operation_id: 'op-1' });
+  it('restituirea pe card folosește RRN-ul plății înregistrate, nu pe cel trimis de tabletă', async () => {
+    const referinta = randomUUID();
+    await t.tableta.post('/api/pos/terminal/plata', { suma: 60, referinta });
+    apeluri.length = 0;
+    const r = await t.tableta.post('/api/pos/terminal/retur', { suma: 60, referinta, rrn: 'ORICE', operation_id: 'altceva' });
     expect(r.aprobat).toBe(true);
-    const fara = await t.tableta.post('/api/pos/terminal/retur', { suma: 60, referinta: randomUUID(), rrn: null, operation_id: null });
-    expect(fara.aprobat).toBe(false);
-    expect(fara.mesaj).toMatch(/RRN/);
+    const refund = apeluri.find((a) => a.cale.endsWith('/payment/Refund'))!.corp;
+    expect(refund).toMatchObject({ rrn: '428541236789', operationId: 'op-1', amount: 60 });
+    // Fără o plată înregistrată pe server, returul se face din meniul terminalului.
+    const fara = await t.app.inject({ method: 'POST', url: '/api/pos/terminal/retur', payload: { suma: 60, referinta: randomUUID() }, headers: { authorization: `Bearer ${t.tokenTableta}` } });
+    expect(fara.statusCode).toBe(409);
+    expect(fara.json().eroare).toMatch(/meniul terminalului/);
   });
 
   it('bonul fiscal pleacă în structura ISFiscal, cu cota TVA a produsului și plata potrivită', async () => {
