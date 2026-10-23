@@ -38,15 +38,20 @@ interface Tura {
   observatii: string | null;
   are_discrepante: boolean;
   verificata_la: string | null;
+  /** Cifrele s-au schimbat după verificare (vânzare sau corecție de casă ajunsă târziu). */
+  modificata_dupa_verif: boolean;
   nota_verificare: string | null;
   vanzari: number;
   nr_comenzi: number;
   bani?: { cont: string; tip: TipMiscareBani; nr: number; suma: number }[];
 }
 
+/** Neverificată sau schimbată după verificare: cere din nou atenția adminului. */
+const deVerificat = (t: Tura) => !t.verificata_la || t.modificata_dupa_verif;
+
 function StareTura({ t }: { t: Tura }) {
   if (!t.inchisa_la) return <span className="insigna info">deschisă</span>;
-  if (t.are_discrepante && !t.verificata_la) return <span className="insigna pericol">discrepanțe</span>;
+  if (t.are_discrepante && deVerificat(t)) return <span className="insigna pericol">discrepanțe</span>;
   if (t.are_discrepante) return <span className="insigna avertisment">verificată</span>;
   return <span className="insigna succes">în regulă</span>;
 }
@@ -95,10 +100,11 @@ export function PaginaTure({ sub, navigheaza }: PropsPagina) {
               </thead>
               <tbody>
                 {ture.map((t) => (
-                  <tr key={t.id} className={`clic${t.are_discrepante && !t.verificata_la ? ' discrepanta' : ''}`} onClick={() => navigheaza(`ture/${t.id}`)}>
+                  <tr key={t.id} className={`clic${t.are_discrepante && deVerificat(t) ? ' discrepanta' : ''}`} onClick={() => navigheaza(`ture/${t.id}`)}>
                     <td>
                       {formatDataOra(t.deschisa_la)} – {t.inchisa_la ? formatOra(t.inchisa_la) : '…'}
                       {t.creata_automat && <span className="insigna avertisment" style={{ marginLeft: 6 }}>creată automat</span>}
+                      {t.modificata_dupa_verif && <span className="insigna avertisment" style={{ marginLeft: 6 }}>modificată după verificare</span>}
                     </td>
                     <td>{t.locatie}</td>
                     <td>{t.barista ?? '—'}</td>
@@ -160,7 +166,7 @@ function DetaliuTura({ id, onInchide }: { id: string; onInchide: () => void }) {
       onInchide={onInchide}
       lat
       subsol={
-        t && (t.inchisa_la || t.are_discrepante) && !t.verificata_la ? (
+        t && (t.inchisa_la || t.are_discrepante) && deVerificat(t) ? (
           <>
             <input placeholder="Notă (de ex. „discutat cu barista, lipsa reținută din salariu”)" value={nota} onChange={(e) => setNota(e.target.value)} style={{ flex: 1, minWidth: 220 }} />
             <button type="button" className="buton" disabled={lucreaza} onClick={verifica}>
@@ -187,9 +193,11 @@ function DetaliuTura({ id, onInchide }: { id: string; onInchide: () => void }) {
               <div className="alerta avertisment">Tura a fost creată automat de server: vânzările au sosit fără evenimentul de deschidere.</div>
             )}
             {t.verificata_la && (
-              <div className="alerta succes">
+              <div className={`alerta ${t.modificata_dupa_verif ? 'avertisment' : 'succes'}`}>
                 Verificată de {t.verificata_de_nume ?? 'admin'} la {formatDataOra(t.verificata_la)}
                 {t.nota_verificare ? `: ${t.nota_verificare}` : ''}
+                {t.modificata_dupa_verif &&
+                  '. Modificată după verificare: o vânzare sau o corecție de casă sincronizată târziu i-a schimbat cifrele; verificați-o din nou.'}
               </div>
             )}
             <div className="tabel-container">

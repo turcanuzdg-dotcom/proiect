@@ -6,9 +6,13 @@ import { useDate } from '../context';
 
 interface DatePanou {
   vanzari: { locatie_id: number; locatie: string; comenzi: number; numerar: number; card: number; total: number; casari: number; ture_deschise: number }[];
-  discrepante: { id: string; deschisa_la: string; inchisa_la: string | null; locatie: string; barista: string | null; dif_numerar: number | null; dif_card: number | null; dif_doze: number | null; dif_anulari: number | null; dif_casari: number | null; dif_fond: number | null }[];
+  discrepante: { id: string; deschisa_la: string; inchisa_la: string | null; locatie: string; barista: string | null; dif_numerar: number | null; dif_card: number | null; dif_doze: number | null; dif_anulari: number | null; dif_casari: number | null; dif_fond: number | null; modificata_dupa_verif: boolean }[];
   sub_prag: { locatie: string; nume: string; um: string; prag_minim: number; stoc: number }[];
   erori_sync: number;
+  /** Comenzi din ultimele 7 zile cu prețuri diferite de catalog. */
+  preturi_abatute: number;
+  /** Operațiuni din ultimele 7 zile cu ora tabletei dată înapoi. */
+  ore_suspecte: number;
   dispozitive: { nume: string; locatie: string; ultima_sincronizare: string | null }[];
 }
 
@@ -26,7 +30,7 @@ export function PaginaPanou({ navigheaza }: PropsPagina) {
           const total = d.vanzari.reduce((s, v) => s + v.total, 0);
           const comenzi = d.vanzari.reduce((s, v) => s + v.comenzi, 0);
           const tableteVechi = d.dispozitive.filter((x) => !x.ultima_sincronizare || Date.now() - new Date(x.ultima_sincronizare).getTime() > ORA);
-          const nrAlerte = d.discrepante.length + d.sub_prag.length + (d.erori_sync ? 1 : 0) + tableteVechi.length;
+          const nrAlerte = d.discrepante.length + d.sub_prag.length + (d.erori_sync ? 1 : 0) + (d.preturi_abatute ? 1 : 0) + (d.ore_suspecte ? 1 : 0) + tableteVechi.length;
           return (
             <>
               <div className="card grila-kpi">
@@ -67,7 +71,8 @@ export function PaginaPanou({ navigheaza }: PropsPagina) {
                     <div key={t.id} className="alerta pericol">
                       <span>
                         <strong>Discrepanță la tură</strong> · {t.locatie} · {t.barista ?? '—'} · {formatDataOra(t.deschisa_la)}
-                        {t.inchisa_la ? '' : ' (tură încă deschisă)'} —{' '}
+                        {t.inchisa_la ? '' : ' (tură încă deschisă)'}
+                        {t.modificata_dupa_verif ? ' (modificată după verificare)' : ''} —{' '}
                         {(
                           [
                             ['numerar', t.dif_numerar, true],
@@ -99,6 +104,30 @@ export function PaginaPanou({ navigheaza }: PropsPagina) {
                       <button type="button" className="buton-secundar" onClick={() => navigheaza('setari/erori')}>
                         Vezi erorile
                       </button>
+                    </div>
+                  )}
+                  {d.preturi_abatute > 0 && (
+                    <div className="alerta avertisment">
+                      <span>
+                        <strong>
+                          {d.preturi_abatute} {d.preturi_abatute === 1 ? 'comandă' : 'comenzi'} cu prețuri diferite de catalog
+                        </strong>{' '}
+                        în ultimele 7 zile — normal pentru vânzări offline după o schimbare de preț; altfel, verificați tableta.
+                      </span>
+                      <button type="button" className="buton-secundar" onClick={() => navigheaza('comenzi/abateri')}>
+                        Vezi comenzile
+                      </button>
+                    </div>
+                  )}
+                  {d.ore_suspecte > 0 && (
+                    <div className="alerta avertisment">
+                      <span>
+                        <strong>
+                          {d.ore_suspecte} {d.ore_suspecte === 1 ? 'operațiune' : 'operațiuni'} cu ora tabletei dată înapoi
+                        </strong>{' '}
+                        în ultimele 7 zile — ceasul unei tablete a fost schimbat. Verificați „Data și ora automate” pe tabletă și
+                        turele din acele zile.
+                      </span>
                     </div>
                   )}
                   {tableteVechi.map((x) => (

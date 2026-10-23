@@ -70,6 +70,24 @@ flowchart LR
   vine într-o altă perioadă decât vânzarea (rar: retururile se fac în aceeași tură), raportul de vânzări
   al perioadei vechi scade, iar restituirea apare în registrul de bani la data ei. Raportul de pierderi
   arată anulările la data anulării.
+- **Serverul nu crede orbește tableta.** Totalul unei comenzi trebuie să fie exact suma liniilor (aceeași
+  funcție ca pe tabletă), iar modificatorii unei linii trebuie să fie diferiți și permiși pentru produs;
+  altfel evenimentul ajunge la „Erori sincronizare”, fără să blocheze coada. Un preț diferit de catalog nu
+  se respinge (vânzare offline după o schimbare de preț): se păstrează prețul catalogului de la
+  sincronizare, comanda e marcată „preț ≠ catalog” și numărată pe panou.
+- **Ceasul tabletei are limite.** Un moment cu peste 10 minute în viitor sau dinaintea asocierii tabletei
+  e respins (Erori sincronizare; adminul îl poate reaplica după verificare). Tableta își compară ceasul cu
+  ora serverului la fiecare sincronizare: peste 5 minute diferență afișează o bandă de avertizare și nu
+  deschide o tură nouă. Banii unei vânzări, anulări sau plăți mărunte intră cel mai devreme la deschiderea
+  numărată a turei ei, deci un ceas dat înapoi nu mută o încasare (și lipsa) în tura închisă a altei
+  bariste; evenimentul e marcat „oră suspectă” și numărat pe panou.
+- **O tură verificată care se schimbă iese din nou la verificare** (vânzare sau corecție de casă ajunsă
+  târziu): „modificată după verificare”, pe panou și la filtrul „neverificate”. O a doua deschidere a unei
+  ture deja deschise e respinsă; o deschidere reaplicată după închidere nu mai numără diferența de două ori.
+- **Scrieri simultane pe aceeași locație.** Numărările de casă (deschiderea și închiderea turei) și
+  finalizarea inventarierii iau o blocare pe locație (`pg_advisory_xact_lock`), iar vânzările, mișcările de
+  casă și de stoc o iau partajat: o mișcare scrisă în paralel e fie văzută de numărare, fie corectată după
+  ea. Ordinea blocărilor e descrisă în `server/src/servicii/ture.ts` (`CHEIE_CASA`).
 - **Securitate pe măsura unei cafenele, nu a unei bănci.** Tokenul de sesiune circulă doar în antet
   (fluxul de notificări folosește bilete de un minut) și stă în bază doar ca amprentă SHA-256, la fel
   ca tokenul tabletelor; o sesiune ține cel mult 30 de zile. Loginul are pauze după încercări greșite
@@ -99,7 +117,9 @@ flowchart LR
 - Operațiunile de casă introduse din panou (depuneri, alimentări) se pot data în trecut, dar nu
   se pot lega explicit de o tură; momentul ales decide tura căreia îi corectează numărarea.
 - Inventarierea cere internet (scripticul vine de pe server). Vânzarea merge în continuare offline.
-- Momentul vânzării vine de la ceasul tabletei; tabletele trebuie să aibă ora setată automat.
+- Momentul vânzării vine de la ceasul tabletei; tabletele trebuie să aibă ora setată automat (serverul
+  respinge doar abaterile mari și semnalează ceasul dat înapoi; o tabletă offline cu ceasul greșit nu
+  poate fi avertizată până nu se reconectează).
 - Același preț în toate locațiile; fără reduceri, carduri de fidelitate sau mese/comenzi deschise.
 - Un singur rol de administrator (fără manager pe locație).
 - O singură casă (sertar de numerar) pe locație: dacă o cafenea are două tablete cu sertare separate,

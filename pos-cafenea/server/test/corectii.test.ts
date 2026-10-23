@@ -1,7 +1,7 @@
 // Cazuri găsite la revizie: evenimente care ajung pe server după ce o numărare a avut loc.
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { evComanda, evTuraDeschisa, pregateste } from './ajutor';
+import { evComanda, evTuraDeschisa, pregateste, tableteVechi } from './ajutor';
 
 let t: Awaited<ReturnType<typeof pregateste>>;
 beforeAll(async () => {
@@ -143,6 +143,7 @@ describe('operațiuni de casă introduse din panou', () => {
   it('o depunere introdusă a doua zi, cu ora reală, corectează numărarea turei de aseară', async () => {
     const loc = await t.admin.post('/api/locatii', { nume: 'Cafenea Seara', tip: 'punct' });
     const tableta = await t.admin.post('/api/dispozitive', { nume: 'Tabletă Seara', locatie_id: loc.id });
+    await tableteVechi(t.db);
     const token = (await t.app.inject({ method: 'POST', url: '/api/pos/asociere', payload: { cod: tableta.cod_asociere } })).json().token;
     const sync = async (evenimente: unknown[]) =>
       (await t.app.inject({ method: 'POST', url: '/api/pos/sync', payload: { evenimente }, headers: { authorization: `Bearer ${token}` } })).json();

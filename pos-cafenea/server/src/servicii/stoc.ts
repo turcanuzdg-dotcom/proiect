@@ -12,13 +12,25 @@ export interface Miscare {
   creata_la?: string | Date;
 }
 
+/** Cheia blocării stocului unei locații (ordinea blocărilor: vezi CHEIE_CASA în ture.ts). */
+export const CHEIE_STOC = 7301;
 const COLOANE = ['locatie_id', 'articol_id', 'cantitate', 'tip', 'document_tip', 'document_id', 'cost_unitar', 'creata_la'];
+
+/** Cheia stocului, partajat, pentru fiecare locație o singură dată și în ordine crescătoare. */
+export async function blocheazaStoc(db: Db, locatii: number[]): Promise<void> {
+  for (const loc of [...new Set(locatii)].sort((a, b) => a - b)) {
+    await db.query('SELECT pg_advisory_xact_lock_shared($1, $2)', [CHEIE_STOC, loc]);
+  }
+}
 
 export async function inregistreazaMiscari(db: Db, miscari: Miscare[]): Promise<void> {
   const acum = new Date().toISOString();
   const reale = miscari
     .filter((m) => m.cantitate !== 0)
     .map((m) => ({ ...m, creata_la: m.creata_la ? new Date(m.creata_la).toISOString() : acum }));
+  // Finalizarea unei inventarieri a locației ia aceeași cheie, exclusiv: o mișcare scrisă în paralel
+  // fie e văzută de finalizare (în scripticul înghețat), fie vede inventarierea finalizată și se compensează.
+  await blocheazaStoc(db, reale.map((m) => m.locatie_id));
   const randuri = reale.map((m) => [m.locatie_id, m.articol_id, m.cantitate, m.tip, m.document_tip, String(m.document_id), m.cost_unitar, m.creata_la]);
   randuri.push(...(await compensariInventar(db, reale)));
   await insereaza(db, 'miscari_stoc', COLOANE, randuri);

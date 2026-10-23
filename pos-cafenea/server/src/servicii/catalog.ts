@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto';
-import type { CatalogPOS, DefinitieModificator, LinieReteta, TipArticol, UM } from '@cafenea/shared';
+import { sha256Hex, type CatalogPOS, type DefinitieModificator, type LinieReteta, type TipArticol, type UM } from '@cafenea/shared';
 import { insereaza, type Db } from '../db';
 import { EroareNegasit, EroareUtilizator } from '../erori';
+import { areTerminal, poslinkConfigurat } from './terminal';
 
 // ---- Articole (materie primă, ambalaje, mărfuri) ----
 
@@ -169,6 +170,8 @@ export async function salveazaModificator(db: Db, d: DateModificator, id?: numbe
 export interface DefinitieProdus {
   id: number;
   nume: string;
+  /** Prețul din catalog acum (tableta poate vinde offline la un preț mai vechi). */
+  pret: number;
   doze_cafea: number;
   reteta: LinieReteta[];
 }
@@ -176,8 +179,8 @@ export interface DefinitieProdus {
 export async function incarcaDefinitii(db: Db, produseIds: number[], modificatoriIds: number[]) {
   const produse = new Map<number, DefinitieProdus>();
   if (produseIds.length) {
-    const p = await db.query<{ id: number; nume: string; doze_cafea: number }>(
-      'SELECT id, nume, doze_cafea FROM produse WHERE id = ANY($1::int[])',
+    const p = await db.query<{ id: number; nume: string; pret: number; doze_cafea: number }>(
+      'SELECT id, nume, pret, doze_cafea FROM produse WHERE id = ANY($1::int[])',
       [produseIds],
     );
     for (const x of p) produse.set(x.id, { ...x, reteta: [] });
@@ -188,6 +191,8 @@ export async function incarcaDefinitii(db: Db, produseIds: number[], modificator
     for (const l of r) produse.get(l.produs_id)?.reteta.push({ articol_id: l.articol_id, cantitate: l.cantitate });
   }
   const modificatori = new Map<number, DefinitieModificator>();
+  /** Perechile permise „produs:modificator” (produse_modificatori). */
+  const permise = new Set<string>();
   if (modificatoriIds.length) {
     const m = await db.query<any>('SELECT * FROM modificatori WHERE id = ANY($1::int[])', [modificatoriIds]);
     for (const x of m) modificatori.set(x.id, { ...x, adauga: [] });
@@ -196,8 +201,15 @@ export async function incarcaDefinitii(db: Db, produseIds: number[], modificator
       [modificatoriIds],
     );
     for (const x of l) modificatori.get(x.modificator_id)?.adauga.push({ articol_id: x.articol_id, cantitate: x.cantitate });
+    if (produseIds.length) {
+      const pm = await db.query<{ produs_id: number; modificator_id: number }>(
+        'SELECT produs_id, modificator_id FROM produse_modificatori WHERE produs_id = ANY($1::int[]) AND modificator_id = ANY($2::int[])',
+        [produseIds, modificatoriIds],
+      );
+      for (const x of pm) permise.add(`${x.produs_id}:${x.modificator_id}`);
+    }
   }
-  return { produse, modificatori };
+  return { produse, modificatori, permise };
 }
 
 // ---- Catalogul descărcat de tabletă ----
@@ -228,4 +240,16 @@ export async function catalogPOS(db: Db, locatieId: number): Promise<CatalogPOS>
   };
   const versiune = createHash('sha1').update(JSON.stringify(continut)).digest('hex').slice(0, 12);
   return { versiune, ...continut, generat_la: new Date().toISOString() };
+}
+
+/**
+ * Catalogul văzut de o anumită tabletă: cel al locației plus dacă tableta are terminal fiscal prin
+ * server. Versiunea le cuprinde pe amândouă, ca legarea (sau dezlegarea) unui terminal în panou să
+ * ajungă la tabletă la următoarea sincronizare, nu abia la o schimbare de meniu. Aceeași funcție dă
+ * versiunea pentru GET /api/pos/catalog și pentru răspunsul sincronizării.
+ */
+export async function catalogTableta(db: Db, locatieId: number, dispozitivId: number | null) {
+  const catalog = await catalogPOS(db, locatieId);
+  const terminal_prin_server = poslinkConfigurat() && dispozitivId != null && (await areTerminal(db, dispozitivId));
+  return { ...catalog, versiune: sha256Hex(`${catalog.versiune}|terminal:${terminal_prin_server}`).slice(0, 12), terminal_prin_server };
 }

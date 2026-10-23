@@ -659,7 +659,10 @@ interface EroareSync {
   eroare: string | null;
   dispozitiv: string | null;
   locatie: string | null;
-  payload: { date?: Record<string, unknown> } & Record<string, unknown>;
+  /** Conținutul era prea mare și nu s-a păstrat (format invalid peste 64 KB). */
+  trunchiat: boolean;
+  /** Doar în detaliu (GET /api/sync/erori/:id): lista nu aduce conținutul evenimentelor. */
+  payload?: { date?: Record<string, unknown> } & Record<string, unknown>;
 }
 
 const TIPURI_EVENIMENT: Record<string, string> = {
@@ -674,6 +677,13 @@ function TabErori() {
   const { arata } = useAdmin();
   const r = useDate(() => api.get<EroareSync[]>('/api/sync/erori'), []);
   const [detaliu, setDetaliu] = useState<EroareSync | null>(null);
+  const deschide = async (e: EroareSync) => {
+    try {
+      setDetaliu(await api.get<EroareSync>(`/api/sync/erori/${e.id}`));
+    } catch (err) {
+      arata(mesajEroare(err), 'pericol');
+    }
+  };
 
   const actiune = async (e: EroareSync, ce: 'reaplica' | 'rezolvat') => {
     if (ce === 'rezolvat' && !window.confirm('Marcați evenimentul ca rezolvat fără să-l aplicați? Nu se va mai modifica stocul sau banii pentru el.')) return;
@@ -692,6 +702,7 @@ function TabErori() {
     <>
       <p className="slab mic" style={{ maxWidth: 720 }}>
         Operațiunile făcute pe tabletă (inclusiv offline) care n-au putut fi aplicate pe server, de exemplu pentru că un produs a fost șters între timp. Nimic nu se pierde: corectați cauza (refaceți produsul, utilizatorul etc.), apoi „Reaplică”. Dacă eroarea spune că utilizatorul nu are PIN de tabletă, dați-i un PIN în tabul Utilizatori și reaplicați.
+        Lista e în ordinea în care operațiunile au fost făcute pe tabletă: reaplicați de sus în jos (deschiderea turei înaintea vânzărilor și a închiderii). O eroare despre ora tabletei se reaplică după ce verificați că momentul e cel real.
       </p>
       <Stare {...r} gol={(d) => d.length === 0} mesajGol="Nicio eroare de sincronizare. Toate operațiunile de pe tablete au fost aplicate.">
         {(lista) => (
@@ -720,7 +731,7 @@ function TabErori() {
                     <td>{TIPURI_EVENIMENT[e.tip] ?? e.tip}</td>
                     <td className="minus">{e.eroare}</td>
                     <td className="num">
-                      <button type="button" className="buton-link" onClick={() => setDetaliu(e)}>
+                      <button type="button" className="buton-link" onClick={() => void deschide(e)}>
                         Detalii
                       </button>
                       <button type="button" className="buton-link" onClick={() => actiune(e, 'reaplica')}>
@@ -752,6 +763,12 @@ function TabErori() {
         >
           <div className="randuri-form">
             <div className="alerta pericol">{detaliu.eroare}</div>
+            {detaliu.trunchiat && (
+              <div className="alerta avertisment">
+                Datele trimise de tabletă erau prea mari și cu format invalid, deci nu s-au păstrat. Evenimentul nu se poate
+                reaplica: marcați-l rezolvat și refaceți operațiunea manual.
+              </div>
+            )}
             <RezumatEveniment e={detaliu} />
             <details>
               <summary className="slab mic">Datele complete trimise de tabletă</summary>

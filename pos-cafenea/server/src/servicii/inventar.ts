@@ -1,7 +1,7 @@
 import { rotunjeste } from '@cafenea/shared';
 import type { Db } from '../db';
 import { EroareNegasit, EroareUtilizator } from '../erori';
-import { inregistreazaMiscari, stocLocatie } from './stoc';
+import { CHEIE_STOC, inregistreazaMiscari, stocLocatie } from './stoc';
 
 /** Pe o locație există o singură inventariere deschisă; tableta și panoul lucrează pe aceeași foaie. */
 export async function creeazaInventariere(db: Db, d: { locatie_id: number; utilizator_id?: number | null; dispozitiv_id?: number | null }) {
@@ -138,6 +138,10 @@ export async function finalizeazaInventariere(db: Db, id: number) {
     const inv = (await t.query<any>('SELECT * FROM inventarieri WHERE id = $1 FOR UPDATE', [id]))[0];
     if (!inv) throw new EroareNegasit('Inventarierea');
     if (inv.stare !== 'deschisa') throw new EroareUtilizator('Inventarierea este deja finalizată');
+    // Așteaptă mișcările de stoc ale locației aflate în lucru și le oprește pe cele noi până la final:
+    // altfel o vânzare târzie, datată înaintea numărării, n-ar fi nici în scripticul înghețat aici, nici
+    // compensată (compensariInventar nu vede o inventariere încă nevalidată).
+    await t.query('SELECT pg_advisory_xact_lock($1, $2)', [CHEIE_STOC, inv.locatie_id]);
     const linii = await liniiNumarate(t, id, inv.locatie_id);
     if (!linii.length) throw new EroareUtilizator('Nu s-a numărat niciun articol');
     const costuri = new Map((await t.query<{ id: number; cost_mediu: number }>('SELECT id, cost_mediu FROM articole')).map((a) => [a.id, a.cost_mediu]));

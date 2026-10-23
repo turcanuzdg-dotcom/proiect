@@ -6,7 +6,7 @@ import { magistrala } from '../magistrala';
 import { LIMITA_CORP_SYNC } from '../limite';
 import { asociazaDispozitiv, utilizatorPermisTabletei } from '../servicii/acces';
 import { auditNumaratori, hookAudit } from '../servicii/audit';
-import { catalogPOS } from '../servicii/catalog';
+import { catalogTableta } from '../servicii/catalog';
 import { creeazaInventariere, finalizeazaInventariere, raportInventariere, salveazaNumaratori } from '../servicii/inventar';
 import { proceseazaSync } from '../servicii/sync';
 import * as terminal from '../servicii/terminal';
@@ -34,11 +34,8 @@ export async function rutePOS(app: FastifyInstance, db: Db, doarDispozitiv: onRe
     // În onRequest, înainte de citirea corpului: o cerere fără token nu mai costă parsarea JSON-ului.
     p.addHook('onRequest', doarDispozitiv);
 
-    p.get('/api/pos/catalog', async (req) => ({
-      ...(await catalogPOS(db, req.dispozitiv!.locatie_id)),
-      // Tableta află dacă are un terminal fiscal prin server, ca să-l aleagă din oficiu.
-      terminal_prin_server: terminal.poslinkConfigurat() && (await terminal.areTerminal(db, req.dispozitiv!.id)),
-    }));
+    // Tableta află și dacă are un terminal fiscal prin server, ca să-l aleagă din oficiu; versiunea îl cuprinde.
+    p.get('/api/pos/catalog', async (req) => catalogTableta(db, req.dispozitiv!.locatie_id, req.dispozitiv!.id));
 
     // ---- Terminalul bancar în regim fiscal (POSLink): plată, retur, bon fiscal, raport Z ----
     const bani = z.number().finite().positive().max(1_000_000);
@@ -75,7 +72,7 @@ export async function rutePOS(app: FastifyInstance, db: Db, doarDispozitiv: onRe
     });
 
     // Coada vine în loturi de câte 100 de evenimente: are o limită proprie, mai mare decât restul API-ului.
-    // Fiind apelată la fiecare 5 s de fiecare tabletă, se scrie în jurnal doar peste „warn”.
+    // Fiind apelată la fiecare 15 s de fiecare tabletă, se scrie în jurnal doar peste „warn”.
     p.post('/api/pos/sync', { bodyLimit: LIMITA_CORP_SYNC, logLevel: 'warn' }, async (req) => {
       const { evenimente } = z.object({ evenimente: z.array(z.unknown()).max(500) }).parse(req.body);
       return proceseazaSync(db, { locatie_id: req.dispozitiv!.locatie_id, dispozitiv_id: req.dispozitiv!.id }, evenimente);

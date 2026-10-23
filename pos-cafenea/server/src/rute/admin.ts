@@ -15,7 +15,7 @@ import { citesteTolerante, scrieSetare } from '../servicii/setari';
 import { fisaArticol, stocLocatie, stocToateLocatiile } from '../servicii/stoc';
 import { detaliuTura, listaTure, verificaTura } from '../servicii/ture';
 import { listaComenzi } from '../servicii/vanzari';
-import { listaEroriSync, marcheazaRezolvat, reaplicaEveniment } from '../servicii/sync';
+import { detaliuEroareSync, listaEroriSync, marcheazaRezolvat, reaplicaEveniment } from '../servicii/sync';
 import * as terminal from '../servicii/terminal';
 import { schemaLiniiInventar } from './pos';
 
@@ -125,7 +125,9 @@ export async function ruteAdmin(app: FastifyInstance, db: Db, doarAdmin: onReque
     a.put('/api/locatii/:id', async (req) => {
       const { id } = idNum.parse(req.params);
       req.auditInainte = await stareAnterioara(db, 'locatie', id);
-      return acces.salveazaLocatie(db, schemaLocatie.parse(req.body), id);
+      const r = await acces.salveazaLocatie(db, schemaLocatie.parse(req.body), id);
+      anunta('catalog'); // numele locației e în catalogul tabletelor
+      return r;
     });
 
     a.get('/api/utilizatori', async () => acces.listaUtilizatori(db));
@@ -307,7 +309,7 @@ export async function ruteAdmin(app: FastifyInstance, db: Db, doarAdmin: onReque
     // ---- Vânzări, ture, bani ----
     a.get('/api/comenzi', async (req) => {
       const f = z
-        .object({ locatie_id: locOpt, tura_id: z.string().uuid().optional(), de: data.optional(), pana: data.optional(), metoda: z.enum(['numerar', 'card', 'casare']).optional(), limita: z.coerce.number().int().positive().optional() })
+        .object({ locatie_id: locOpt, tura_id: z.string().uuid().optional(), de: data.optional(), pana: data.optional(), metoda: z.enum(['numerar', 'card', 'casare']).optional(), pret_abatere: z.stringbool().optional(), limita: z.coerce.number().int().positive().optional() })
         .parse(req.query);
       return listaComenzi(db, f);
     });
@@ -374,6 +376,7 @@ export async function ruteAdmin(app: FastifyInstance, db: Db, doarAdmin: onReque
 
     // ---- Evenimente offline care n-au putut fi aplicate ----
     a.get('/api/sync/erori', async () => listaEroriSync(db));
+    a.get('/api/sync/erori/:id', async (req) => detaliuEroareSync(db, idUuid.parse(req.params).id));
     a.post('/api/sync/erori/:id/reaplica', async (req) => {
       await reaplicaEveniment(db, idUuid.parse(req.params).id);
       return { ok: true };

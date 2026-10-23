@@ -150,6 +150,8 @@ export function Autentificare(props: {
 export function DeschidereTura(props: {
   barista: BaristaActiv;
   locatie: string;
+  /** Motivul pentru care tura nu se poate deschide acum (de ex. ceasul tabletei e greșit). */
+  blocata?: string;
   onDeschisa: (fond: number) => Promise<void> | void;
   onSchimbaUtilizator: () => void;
 }) {
@@ -163,7 +165,7 @@ export function DeschidereTura(props: {
         className="card cutie-ingusta randuri-form"
         onSubmit={async (e) => {
           e.preventDefault();
-          if (!valid || lucreaza) return;
+          if (!valid || lucreaza || props.blocata) return;
           setLucreaza(true);
           try {
             await props.onDeschisa(Math.round(valoare * 100) / 100);
@@ -183,7 +185,8 @@ export function DeschidereTura(props: {
           <input className="intrare-mare" inputMode="decimal" value={fond} onChange={(e) => setFond(e.target.value)} autoFocus placeholder="0" />
         </label>
         <p className="slab mic">Numărați banii din sertar. Dacă suma diferă de cea lăsată la tura trecută, administratorul va fi anunțat.</p>
-        <button className="buton buton-mare" disabled={!valid || lucreaza}>
+        {props.blocata && <div className="alerta pericol">{props.blocata}</div>}
+        <button className="buton buton-mare" disabled={!valid || lucreaza || !!props.blocata}>
           {lucreaza ? 'Se deschide…' : 'Deschide tura'}
         </button>
         <button type="button" className="buton-link" onClick={props.onSchimbaUtilizator}>

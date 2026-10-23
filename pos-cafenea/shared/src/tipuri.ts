@@ -191,6 +191,8 @@ export interface RaspunsSync {
   /** Evenimente salvate pentru revizuire de admin; tableta le scoate din coadă oricum. */
   cu_eroare: { id: string; eroare: string }[];
   catalog_versiune: string;
+  /** Ora serverului (ISO): tableta își compară ceasul cu ea la fiecare sincronizare. */
+  ora_server: string;
 }
 
 // ---- Rapoarte ----

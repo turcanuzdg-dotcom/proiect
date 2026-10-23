@@ -2,7 +2,7 @@
 import 'fake-indexeddb/auto';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { EvenimentPOS, RaspunsSync } from '@cafenea/shared';
-import { Sincronizator, type StareSync } from './sincronizare';
+import { ceasGresit, Sincronizator, type StareSync } from './sincronizare';
 import * as stocare from './stocare';
 
 let nr = 0;
@@ -36,7 +36,7 @@ function serverFals(raspunsuri: Raspuns[]) {
   return primite;
 }
 
-const accepta = (evs: EvenimentPOS[]): RaspunsSync => ({ acceptate: evs.map((e) => e.id), cu_eroare: [], catalog_versiune: 'v1' });
+const accepta = (evs: EvenimentPOS[]): RaspunsSync => ({ acceptate: evs.map((e) => e.id), cu_eroare: [], catalog_versiune: 'v1', ora_server: new Date().toISOString() });
 
 function sincronizeaza(predicat: (s: StareSync) => boolean, catalogSchimbat = () => {}) {
   const s = new Sincronizator('token', () => 'v1', catalogSchimbat);
@@ -113,7 +113,7 @@ describe('sincronizarea', () => {
   it('când revine conexiunea, trimite tot, în ordine, în loturi de 100', async () => {
     const evs = Array.from({ length: 230 }, () => ev());
     for (const e of evs) await stocare.inregistreaza(e);
-    const primite = serverFals([{ acceptate: [], cu_eroare: [], catalog_versiune: 'v1' }]);
+    const primite = serverFals([{ acceptate: [], cu_eroare: [], catalog_versiune: 'v1', ora_server: new Date().toISOString() }]);
     (fetch as any).mockImplementation(async (_url: string, init: RequestInit) => {
       const lot = JSON.parse(String(init.body)).evenimente as EvenimentPOS[];
       primite.push(lot);
@@ -131,8 +131,8 @@ describe('sincronizarea', () => {
     for (const e of [a, b, c]) await stocare.inregistreaza(e);
     // Serverul confirmă a și respinge b (le vede adminul); c rămâne de trimis — de ex. răspuns trunchiat.
     serverFals([
-      { acceptate: [a.id], cu_eroare: [{ id: b.id, eroare: 'Produsul nu există' }], catalog_versiune: 'v1' },
-      { acceptate: [c.id], cu_eroare: [], catalog_versiune: 'v1' },
+      { acceptate: [a.id], cu_eroare: [{ id: b.id, eroare: 'Produsul nu există' }], catalog_versiune: 'v1', ora_server: new Date().toISOString() },
+      { acceptate: [c.id], cu_eroare: [], catalog_versiune: 'v1', ora_server: new Date().toISOString() },
     ]);
     const s = await sincronizeaza((st) => st.online && st.inAsteptare === 0);
     expect(s.respinse).toBe(1);
@@ -168,7 +168,7 @@ describe('sincronizarea', () => {
 
   it('o versiune nouă de catalog pe server declanșează reîncărcarea', async () => {
     await stocare.inregistreaza(ev());
-    serverFals([{ acceptate: [], cu_eroare: [], catalog_versiune: 'v2' }]);
+    serverFals([{ acceptate: [], cu_eroare: [], catalog_versiune: 'v2', ora_server: new Date().toISOString() }]);
     (fetch as any).mockImplementation(async (_url: string, init: RequestInit) => {
       const lot = JSON.parse(String(init.body)).evenimente as EvenimentPOS[];
       return new Response(JSON.stringify({ ...accepta(lot), catalog_versiune: 'v2' }), { status: 200 });
@@ -176,5 +176,17 @@ describe('sincronizarea', () => {
     const schimbat = vi.fn();
     await sincronizeaza((st) => st.online && st.inAsteptare === 0, schimbat);
     expect(schimbat).toHaveBeenCalled();
+  });
+
+  it('ora serverului din răspuns dă decalajul ceasului; peste 5 minute tableta îl semnalează', async () => {
+    const inUrma = 3 * 3_600_000; // ceasul tabletei e cu 3 ore în urmă
+    serverFals([{ acceptate: [], cu_eroare: [], catalog_versiune: 'v1', ora_server: new Date(Date.now() + inUrma).toISOString() }]);
+    const s = await sincronizeaza((st) => st.decalajCeas != null);
+    expect(Math.abs(s.decalajCeas! - inUrma)).toBeLessThan(5_000);
+    expect(ceasGresit(s)).toBe(true);
+
+    serverFals([{ acceptate: [], cu_eroare: [], catalog_versiune: 'v1', ora_server: new Date(Date.now() + 60_000).toISOString() }]);
+    const bun = await sincronizeaza((st) => st.decalajCeas != null);
+    expect(ceasGresit(bun)).toBe(false);
   });
 });

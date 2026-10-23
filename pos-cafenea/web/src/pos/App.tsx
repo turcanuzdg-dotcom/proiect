@@ -6,7 +6,7 @@ import { actualizare } from './actualizare';
 import { ContextAplicatie, type Aplicatie } from './context';
 import { creeazaEchipamente, type Echipamente } from './echipamente';
 import { Asociere, Autentificare, DeschidereTura } from './ecrane';
-import { Sincronizator, type StareSync } from './sincronizare';
+import { ceasGresit, Sincronizator, STARE_SYNC_INITIALA, type StareSync } from './sincronizare';
 import * as stocare from './stocare';
 import { Vanzare } from './Vanzare';
 
@@ -23,7 +23,7 @@ export function App() {
   const [barista, setBarista] = useState<stocare.BaristaActiv>();
   const [tura, setTura] = useState<stocare.TuraLocala>();
   const [echipamente, setEchipamente] = useState<Echipamente>(() => creeazaEchipamente(undefined));
-  const [sync, setSync] = useState<StareSync>({ online: navigator.onLine, inAsteptare: 0, ultimaSincronizare: null, respinse: 0, dezasociata: false });
+  const [sync, setSync] = useState<StareSync>(STARE_SYNC_INITIALA);
   const [toast, setToast] = useState<{ mesaj: string; pericol?: boolean } | null>(null);
   const [reasociere, setReasociere] = useState(false);
   const [actualizareGata, setActualizareGata] = useState(actualizare.disponibila);
@@ -178,6 +178,8 @@ export function App() {
       <DeschidereTura
         barista={barista}
         locatie={catalog.locatie.nume}
+        // Cu ceasul greșit, ora deschiderii (și a vânzărilor din tură) ar fi greșită: întâi se corectează ceasul.
+        blocata={ceasGresit(sync) ? 'Ora tabletei diferă de cea a serverului. Corectați ceasul (vezi mesajul de sus), apoi deschideți tura.' : undefined}
         onSchimbaUtilizator={() => {
           void stocare.sterge('barista');
           setBarista(undefined);
@@ -206,6 +208,13 @@ export function App() {
   return (
     <>
       {ecran}
+      {ceasGresit(sync) && (
+        <div className="banda-avertisment" role="alert">
+          Ceasul tabletei este {sync.decalajCeas! > 0 ? 'în urma' : 'înaintea'} serverului cu {descrieDecalaj(Math.abs(sync.decalajCeas!))}. Deschideți
+          Setări → Dată și oră pe tabletă și activați „Data și ora automate” (și fusul orar automat). Până atunci nu se
+          poate deschide o tură nouă; vânzările unei ture deschise se păstrează, dar ora lor va fi greșită.
+        </div>
+      )}
       {sync.dezasociata && !reasociere && (
         <div className="banda-avertisment">
           Serverul nu mai recunoaște această tabletă (a fost dezactivată sau i s-a dat un cod nou). Vânzările se păstrează
@@ -218,4 +227,11 @@ export function App() {
       {toast && <div className={`toast${toast.pericol ? ' pericol' : ''}`} role="status">{toast.mesaj}</div>}
     </>
   );
+}
+
+function descrieDecalaj(ms: number): string {
+  const minute = Math.round(ms / 60_000);
+  if (minute < 120) return `${minute} minute`;
+  const ore = Math.round(minute / 60);
+  return ore < 48 ? `${ore} ore` : `${Math.round(ore / 24)} zile`;
 }

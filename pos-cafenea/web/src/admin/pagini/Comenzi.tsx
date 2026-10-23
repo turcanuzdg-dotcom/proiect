@@ -1,6 +1,6 @@
 import { Fragment, useState } from 'react';
 import { ETICHETE_MOTIVE, type MotivCasare } from '@cafenea/shared';
-import { formatDataOra, formatLei, ziLocala } from '../../comun/format';
+import { adaugaZile, formatDataOra, formatLei, ziLocala } from '../../comun/format';
 import type { PropsPagina } from '../App';
 import { api } from '../api';
 import { AlegeInterval, CapPagina, FiltruLocatie, parametriInterval, Rand, Stare, type IntervalZile } from '../componente';
@@ -12,7 +12,9 @@ interface LinieComanda {
   produs: string;
   cantitate: number;
   pret_unitar: number;
-  modificatori: { id: number; nume: string; pret: number }[];
+  /** Prețul din catalog la sincronizare (lipsă la comenzile mai vechi). */
+  pret_catalog: number | null;
+  modificatori: { id: number; nume: string; pret: number; pret_catalog?: number }[];
   total: number;
   cost: number;
 }
@@ -33,7 +35,15 @@ export interface Comanda {
   stare: 'finalizata' | 'anulata';
   motiv_anulare: string | null;
   stoc_restituit: boolean | null;
+  /** Un preț de pe tabletă diferă de catalogul de la sincronizare. */
+  pret_abatere: boolean;
   linii: LinieComanda[];
+}
+
+/** Textul „catalog: X” lângă un preț care diferă de catalog. */
+function Catalog({ pret, catalog }: { pret: number; catalog: number | null | undefined }) {
+  if (catalog == null || Math.abs(pret - catalog) < 0.005) return null;
+  return <span className="minus mic"> (catalog {formatLei(catalog)})</span>;
 }
 
 export function TabelComenzi({ comenzi }: { comenzi: Comanda[] }) {
@@ -71,6 +81,11 @@ export function TabelComenzi({ comenzi }: { comenzi: Comanda[] }) {
                       <span className={`insigna ${c.metoda === 'card' ? 'info' : ''}`}>{ETICHETE_METODA[c.metoda]}</span>
                     )}{' '}
                     {c.stare === 'anulata' && <span className="insigna pericol">anulată</span>}
+                    {c.pret_abatere && (
+                      <span className="insigna avertisment" title="Prețul trimis de tabletă diferă de catalogul de la sincronizare">
+                        preț ≠ catalog
+                      </span>
+                    )}
                   </td>
                   <td className="num taiat">{c.metoda === 'casare' ? <span className="slab">({formatLei(valoare)})</span> : formatLei(valoare)}</td>
                 </tr>
@@ -81,7 +96,20 @@ export function TabelComenzi({ comenzi }: { comenzi: Comanda[] }) {
                         {c.linii.map((l) => (
                           <li key={l.id}>
                             {l.cantitate} × {l.produs} — {formatLei(l.pret_unitar)}
-                            {l.modificatori.length > 0 && <span className="slab"> + {l.modificatori.map((m) => `${m.nume}${m.pret ? ` (${formatLei(m.pret)})` : ''}`).join(', ')}</span>}
+                            <Catalog pret={l.pret_unitar} catalog={l.pret_catalog} />
+                            {l.modificatori.length > 0 && (
+                              <span className="slab">
+                                {' + '}
+                                {l.modificatori.map((m, i) => (
+                                  <Fragment key={m.id}>
+                                    {i > 0 && ', '}
+                                    {m.nume}
+                                    {m.pret ? ` (${formatLei(m.pret)})` : ''}
+                                    <Catalog pret={m.pret} catalog={m.pret_catalog} />
+                                  </Fragment>
+                                ))}
+                              </span>
+                            )}
                             {' = '}
                             <strong>{formatLei(l.total)}</strong> <span className="slab mic">cost ingrediente {formatLei(l.cost)}</span>
                           </li>
@@ -106,14 +134,17 @@ export function TabelComenzi({ comenzi }: { comenzi: Comanda[] }) {
   );
 }
 
-export function PaginaComenzi(_: PropsPagina) {
+export function PaginaComenzi({ sub }: PropsPagina) {
   const azi = ziLocala();
-  const [perioada, setPerioada] = useState<IntervalZile>({ de: azi, pana: azi });
+  // Din panou („comenzi/abateri”): comenzile din ultimele 7 zile cu prețuri diferite de catalog.
+  const dinAlerta = sub[0] === 'abateri';
+  const [perioada, setPerioada] = useState<IntervalZile>({ de: dinAlerta ? adaugaZile(azi, -6) : azi, pana: azi });
   const [locatie, setLocatie] = useState<number | null>(null);
   const [metoda, setMetoda] = useState('');
+  const [abateri, setAbateri] = useState(dinAlerta);
   const r = useDate(
-    () => api.get<Comanda[]>('/api/comenzi', { ...parametriInterval(perioada), locatie_id: locatie, metoda, limita: 500 }),
-    [perioada.de, perioada.pana, locatie, metoda],
+    () => api.get<Comanda[]>('/api/comenzi', { ...parametriInterval(perioada), locatie_id: locatie, metoda, pret_abatere: abateri || undefined, limita: 500 }),
+    [perioada.de, perioada.pana, locatie, metoda, abateri],
   );
 
   return (
@@ -130,6 +161,9 @@ export function PaginaComenzi(_: PropsPagina) {
             <option value="card">Card</option>
             <option value="casare">Casări</option>
           </select>
+        </label>
+        <label className="bifa">
+          <input type="checkbox" checked={abateri} onChange={(e) => setAbateri(e.target.checked)} /> Doar prețuri diferite de catalog
         </label>
       </Rand>
       <Stare {...r} gol={(d) => d.length === 0} mesajGol="Nicio comandă în intervalul ales.">

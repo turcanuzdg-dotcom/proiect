@@ -1,4 +1,5 @@
 import type { Db } from '../db';
+import { NEVERIFICATA } from './ture';
 
 /** Prima pagină a adminului: vânzările de azi și tot ce cere atenție. */
 export async function panou(db: Db, deAzi: string) {
@@ -24,9 +25,10 @@ export async function panou(db: Db, deAzi: string) {
             (t.declarat_anulari - t.scriptic_anulari) AS dif_anulari,
             (t.declarat_casari - t.scriptic_casari) AS dif_casari,
             CASE WHEN EXISTS (SELECT 1 FROM miscari_bani mb WHERE mb.tura_id = t.id AND mb.tip = 'fond_initial') THEN NULL
-                 ELSE (t.fond_initial - t.scriptic_fond) END AS dif_fond
+                 ELSE (t.fond_initial - t.scriptic_fond) END AS dif_fond,
+            (t.verificata_la IS NOT NULL) AS modificata_dupa_verif
        FROM ture t JOIN locatii l ON l.id = t.locatie_id LEFT JOIN utilizatori u ON u.id = t.utilizator_id
-      WHERE t.are_discrepante AND t.verificata_la IS NULL
+      WHERE t.are_discrepante AND ${NEVERIFICATA}
       ORDER BY t.deschisa_la DESC LIMIT 50`,
   );
   const subPrag = await db.query(
@@ -43,5 +45,13 @@ export async function panou(db: Db, deAzi: string) {
     `SELECT d.nume, l.nume AS locatie, d.ultima_sincronizare FROM dispozitive d JOIN locatii l ON l.id = d.locatie_id
       WHERE d.activ AND d.token IS NOT NULL ORDER BY d.ultima_sincronizare NULLS FIRST`,
   );
-  return { vanzari, discrepante, sub_prag: subPrag, erori_sync: eroriSync, dispozitive };
+  // Ultimele 7 zile: prețuri diferite de catalog (vânzări offline după o schimbare de preț sau date
+  // alterate) și operațiuni cu ora tabletei dată înapoi.
+  const [{ n: preturiAbatute }] = await db.query<{ n: number }>(
+    `SELECT COUNT(*)::int AS n FROM comenzi WHERE pret_abatere AND creata_la >= now() - interval '7 days'`,
+  );
+  const [{ n: oreSuspecte }] = await db.query<{ n: number }>(
+    `SELECT COUNT(*)::int AS n FROM evenimente_sync WHERE ora_suspecta AND primit_la >= now() - interval '7 days'`,
+  );
+  return { vanzari, discrepante, sub_prag: subPrag, erori_sync: eroriSync, dispozitive, preturi_abatute: preturiAbatute, ore_suspecte: oreSuspecte };
 }

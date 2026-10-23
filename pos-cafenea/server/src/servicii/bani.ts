@@ -1,7 +1,7 @@
 import { rotunjeste, type Cont } from '@cafenea/shared';
 import type { Db } from '../db';
 import { EroareUtilizator } from '../erori';
-import { corecteazaNumarariUlterioare } from './ture';
+import { blocheazaCasa, corecteazaNumarariUlterioare } from './ture';
 
 /** Soldul de numerar al fiecărei locații și încasările pe card dintr-un interval. */
 export async function rezumatBani(db: Db, de: string, pana: string) {
@@ -64,6 +64,8 @@ export async function adaugaMiscareBani(db: Db, d: DateMiscareAdmin, utilizatorI
   if (la.getTime() > Date.now() + 5 * 60_000) throw new EroareUtilizator('Momentul operațiunii nu poate fi în viitor');
   const suma = (d.tip === 'alimentare' ? 1 : -1) * rotunjeste(d.suma);
   return db.tx(async (t) => {
+    // Partajat: o numărare de casă în curs pe locație se termină întâi (vezi blocheazaCasa).
+    await blocheazaCasa(t, d.locatie_id);
     const r = await t.query(
       `INSERT INTO miscari_bani (locatie_id, cont, suma, tip, descriere, utilizator_id, creata_la)
        VALUES ($1, 'numerar', $2, $3, $4, $5, $6) RETURNING *`,

@@ -1,7 +1,7 @@
 import { rotunjeste } from '@cafenea/shared';
 import { insereaza, type Db } from '../db';
 import { EroareNegasit, EroareUtilizator } from '../erori';
-import { inregistreazaMiscari } from './stoc';
+import { blocheazaStoc, inregistreazaMiscari } from './stoc';
 
 // ---- Recepții (facturi de achiziție, de regulă în Depozitul Central) ----
 
@@ -19,6 +19,9 @@ export async function creeazaReceptie(db: Db, d: DateReceptie, utilizatorId: num
     throw new EroareUtilizator('Un articol apare de două ori pe factură; comasați liniile');
   }
   return db.tx(async (t) => {
+    // Cheia stocului înaintea rândurilor din articole: o finalizare de inventariere (care ține cheia
+    // exclusiv și scrie mișcări cu cheie străină spre articole) nu se poate bloca circular cu recepția.
+    await blocheazaStoc(t, [d.locatie_id]);
     const total = rotunjeste(d.linii.reduce((s, l) => s + l.cantitate * l.cost_unitar, 0));
     const r = await t.query<{ id: number; creata_la: string }>(
       `INSERT INTO receptii (locatie_id, furnizor, nr_factura, data, total, creata_de, creata_la)

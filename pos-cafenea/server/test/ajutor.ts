@@ -26,10 +26,19 @@ export async function bazaDeTest() {
 /** Parola adminului de test: cel puțin 12 caractere, cât cere panoul pentru administratori. */
 export const PAROLA_ADMIN = 'parola-test-admin';
 
+/**
+ * Testele folosesc momente fixe din octombrie 2026, iar serverul respinge operațiunile datate cu mai
+ * mult de o zi înaintea asocierii tabletei: tabletele de test „există” de la începutul lunii.
+ */
+export async function tableteVechi(db: { query: (sql: string) => Promise<unknown> }) {
+  await db.query(`UPDATE dispozitive SET creat_la = LEAST(creat_la, '2026-10-01T00:00:00Z')`);
+}
+
 export async function pregateste(opt: { zileIstoric?: number } = {}) {
   const db = await bazaDeTest();
   await salveazaUtilizator(db, { nume: 'Admin', rol: 'admin', login: 'admin', parola: PAROLA_ADMIN });
   const demo = await populeazaDemo(db, { zileIstoric: opt.zileIstoric ?? 0 });
+  await tableteVechi(db);
   const app = await construiesteApp({ db });
 
   const login = await app.inject({ method: 'POST', url: '/api/auth/login', payload: { login: 'admin', parola: PAROLA_ADMIN } });

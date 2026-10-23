@@ -3,6 +3,44 @@ import type { Db } from '../db';
 import { EroareNegasit, EroareUtilizator } from '../erori';
 import { citesteTolerante } from './setari';
 
+/**
+ * Blocările pe locație (pg_advisory_xact_lock, eliberate la sfârșitul tranzacției).
+ *
+ * Tranzacțiile rulează la READ COMMITTED: o numărare de casă (deschiderea sau închiderea turei) nu
+ * vede o mișcare de numerar scrisă în paralel și încă nevalidată, iar mișcarea nu vede numărarea, deci
+ * nici una nu o corectează pe cealaltă (lipsă falsă la barista, registru dezaliniat definitiv).
+ * La fel, finalizarea unei inventarieri și o vânzare târzie datată înaintea numărării.
+ *
+ * - Casa: numărările iau cheia exclusiv; orice tranzacție care atinge numerarul, cifrele unei ture
+ *   sau corecteazaNumarariUlterioare o ia partajat (vânzările nu se așteaptă între ele).
+ * - Stocul: finalizarea inventarierii ia cheia exclusiv; inregistreazaMiscari o ia partajat, o dată
+ *   pentru fiecare locație atinsă, în ordinea crescătoare a id-ului (un transfer atinge două).
+ *
+ * Ordinea, ca să nu existe blocaj circular: casa se ia prima în tranzacție, înaintea oricărui rând din
+ * `ture` (deschiderea, închiderea, vânzarea, anularea, plata mărunță, operațiunile de casă din panou);
+ * stocul se ia după ea. Finalizarea inventarierii, singura care ține stocul exclusiv, nu atinge nici casa,
+ * nici turele; recepția ia stocul înaintea rândurilor din `articole`. O tranzacție care ține deja o cheie
+ * o poate cere din nou, în orice mod, fără să se aștepte pe sine.
+ */
+export const CHEIE_CASA = 7302; // cheia stocului, CHEIE_STOC, e în stoc.ts
+
+export async function blocheazaCasa(db: Db, locatieId: number, exclusiv = false): Promise<void> {
+  await db.query(exclusiv ? 'SELECT pg_advisory_xact_lock($1, $2)' : 'SELECT pg_advisory_xact_lock_shared($1, $2)', [CHEIE_CASA, locatieId]);
+}
+
+/**
+ * Momentul contabil al unei mișcări de numerar venite de pe tabletă: cel puțin deschiderea turei
+ * evenimentului. Ceasul tabletei dat înapoi nu poate muta astfel banii (și corecția numărării) într-o
+ * tură anterioară, deja închisă de altă baristă.
+ * O tură creată automat n-are o deschidere numărată: momentul ei e doar primul eveniment ajuns pe
+ * server (poate chiar închiderea, la o reaplicare), deci acolo rămâne ora evenimentului.
+ */
+export async function momentContabil(db: Db, turaId: string, la: string): Promise<string> {
+  const r = await db.query<{ deschisa_la: string | Date }>('SELECT deschisa_la FROM ture WHERE id = $1 AND NOT creata_automat', [turaId]);
+  const deschisa = r[0] ? new Date(r[0].deschisa_la).getTime() : -Infinity;
+  return Date.parse(la) >= deschisa ? la : new Date(deschisa).toISOString();
+}
+
 export interface ContextPOS {
   locatie_id: number;
   dispozitiv_id: number | null;
@@ -58,8 +96,19 @@ async function diferentaCasa(
  * (bani dispăruți între ture) se notează și registrul se aliniază la realitate.
  */
 export async function deschideTura(db: Db, ctx: ContextPOS, la: string, d: DateTuraDeschisa): Promise<void> {
-  const existenta = (await db.query<{ locatie_id: number; inchisa_la: string | null }>('SELECT locatie_id, inchisa_la FROM ture WHERE id = $1', [d.tura_id]))[0];
+  // Numărarea citește registrul: nicio mișcare de numerar a locației nu se scrie în paralel.
+  await blocheazaCasa(db, ctx.locatie_id, true);
+  const existenta = (
+    await db.query<{ locatie_id: number; inchisa_la: string | null; creata_automat: boolean }>(
+      'SELECT locatie_id, inchisa_la, creata_automat FROM ture WHERE id = $1 FOR UPDATE',
+      [d.tura_id],
+    )
+  )[0];
   if (existenta && existenta.locatie_id !== ctx.locatie_id) throw new EroareUtilizator('Tura aparține altei locații');
+  // Tableta trimite deschiderea o singură dată, înaintea oricărei vânzări a turei. O a doua deschidere
+  // ar rescrie fondul unei ture deja numărate (poate verificate). Rămâne permisă doar completarea unei
+  // ture create automat (deschiderea respinsă și reaplicată de admin după vânzări sau după închidere).
+  if (existenta && !existenta.creata_automat) throw new EroareUtilizator('Tura este deja deschisă');
 
   const anterioare = await db.query('SELECT 1 FROM ture WHERE locatie_id = $1 AND id <> $2 LIMIT 1', [ctx.locatie_id, d.tura_id]);
   const scriptic = await soldNumerar(db, ctx.locatie_id, la);
@@ -89,19 +138,24 @@ export async function deschideTura(db: Db, ctx: ContextPOS, la: string, d: DateT
     await diferentaCasa(db, ctx.locatie_id, d.tura_id, dif, 'fond_initial', 'Fondul de pornire al casei', d.utilizator_id, la);
   } else {
     await diferentaCasa(db, ctx.locatie_id, d.tura_id, dif, 'diferenta_casa', 'Diferență la deschiderea turei', d.utilizator_id, la);
+    // Deschidere reaplicată după o numărare ulterioară (de ex. închiderea acestei ture, care a aliniat deja
+    // registrul): diferența a fost absorbită acolo; o scoatem de acolo, ca să conteze o singură dată.
+    await corecteazaNumarariUlterioare(db, ctx.locatie_id, la, dif, d.utilizator_id);
   }
 }
 
 export async function plataMarunta(db: Db, ctx: ContextPOS, la: string, d: DatePlataMarunta): Promise<void> {
   if (!(d.suma > 0)) throw new EroareUtilizator('Suma plății trebuie să fie pozitivă');
+  await blocheazaCasa(db, ctx.locatie_id);
   await asiguraTura(db, ctx, d.tura_id, la, d.utilizator_id);
   const suma = -rotunjeste(d.suma);
+  const laContabil = await momentContabil(db, d.tura_id, la);
   await db.query(
     `INSERT INTO miscari_bani (locatie_id, cont, suma, tip, descriere, tura_id, utilizator_id, creata_la)
      VALUES ($1, 'numerar', $2, 'plata_marunta', $3, $4, $5, $6)`,
-    [ctx.locatie_id, suma, d.descriere, d.tura_id, d.utilizator_id, la],
+    [ctx.locatie_id, suma, d.descriere, d.tura_id, d.utilizator_id, laContabil],
   );
-  await corecteazaNumarariUlterioare(db, ctx.locatie_id, la, suma, d.utilizator_id);
+  await corecteazaNumarariUlterioare(db, ctx.locatie_id, laContabil, suma, d.utilizator_id);
 }
 
 /**
@@ -113,6 +167,8 @@ export async function plataMarunta(db: Db, ctx: ContextPOS, la: string, d: DateP
  */
 export async function corecteazaNumarariUlterioare(db: Db, locatieId: number, la: string, suma: number, utilizatorId: number | null): Promise<void> {
   if (suma === 0) return;
+  // O numărare în curs (deschidere/închidere de tură) ține cheia exclusiv: o așteptăm, ca să o vedem.
+  await blocheazaCasa(db, locatieId);
   const n = (
     await db.query<{ id: string; fel: 'deschidere' | 'inchidere'; cand: string }>(
       `SELECT id, fel, cand FROM (
@@ -150,7 +206,13 @@ export async function reevalueazaDiscrepante(db: Db, turaId: string): Promise<vo
       t.declarat_anulari !== t.scriptic_anulari ||
       t.declarat_casari !== t.scriptic_casari;
   }
-  await db.query('UPDATE ture SET are_discrepante = $2 WHERE id = $1', [turaId, d]);
+  // O tură deja verificată ale cărei cifre se schimbă iese din nou la verificare (panou, filtrul „neverificate”).
+  await db.query(
+    `UPDATE ture SET are_discrepante = $2,
+            modificata_dupa_verificare = CASE WHEN verificata_la IS NOT NULL THEN now() ELSE modificata_dupa_verificare END
+      WHERE id = $1`,
+    [turaId, d],
+  );
 }
 
 /**
@@ -216,6 +278,7 @@ export async function calculeazaScriptic(db: Db, turaId: string, locatieId: numb
  * sistemul compară, aliniază registrul de numerar și ridică alerta pentru admin.
  */
 export async function inchideTura(db: Db, ctx: ContextPOS, la: string, d: DateTuraInchisa): Promise<void> {
+  await blocheazaCasa(db, ctx.locatie_id, true);
   await asiguraTura(db, ctx, d.tura_id, la, d.utilizator_id);
   const t = (await db.query<{ inchisa_la: string | null }>('SELECT inchisa_la FROM ture WHERE id = $1 FOR UPDATE', [d.tura_id]))[0];
   if (t.inchisa_la) throw new EroareUtilizator('Tura este deja închisă');
@@ -245,6 +308,9 @@ export async function inchideTura(db: Db, ctx: ContextPOS, la: string, d: DateTu
   await diferentaCasa(db, ctx.locatie_id, d.tura_id, difNumerar, 'diferenta_casa', 'Diferență la închiderea turei', d.utilizator_id, la);
 }
 
+/** Tura n-a fost verificată sau s-a schimbat după verificare. */
+export const NEVERIFICATA = '(t.verificata_la IS NULL OR t.modificata_dupa_verificare > t.verificata_la)';
+
 const SELECT_TURA = `
   SELECT t.*, l.nume AS locatie, u.nume AS barista, ui.nume AS inchisa_de_nume, uv.nume AS verificata_de_nume,
          (t.declarat_numerar - t.scriptic_numerar) AS dif_numerar,
@@ -255,7 +321,8 @@ const SELECT_TURA = `
          CASE WHEN EXISTS (SELECT 1 FROM miscari_bani mb WHERE mb.tura_id = t.id AND mb.tip = 'fond_initial') THEN NULL
               ELSE (t.fond_initial - t.scriptic_fond) END AS dif_fond,
          (SELECT COALESCE(SUM(c.total), 0) FROM comenzi c WHERE c.tura_id = t.id AND c.stare = 'finalizata') AS vanzari,
-         (SELECT COUNT(*) FROM comenzi c WHERE c.tura_id = t.id) AS nr_comenzi
+         (SELECT COUNT(*) FROM comenzi c WHERE c.tura_id = t.id) AS nr_comenzi,
+         (t.verificata_la IS NOT NULL AND t.modificata_dupa_verificare > t.verificata_la) AS modificata_dupa_verif
     FROM ture t
     JOIN locatii l ON l.id = t.locatie_id
     LEFT JOIN utilizatori u ON u.id = t.utilizator_id
@@ -270,7 +337,7 @@ export async function listaTure(db: Db, f: { locatie_id?: number; doar_discrepan
     cond.push(`t.locatie_id = $${p.length}`);
   }
   if (f.doar_discrepante) cond.push('t.are_discrepante');
-  if (f.neverificate) cond.push('t.verificata_la IS NULL');
+  if (f.neverificate) cond.push(NEVERIFICATA);
   p.push(Math.min(f.limita ?? 100, 500));
   return db.query(`${SELECT_TURA} ${cond.length ? `WHERE ${cond.join(' AND ')}` : ''} ORDER BY t.deschisa_la DESC LIMIT $${p.length}`, p);
 }

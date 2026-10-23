@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { evComanda, evTuraDeschisa, moment, PAROLA_ADMIN, pregateste } from './ajutor';
+import { evComanda, evTuraDeschisa, moment, PAROLA_ADMIN, pregateste, tableteVechi } from './ajutor';
 
 let t: Awaited<ReturnType<typeof pregateste>>;
 beforeAll(async () => {
@@ -93,7 +93,7 @@ describe('acces', () => {
   it('o operație cu data de după promovarea la administrator nu se mai acceptă fără PIN', async () => {
     const { id } = await t.admin.post('/api/utilizatori', { nume: 'Promovată ieri', rol: 'barista', pin: '1470', locatie_id: null, activ: true });
     await promoveaza(id, 'Promovată ieri', 'promovata-ieri');
-    const dupa = new Date(Date.now() + 3_600_000).toISOString();
+    const dupa = new Date(Date.now() + 5 * 60_000).toISOString(); // în viitor, dar sub limita de 10 minute
     const r = await t.tableta.sync([evTuraDeschisa(randomUUID(), id, 500, dupa)]);
     expect(r.cu_eroare).toHaveLength(1);
     expect(r.cu_eroare[0].eroare).toMatch(/Promovată ieri nu are PIN de tabletă/);
@@ -103,7 +103,7 @@ describe('acces', () => {
   it('un administrator care n-a fost niciodată barista nu poate fi declarat de o tabletă', async () => {
     const { id } = await t.admin.post('/api/utilizatori', { nume: 'Admin de la început', rol: 'admin', login: 'admin-inceput', parola: 'parola-adminului-nou', locatie_id: null, activ: true });
     // Nici cu o dată din trecut (n-a existat nicio promovare), nici online, la inventariere.
-    const r = await t.tableta.sync([evTuraDeschisa(randomUUID(), id, 500, '2020-01-01T08:00:00Z')]);
+    const r = await t.tableta.sync([evTuraDeschisa(randomUUID(), id, 500, '2026-10-02T08:00:00Z')]);
     expect(r.cu_eroare).toHaveLength(1);
     expect(r.cu_eroare[0].eroare).toMatch(/Admin de la început nu are PIN de tabletă/);
     await t.admin.post(`/api/sync/erori/${r.cu_eroare[0].id}/rezolvat`);
@@ -174,6 +174,7 @@ describe('corecturi din revizie', () => {
   it('prima tură a unei case goale nu e o discrepanță și nu afișează diferență la fond', async () => {
     const loc = await t.admin.post('/api/locatii', { nume: 'Cafenea Nouă', tip: 'punct' });
     const tableta = await t.admin.post('/api/dispozitive', { nume: 'Tabletă Nouă', locatie_id: loc.id });
+    await tableteVechi(t.db);
     const token = (await t.app.inject({ method: 'POST', url: '/api/pos/asociere', payload: { cod: tableta.cod_asociere } })).json().token;
     const maria = t.catalog.baristi.find((b) => b.nume === 'Maria Popa')!.id;
     const tura = randomUUID();
