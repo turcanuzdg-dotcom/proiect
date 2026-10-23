@@ -67,30 +67,46 @@ async function prag(db: Db, r: Registru, opt: OptiuniInchidere): Promise<number 
     try {
       return await db.tx(async (t) => {
         await t.exec(`SET LOCAL lock_timeout = '${ASTEPTARE_BLOCARE}'`);
-        await t.exec(`LOCK TABLE ${r.miscari} IN SHARE MODE`);
+        await blocheazaRegistru(t, r);
         return (await t.query<{ n: number | null }>(`SELECT MAX(id) AS n FROM ${r.miscari}`))[0].n;
       });
     } catch (e) {
       const cod = (e as { code?: string }).code;
-      // 42501 = insufficient_privilege: LOCK TABLE … IN SHARE MODE cere drept de UPDATE, DELETE sau
-      // TRUNCATE pe registru. Declanșatorii opresc oricum modificările reale, deci rolul aplicației
-      // trebuie să-și păstreze UPDATE pe miscari_stoc și miscari_bani (vezi README).
-      if (cod === '42501') {
-        throw Object.assign(
-          new Error(
-            `Rolul bazei nu are drept de UPDATE pe ${r.miscari}, necesar blocării SHARE din închiderea soldurilor ` +
-              `(declanșatorii opresc oricum modificările): GRANT UPDATE ON ${r.miscari} TO <rolul aplicației>.`,
-            { cause: e },
-          ),
-          { code: cod },
-        );
-      }
       // 55P03 = lock_not_available: o tranzacție lungă (o recepție mare, o finalizare de inventar, un
       // VACUUM sau un CREATE INDEX CONCURRENTLY) ține registrul. Vânzările n-au așteptat după noi mai
-      // mult de ASTEPTARE_BLOCARE.
+      // mult de ASTEPTARE_BLOCARE. Autovacuumul (SHARE UPDATE EXCLUSIVE) cedează doar unei cereri care
+      // a așteptat deadlock_timeout (1 s implicit), deci închiderea nu-l poate face să cedeze: un
+      // autovacuum lung pe registru (sau unul anti-wraparound, care nu cedează deloc) face să eșueze
+      // toate încercările până se termină; planificarea reîncearcă peste câteva minute și o scrie în jurnal.
       if (cod !== '55P03' || incercare >= INCERCARI) throw e;
       await pauza((opt.pauzaMs ?? 200) * incercare);
     }
+  }
+}
+
+/**
+ * Blocarea SHARE a registrului. 42501 (insufficient_privilege) de aici înseamnă de obicei lipsa
+ * dreptului de UPDATE: LOCK TABLE … IN SHARE MODE cere UPDATE, DELETE sau TRUNCATE pe tabel.
+ * Declanșatorii opresc oricum modificările reale, deci rolul aplicației își păstrează UPDATE pe
+ * miscari_stoc și miscari_bani (vezi README). Doar eroarea blocării se traduce: un 42501 la citirea
+ * lui MAX(id) (lipsește SELECT) sau unul despre schemă („permission denied for schema …”) rămâne
+ * neschimbat, ca operatorul să vadă ce drept lipsește de fapt.
+ */
+async function blocheazaRegistru(t: Db, r: Registru): Promise<void> {
+  try {
+    await t.exec(`LOCK TABLE ${r.miscari} IN SHARE MODE`);
+  } catch (e) {
+    const { code: cod, message: mesaj = '' } = e as { code?: string; message?: string };
+    if (cod !== '42501' || /schema/i.test(mesaj)) throw e;
+    throw Object.assign(
+      new Error(
+        `Rolul bazei nu are drept de UPDATE pe ${r.miscari}, necesar blocării SHARE din închiderea soldurilor ` +
+          `(declanșatorii opresc oricum modificările): GRANT UPDATE ON ${r.miscari} TO <rolul aplicației>. ` +
+          `Eroarea originală: ${mesaj}`,
+        { cause: e },
+      ),
+      { code: cod },
+    );
   }
 }
 

@@ -359,5 +359,48 @@ describe('planificarea închiderilor', () => {
     expect(e).toBeInstanceOf(Error);
     expect(e.code).toBe('42501');
     expect(e.message).toMatch(/GRANT UPDATE ON miscari_stoc/);
+    expect(e.message).toMatch(/Eroarea originală: permission denied/);
+  });
+
+  it('fără SELECT pe registru, eroarea nu cere UPDATE (drepturile lipsă sunt altele)', async () => {
+    // UPDATE există, deci blocarea reușește; citirea lui MAX(id) e cea refuzată.
+    await t.db.exec(`DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'fara_select') THEN CREATE ROLE fara_select; END IF;
+      END $$;
+      GRANT USAGE ON SCHEMA public TO fara_select;
+      GRANT INSERT, UPDATE ON miscari_stoc TO fara_select;`);
+    const subRol = { ...t.db, tx: <T>(fn: (d: typeof t.db) => Promise<T>) => t.db.tx(async (d) => (await d.exec('SET LOCAL ROLE fara_select'), fn(d))) };
+    const e = (await inchideSolduri(subRol).then(
+      () => null,
+      (x: unknown) => x,
+    )) as Error & { code?: string };
+    expect(e).toBeInstanceOf(Error);
+    expect(e.code).toBe('42501');
+    expect(e.message).toMatch(/miscari_stoc/);
+    expect(e.message).not.toMatch(/GRANT UPDATE/);
+  });
+
+  it('fără USAGE pe schemă, eroarea rămâne a bazei, nu cere UPDATE', async () => {
+    // REVOKE se face în tranzacția închiderii, deci se anulează odată cu ea. Fără USAGE, schema iese
+    // din search_path și numele neprecizat al registrului nu se mai găsește (42P01).
+    await t.db.exec(`DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'fara_schema') THEN CREATE ROLE fara_schema; END IF;
+      END $$;
+      GRANT SELECT, INSERT, UPDATE ON miscari_stoc TO fara_schema;`);
+    const subRol = {
+      ...t.db,
+      tx: <T>(fn: (d: typeof t.db) => Promise<T>) =>
+        t.db.tx(async (d) => (await d.exec('REVOKE USAGE ON SCHEMA public FROM PUBLIC; SET LOCAL ROLE fara_schema'), fn(d))),
+    };
+    const e = (await inchideSolduri(subRol).then(
+      () => null,
+      (x: unknown) => x,
+    )) as Error & { code?: string };
+    expect(e).toBeInstanceOf(Error);
+    expect(e.code).toBe('42P01');
+    expect(e.message).toMatch(/miscari_stoc/);
+    expect(e.message).not.toMatch(/GRANT UPDATE/);
+    // Dreptul revocat în tranzacția eșuată a revenit.
+    expect((await t.db.query<{ u: boolean }>(`SELECT has_schema_privilege('public', 'public', 'USAGE') AS u`))[0].u).toBe(true);
   });
 });
