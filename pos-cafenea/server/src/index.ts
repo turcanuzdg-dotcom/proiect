@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { construiesteApp } from './app';
 import { deschideDb } from './db';
 import { salveazaUtilizator } from './servicii/acces';
-import { inchideSolduri } from './servicii/solduri';
+import { planificaInchideri } from './servicii/solduri';
 import { configPOSLink } from './servicii/poslink';
 
 const radacina = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -62,26 +62,13 @@ const legat = app.server.address();
 console.log(`Ascultă pe ${typeof legat === 'string' ? legat : `${legat?.address}:${legat?.port}`}`);
 
 // Soldurile închise țin citirile de stoc și de casă la mărimea ultimei ore, nu a întregului istoric.
-// Prima închidere (la pornire, după ce serverul ascultă) adună tot istoricul unei baze existente.
-let inchidereInCurs = false;
-const inchide = async () => {
-  if (inchidereInCurs) return;
-  inchidereInCurs = true;
-  try {
-    await inchideSolduri(db);
-  } catch (e) {
-    console.error(`Închiderea soldurilor a eșuat (se reîncearcă la următoarea oră): ${(e as Error).message}`);
-  } finally {
-    inchidereInCurs = false;
-  }
-};
-void inchide();
-const ceasSolduri = setInterval(inchide, 60 * 60_000);
-ceasSolduri.unref();
+// Prima închidere (la pornire, după ce serverul ascultă) adună tot istoricul unei baze existente;
+// după un eșec se reîncearcă în câteva minute (vezi planificaInchideri).
+const ceasSolduri = planificaInchideri(db);
 
 for (const semnal of ['SIGINT', 'SIGTERM'] as const) {
   process.on(semnal, async () => {
-    clearInterval(ceasSolduri);
+    ceasSolduri.opreste();
     await app.close();
     await db.close();
     process.exit(0);

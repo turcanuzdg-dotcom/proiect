@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { rezumatBani } from '../src/servicii/bani';
 import { panou } from '../src/servicii/panou';
-import { BANI, inchideSolduri, inchisPana, sqlSold, STOC } from '../src/servicii/solduri';
+import { BANI, inchideSolduri, inchisPana, planificaInchideri, sqlSold, STOC } from '../src/servicii/solduri';
 import { fisaArticol, stocLocatie, stocToateLocatiile } from '../src/servicii/stoc';
 import { soldNumerar } from '../src/servicii/ture';
 import { evComanda, evTuraDeschisa, pregateste } from './ajutor';
@@ -298,5 +298,66 @@ describe('recepții și transferuri cu cheie de idempotență', () => {
       linii: ids.map((id) => ({ articol_id: id, cantitate: 10, cost_unitar: 1 })), cheie: randomUUID(),
     });
     expect(r.id).toBeGreaterThan(0);
+  });
+});
+
+describe('planificarea închiderilor', () => {
+  const asteapta = async (conditie: () => boolean) => {
+    for (let i = 0; i < 400 && !conditie(); i++) await new Promise((r) => setTimeout(r, 5));
+    expect(conditie()).toBe(true);
+  };
+
+  it('după o închidere eșuată reîncearcă în câteva minute, nu la ora următoare, și spune cât a crescut coada', async () => {
+    let apeluri = 0;
+    const mesaje: string[] = [];
+    const p = planificaInchideri(t.db, {
+      intervalMs: 60 * 60_000,
+      reincercareMs: 10,
+      inchide: async () => {
+        apeluri++;
+        if (apeluri <= 2) throw Object.assign(new Error('canceling statement due to lock timeout'), { code: '55P03' });
+      },
+      eroare: (m) => mesaje.push(m),
+    });
+    try {
+      await asteapta(() => p.stare().ultimaReusita != null);
+      expect(apeluri).toBe(3);
+      expect(p.stare().esecuriLaRand).toBe(0);
+      expect(mesaje).toHaveLength(2);
+      expect(mesaje[1]).toMatch(/2 la rând/);
+      expect(mesaje[1]).toMatch(/miscari_stoc: ultimul sold închis acum .*coadă ~\d+ mișcări/);
+      expect(mesaje[1]).toMatch(/lock timeout/);
+      // După reușită, următoarea închidere vine abia peste o oră.
+      await new Promise((r) => setTimeout(r, 100));
+      expect(apeluri).toBe(3);
+    } finally {
+      p.opreste();
+    }
+  });
+
+  it('oprită, nu mai pornește nicio închidere', async () => {
+    let apeluri = 0;
+    const p = planificaInchideri(t.db, { reincercareMs: 5, inchide: async () => void apeluri++, eroare: () => {} });
+    p.opreste();
+    await new Promise((r) => setTimeout(r, 50));
+    expect(apeluri).toBe(0);
+    expect(p.stare().ultimaReusita).toBeNull();
+  });
+
+  it('fără drept de UPDATE pe registru, închiderea spune clar ce GRANT lipsește', async () => {
+    // Blocarea SHARE cere UPDATE (sau DELETE/TRUNCATE) pe tabel; declanșatorii opresc oricum modificările.
+    await t.db.exec(`DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'fara_update') THEN CREATE ROLE fara_update; END IF;
+      END $$;
+      GRANT USAGE ON SCHEMA public TO fara_update;
+      GRANT SELECT, INSERT ON ALL TABLES IN SCHEMA public TO fara_update;`);
+    const subRol = { ...t.db, tx: <T>(fn: (d: typeof t.db) => Promise<T>) => t.db.tx(async (d) => (await d.exec('SET LOCAL ROLE fara_update'), fn(d))) };
+    const e = (await inchideSolduri(subRol).then(
+      () => null,
+      (x: unknown) => x,
+    )) as Error & { code?: string };
+    expect(e).toBeInstanceOf(Error);
+    expect(e.code).toBe('42501');
+    expect(e.message).toMatch(/GRANT UPDATE ON miscari_stoc/);
   });
 });

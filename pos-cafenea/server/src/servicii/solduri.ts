@@ -71,9 +71,24 @@ async function prag(db: Db, r: Registru, opt: OptiuniInchidere): Promise<number 
         return (await t.query<{ n: number | null }>(`SELECT MAX(id) AS n FROM ${r.miscari}`))[0].n;
       });
     } catch (e) {
-      // 55P03 = lock_not_available: o tranzacție lungă (o recepție mare, o finalizare de inventar)
-      // scrie în registru. Vânzările n-au așteptat după noi mai mult de ASTEPTARE_BLOCARE.
-      if ((e as { code?: string }).code !== '55P03' || incercare >= INCERCARI) throw e;
+      const cod = (e as { code?: string }).code;
+      // 42501 = insufficient_privilege: LOCK TABLE … IN SHARE MODE cere drept de UPDATE, DELETE sau
+      // TRUNCATE pe registru. Declanșatorii opresc oricum modificările reale, deci rolul aplicației
+      // trebuie să-și păstreze UPDATE pe miscari_stoc și miscari_bani (vezi README).
+      if (cod === '42501') {
+        throw Object.assign(
+          new Error(
+            `Rolul bazei nu are drept de UPDATE pe ${r.miscari}, necesar blocării SHARE din închiderea soldurilor ` +
+              `(declanșatorii opresc oricum modificările): GRANT UPDATE ON ${r.miscari} TO <rolul aplicației>.`,
+            { cause: e },
+          ),
+          { code: cod },
+        );
+      }
+      // 55P03 = lock_not_available: o tranzacție lungă (o recepție mare, o finalizare de inventar, un
+      // VACUUM sau un CREATE INDEX CONCURRENTLY) ține registrul. Vânzările n-au așteptat după noi mai
+      // mult de ASTEPTARE_BLOCARE.
+      if (cod !== '55P03' || incercare >= INCERCARI) throw e;
       await pauza((opt.pauzaMs ?? 200) * incercare);
     }
   }
@@ -110,6 +125,94 @@ async function inchideRegistru(db: Db, r: Registru, opt: OptiuniInchidere): Prom
     );
     return nou[0]?.n ?? null;
   });
+}
+
+export interface OptiuniPlanificare {
+  /** Pauza dintre două închideri reușite (ms; implicit o oră). */
+  intervalMs?: number;
+  /** Pauza după o închidere eșuată (ms; implicit 5 minute): coada nu crește o oră în plus. */
+  reincercareMs?: number;
+  /** Închiderea propriu-zisă (testele o înlocuiesc); implicit inchideSolduri(db). */
+  inchide?: () => Promise<unknown>;
+  /** Unde se scriu eșecurile; implicit console.error. */
+  eroare?: (mesaj: string) => void;
+}
+
+export interface Planificare {
+  /** Oprește ceasul (o închidere în curs se termină singură). */
+  opreste(): void;
+  /** Momentul ultimei închideri reușite (null = niciuna de la pornire) și câte eșecuri au urmat. */
+  stare(): { ultimaReusita: Date | null; esecuriLaRand: number };
+}
+
+/**
+ * Închiderile periodice: prima imediat (la pornire, după ce serverul ascultă; adună tot istoricul unei
+ * baze existente), apoi din oră în oră. Dacă registrul a stat ocupat toată fereastra de reîncercări,
+ * următoarea încercare vine după câteva minute, nu după o oră: citirile rămân corecte oricum, dar
+ * fiecare oră pierdută le lungește coada. Un eșec se jurnalizează cu vârsta ultimului sold închis și
+ * mărimea cozii, ca o închidere care cade mereu să se vadă.
+ */
+export function planificaInchideri(db: Db, opt: OptiuniPlanificare = {}): Planificare {
+  const interval = opt.intervalMs ?? 60 * 60_000;
+  const reincercare = opt.reincercareMs ?? 5 * 60_000;
+  const inchide = opt.inchide ?? (() => inchideSolduri(db));
+  const scrie = opt.eroare ?? ((m: string) => console.error(m));
+  let ceas: ReturnType<typeof setTimeout> | undefined;
+  let oprit = false;
+  let ultimaReusita: Date | null = null;
+  let esecuriLaRand = 0;
+
+  const programeaza = (ms: number) => {
+    if (oprit) return;
+    ceas = setTimeout(() => void ruleaza(), ms);
+    // Ceasul nu ține procesul în viață la oprire (în browser, în simulare, nu există unref).
+    (ceas as { unref?: () => void }).unref?.();
+  };
+
+  const ruleaza = async () => {
+    try {
+      await inchide();
+      ultimaReusita = new Date();
+      esecuriLaRand = 0;
+      programeaza(interval);
+    } catch (e) {
+      esecuriLaRand++;
+      let detalii = '';
+      try {
+        detalii = await descrieCoada(db);
+      } catch {
+        // Baza poate fi chiar ea problema: mesajul principal contează.
+      }
+      scrie(
+        `Închiderea soldurilor a eșuat (${esecuriLaRand} la rând; se reîncearcă în ${Math.round(reincercare / 60_000)} min)` +
+          `${detalii ? `; ${detalii}` : ''}: ${(e as Error).message}`,
+      );
+      programeaza(reincercare);
+    }
+  };
+
+  programeaza(0);
+  return {
+    opreste() {
+      oprit = true;
+      if (ceas) clearTimeout(ceas);
+    },
+    stare: () => ({ ultimaReusita, esecuriLaRand }),
+  };
+}
+
+/** Vârsta ultimului sold închis și mărimea aproximativă a cozii (id-uri de după el), pe registre. */
+async function descrieCoada(db: Db): Promise<string> {
+  const parti: string[] = [];
+  for (const r of [STOC, BANI]) {
+    const [x] = await db.query<{ inchis_la: string | null; coada: number | null }>(
+      `SELECT (SELECT MAX(inchis_la) FROM ${r.solduri}) AS inchis_la,
+              (SELECT MAX(id) FROM ${r.miscari}) - (SELECT COALESCE(MAX(pana_la_id), 0) FROM ${r.solduri}) AS coada`,
+    );
+    const varsta = x.inchis_la ? `${Math.round((Date.now() - Date.parse(x.inchis_la)) / 60_000)} min` : 'niciodată';
+    parti.push(`${r.miscari}: ultimul sold închis acum ${varsta}, coadă ~${Number(x.coada ?? 0)} mișcări`);
+  }
+  return parti.join(', ');
 }
 
 /**

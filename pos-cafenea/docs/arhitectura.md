@@ -138,8 +138,12 @@ flowchart LR
   vânzările sincronizate târziu, anulările și compensările de inventar cad exact ca în registru (un test
   compară fiecare citire cu suma întregului registru). Pragul se citește sub o blocare SHARE de cel mult
   100 ms: dacă registrul e ocupat de o tranzacție lungă, închiderea renunță și reîncearcă, nu ține
-  vânzările pe loc. Soldurile sunt doar o scurtătură (cele înlocuite se șterg după o oră, se pot reface
-  oricând din registre).
+  vânzările pe loc; dacă rămâne ocupat toată fereastra de reîncercări, următoarea închidere vine după
+  5 minute, nu după o oră, iar jurnalul spune vârsta ultimului sold închis și cât a crescut coada.
+  Blocarea SHARE cere drept de UPDATE pe `miscari_stoc` și `miscari_bani`: rolul aplicației trebuie să-l
+  păstreze (declanșatorii opresc oricum orice UPDATE real); fără el, închiderea eșuează cu un mesaj
+  care numește GRANT-ul lipsă. Soldurile sunt doar o scurtătură (cele înlocuite se șterg după o oră, se
+  pot reface oricând din registre).
 - **Panoul se reîncarcă cu măsură.** O notificare live reîncarcă o pagină cel mult o dată la 10 s
   (15 s pentru Bani și foaia de inventar), doar cât fila e vizibilă și doar pentru locația afișată;
   rapoartele nu se reîncarcă singure („Actualizat la HH:MM”, butonul Reîmprospătează). Recepțiile și

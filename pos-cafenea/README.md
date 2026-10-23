@@ -121,6 +121,12 @@ Pentru o bază existentă, creată deja de un singur rol: `ALTER DATABASE` / `RE
 `cafenea_migrari` și `GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public` (plus
 `USAGE, SELECT ON ALL SEQUENCES`) către `cafenea_app`.
 
+Nu retrageți `UPDATE` de pe `miscari_stoc` și `miscari_bani` ca să „întăriți” rolul: închiderea orară
+a soldurilor blochează registrele în modul SHARE, iar PostgreSQL cere pentru asta drept de UPDATE
+(sau DELETE/TRUNCATE). Modificările reale rămân oprite de declanșatori. Fără acest drept, fiecare
+închidere eșuează (jurnalul serverului spune ce GRANT lipsește), iar citirile de stoc și de casă
+devin tot mai lente, pe măsură ce crește istoricul.
+
 ### Ce păstrează serverul pentru securitate
 
 - Tokenurile panoului și ale tabletelor stau în bază doar ca amprentă SHA-256: o copie a bazei nu dă

@@ -4,6 +4,7 @@ import { cerereJson } from '../comun/http';
 import { formatNumar, formatOra } from '../comun/format';
 import { Modal } from '../comun/Modal';
 import { useAplicatie } from './context';
+import { Reimprospatare } from './reimprospatare';
 
 interface LinieRaport {
   articol_id: number;
@@ -47,14 +48,21 @@ export function Inventar({ onInchide }: { onInchide: () => void }) {
   const [lucreaza, setLucreaza] = useState(false);
   const [confirmare, setConfirmare] = useState(false);
   const deschisa = useRef<number | null>(null);
-  /** Cereri către server în curs (citire, salvare, finalizare): reîmprospătarea periodică le așteaptă. */
-  const inCurs = useRef(0);
+  /** Scripticul articolelor nenumărate se schimbă la fiecare vânzare: raportul deschis se reîmprospătează
+   *  periodic, dar rar (fiecare raport recalculează stocul locației) și niciodată peste o cerere în curs
+   *  (citire, salvare, finalizare). */
+  const reimprospatare = useRef<Reimprospatare | null>(null);
+  reimprospatare.current ??= new Reimprospatare(
+    () => void incarca(cerereJson<Raport>(`/api/pos/inventarieri/${deschisa.current}`, { token })),
+    () => deschisa.current != null,
+  );
 
   /** Eroarea rămâne afișată până la următoarea reușită; întoarce dacă a reușit. */
   const incarca = async (r?: Promise<Raport>) => {
-    inCurs.current++;
     try {
-      const nou = await (r ?? cerereJson<Raport>('/api/pos/inventarieri', { token, body: { utilizator_id: app.barista.id } }));
+      const nou = await reimprospatare.current!.urmareste(
+        r ?? cerereJson<Raport>('/api/pos/inventarieri', { token, body: { utilizator_id: app.barista.id } }),
+      );
       deschisa.current = nou.stare === 'deschisa' ? nou.id : null;
       setRaport(nou);
       setEroare('');
@@ -62,21 +70,12 @@ export function Inventar({ onInchide }: { onInchide: () => void }) {
     } catch (e) {
       setEroare((e as Error).message);
       return false;
-    } finally {
-      inCurs.current--;
     }
   };
 
   useEffect(() => {
     void incarca();
-    // Scripticul articolelor nenumărate se schimbă la fiecare vânzare: reîmprospătăm periodic, dar rar
-    // (fiecare raport recalculează stocul locației), niciodată două cereri deodată și nu cât ecranul
-    // e ascuns (tableta în repaus, altă aplicație în față).
-    const t = window.setInterval(() => {
-      if (!deschisa.current || inCurs.current || document.visibilityState === 'hidden') return;
-      void incarca(cerereJson<Raport>(`/api/pos/inventarieri/${deschisa.current}`, { token }));
-    }, INTERVAL_REIMPROSPATARE_MS);
-    return () => window.clearInterval(t);
+    return reimprospatare.current!.porneste(INTERVAL_REIMPROSPATARE_MS);
     // Se pornește o singură dată, la deschiderea ferestrei.
   }, []);
 
