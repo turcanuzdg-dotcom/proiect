@@ -40,6 +40,7 @@ describe('plata prin server', () => {
     for (const [status, corp] of [
       [null, {}],
       [502, { eroare: 'POSLink căzut' }],
+      [409, { eroare: 'Plata este în curs pe terminal', cod: COD_TERMINAL.operatieInCurs }],
       [409, { eroare: 'Plata este în curs pe terminal' }],
     ] as const) {
       server(status, corp);
@@ -65,5 +66,27 @@ describe('returul prin server', () => {
     expect(urmareRetur(await terminal().returCard(45, {}, ref))).toBe('nesigur');
     server(200, { aprobat: false, mesaj: 'Refuzat de bancă' });
     expect(urmareRetur(await terminal().returCard(45, {}, ref))).toBe('refuzat');
+  });
+
+  it('un retur în curs pe terminal (de pe altă tabletă) e nesigur, nu trimite barista la meniul terminalului', async () => {
+    server(409, { eroare: 'Returul este în curs pe terminal', cod: COD_TERMINAL.operatieInCurs });
+    const r = await terminal().returCard(45, {}, ref);
+    expect(r).toMatchObject({ aprobat: false, nesigur: true });
+    expect(urmareRetur(r)).toBe('nesigur');
+  });
+
+  it('o configurare lipsă (fără terminal, POSLink neconfigurat) e refuz, nu retur nesigur', async () => {
+    for (const status of [409, 503]) {
+      server(status, { eroare: 'POSLink nu este configurat pe server', cod: COD_TERMINAL.configurare });
+      const r = await terminal().returCard(45, {}, ref);
+      expect(r).toMatchObject({ aprobat: false, cod: COD_TERMINAL.configurare });
+      expect(r.nesigur).toBeUndefined();
+      expect(urmareRetur(r)).toBe('refuzat');
+    }
+  });
+
+  it('un retur parțial (409 fără cod) rămâne refuzat', async () => {
+    server(409, { eroare: 'Returul pe card se face integral (45.00 lei)' });
+    expect(urmareRetur(await terminal().returCard(20, {}, ref))).toBe('refuzat');
   });
 });

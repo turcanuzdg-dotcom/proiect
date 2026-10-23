@@ -15,6 +15,7 @@ const APROBAT = { errorCode: 0, report: JSON.stringify({ rrn: '428541236789', au
 const scenariu = {
   pay: APROBAT as any,
   payIntarziereMs: 0,
+  refundIntarziereMs: 0,
   ultima: { errorCode: 165 } as any,
   refund: { errorCode: 0, report: JSON.stringify({ rrn: 'R-1', authCode: '654321', operationId: 'op-r' }) } as any,
   bon: { errorCode: 0, report: JSON.stringify({ QR: 'qr', ReceiptID: 'r-1' }) } as any,
@@ -52,6 +53,7 @@ beforeAll(async () => {
       case '/POSLink/Device/payment/LastTransaction':
         return raspunde(scenariu.ultima);
       case '/POSLink/Device/payment/Refund':
+        if (scenariu.refundIntarziereMs) await new Promise((r) => setTimeout(r, scenariu.refundIntarziereMs));
         return raspunde(scenariu.refund);
       case '/POSLink/Device/Invoice/Pay':
         return raspunde(scenariu.bon);
@@ -74,7 +76,7 @@ afterAll(async () => {
 });
 beforeEach(() => {
   apeluri.length = 0;
-  Object.assign(scenariu, { pay: APROBAT, payIntarziereMs: 0, ultima: { errorCode: 165 }, brut: null });
+  Object.assign(scenariu, { pay: APROBAT, payIntarziereMs: 0, refundIntarziereMs: 0, ultima: { errorCode: 165 }, brut: null });
 });
 
 const plata = (referinta: string, suma = 45) => t.tableta.post('/api/pos/terminal/plata', { suma, referinta });
@@ -106,7 +108,7 @@ describe('plata cu cardul, o singură dată pe comandă', () => {
     await new Promise((r) => setTimeout(r, 50));
     const c = await cerere('/api/pos/terminal/plata', { suma: 99, referinta: ref });
     expect(c.statusCode).toBe(409);
-    expect(c.json().eroare).toBe('Plata este în curs pe terminal');
+    expect(c.json()).toMatchObject({ eroare: 'Plata este în curs pe terminal', cod: COD_TERMINAL.operatieInCurs });
     const [ra, rb] = await Promise.all([a, b]);
     expect(ra.aprobat && rb.aprobat).toBe(true);
     expect(numar('/payment/Pay')).toBe(1);
@@ -292,6 +294,28 @@ describe('returul pe card', () => {
     } finally {
       await t.admin.put(`/api/dispozitive/${noua.id}/terminal`, { terminal_device_id: null });
       await t.admin.put(`/api/dispozitive/${centru.id}/terminal`, { terminal_device_id: 'PAX-1' });
+    }
+  });
+
+  it('un retur în curs, cerut și de pe altă tabletă cu același terminal: 409 cu cod „în curs”, un singur Refund', async () => {
+    const ref = randomUUID();
+    await plata(ref);
+    apeluri.length = 0;
+    const centru = (await t.admin.get('/api/dispozitive')).find((d: any) => d.nume === 'Tabletă Centru');
+    const noua = await t.admin.post('/api/dispozitive', { nume: 'Tabletă Centru 3', locatie_id: centru.locatie_id });
+    await t.admin.put(`/api/dispozitive/${noua.id}/terminal`, { terminal_device_id: 'PAX-1' });
+    const asociere = await t.app.inject({ method: 'POST', url: '/api/pos/asociere', payload: { cod: noua.cod_asociere } });
+    scenariu.refundIntarziereMs = 300;
+    try {
+      const a = t.tableta.post('/api/pos/terminal/retur', { referinta: ref, suma: 45 });
+      await new Promise((r) => setTimeout(r, 50));
+      const b = await t.app.inject({ method: 'POST', url: '/api/pos/terminal/retur', payload: { referinta: ref }, headers: { authorization: `Bearer ${asociere.json().token}` } });
+      expect(b.statusCode).toBe(409);
+      expect(b.json()).toMatchObject({ eroare: 'Returul este în curs pe terminal', cod: COD_TERMINAL.operatieInCurs });
+      expect(await a).toMatchObject({ aprobat: true });
+      expect(numar('/Refund')).toBe(1);
+    } finally {
+      await t.admin.put(`/api/dispozitive/${noua.id}/terminal`, { terminal_device_id: null });
     }
   });
 

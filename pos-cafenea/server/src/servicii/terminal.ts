@@ -80,7 +80,7 @@ const inCurs = new Map<string, { suma: number; dispozitiv_id: number; rezultat: 
 async function oSinguraData(cheie: string, suma: number, dispozitivId: number, mesajInCurs: string, fn: () => Promise<RezultatPlata>): Promise<RezultatPlata> {
   const existenta = inCurs.get(cheie);
   if (existenta) {
-    if (Math.abs(existenta.suma - suma) > 0.001 || existenta.dispozitiv_id !== dispozitivId) throw new EroareUtilizator(mesajInCurs, 409);
+    if (Math.abs(existenta.suma - suma) > 0.001 || existenta.dispozitiv_id !== dispozitivId) throw new EroareUtilizator(mesajInCurs, 409, COD_TERMINAL.operatieInCurs);
     return existenta.rezultat;
   }
   const rezultat = fn();

@@ -125,6 +125,11 @@ export const COD_TERMINAL = {
   returAltTerminal: 'retur_alt_terminal',
   /** Configurare lipsă (tableta fără terminal, POSLink neconfigurat): nu se rezolvă prin reîncercare. */
   configurare: 'terminal_neconfigurat',
+  /**
+   * O plată sau un retur pentru aceeași comandă rulează deja pe terminal (de pe altă tabletă sau cu altă
+   * sumă): rezultatul se verifică din nou, nu se face nimic de mână cât operațiunea e în curs.
+   */
+  operatieInCurs: 'operatie_in_curs',
 } as const;
 export type CodTerminal = (typeof COD_TERMINAL)[keyof typeof COD_TERMINAL];
 

@@ -49,6 +49,8 @@ export function rezultatDinEroarePlata(e: unknown): RezultatCard {
       return { aprobat: false, mesaj, cod: e.cod, suma_anterioara: suma('suma_aprobata') };
     case COD_TERMINAL.plataNelamurita:
       return { aprobat: false, mesaj, cod: e.cod, suma_anterioara: suma('suma_nelamurita') };
+    case COD_TERMINAL.operatieInCurs:
+      return { aprobat: false, mesaj, nesigur: true };
   }
   const definitiv = e.status >= 400 && e.status < 500 && e.status !== 409;
   return { aprobat: false, mesaj, ...(definitiv ? {} : { nesigur: true }) };
@@ -206,6 +208,11 @@ class PrinServer implements Echipamente {
       if (e instanceof EroareHttp && (e.cod === COD_TERMINAL.returDinMeniu || e.cod === COD_TERMINAL.returAltTerminal)) {
         return { aprobat: false, mesaj: e.message, cod: e.cod, terminal: typeof e.date?.terminal === 'string' ? e.date.terminal : undefined };
       }
+      // O configurare lipsă (POSLink neconfigurat, tableta fără terminal): nimic n-a ajuns la terminal, deci
+      // e refuz, nu retur nesigur. Un retur în curs pentru aceeași comandă (de pe altă tabletă) e nesigur:
+      // barista verifică din nou, nu face returul de mână cât cel trimis de server încă rulează.
+      if (e instanceof EroareHttp && e.cod === COD_TERMINAL.configurare) return { aprobat: false, mesaj: e.message, cod: e.cod };
+      if (e instanceof EroareHttp && e.cod === COD_TERMINAL.operatieInCurs) return { aprobat: false, mesaj: e.message, nesigur: true };
       return { aprobat: false, mesaj: (e as Error).message, ...(e instanceof EroareHttp && e.status !== 0 && e.status < 500 ? {} : { nesigur: true }) };
     }
   }
