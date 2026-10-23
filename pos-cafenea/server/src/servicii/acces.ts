@@ -1,14 +1,22 @@
 import { randomBytes, scrypt, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
-import { hashPin } from '@cafenea/shared';
+import { hashPin, sha256Hex } from '@cafenea/shared';
 import type { Db } from '../db';
 import { EroareNegasit, EroareUtilizator } from '../erori';
 
 const ZILE_SESIUNE = 7;
+/** Oricât de des ar fi folosită, o sesiune de panou ține cel mult atât; apoi adminul intră din nou. */
+const ZILE_SESIUNE_MAXIM = 30;
 const scryptAsync = promisify(scrypt) as (parola: string, sare: string, lungime: number) => Promise<Buffer>;
 
 export const sareNoua = () => randomBytes(8).toString('hex');
 export const tokenNou = () => randomBytes(24).toString('base64url');
+
+/**
+ * În bază se păstrează doar amprenta SHA-256 a tokenurilor (sesiuni și tablete): o copie a bazei
+ * nu dă acces la panou sau la tablete. Tokenul are 192 de biți aleatori, deci nu are nevoie de sare.
+ */
+export const amprentaToken = (token: string) => sha256Hex(token);
 
 // Fără caractere care se confundă la tastare (0/O, 1/I/L).
 const ALFABET_COD = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
@@ -31,56 +39,236 @@ export interface UtilizatorAutentificat {
   rol: 'admin' | 'barista';
 }
 
-// Încercări eșuate pe (adresă, login): după 5, o pauză care se dublează la fiecare eșec următor.
-const esecuri = new Map<string, { nr: number; pana: number }>();
-const SARE_FALSA = 'sare-pentru-conturi-inexistente';
+// ---- Protecția loginului ----
 
-function verificaBlocare(cheie: string) {
-  const e = esecuri.get(cheie);
-  if (e && e.pana > Date.now()) {
-    throw new EroareUtilizator(`Prea multe încercări; reîncercați în ${Math.ceil((e.pana - Date.now()) / 1000)} s`, 429);
+/**
+ * Cheia unei adrese pentru numărarea eșecurilor. IPv6 se grupează pe /64: un singur client (un VPS,
+ * o casă) primește de obicei un /64 întreg și ar putea schimba adresa la fiecare încercare.
+ */
+export function grupAdresa(adresa: string): string {
+  let a = adresa.trim().toLowerCase();
+  const zona = a.indexOf('%');
+  if (zona >= 0) a = a.slice(0, zona);
+  const mapata = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(a);
+  if (mapata) return mapata[1];
+  if (!a.includes(':')) return a;
+  const grupuri = (parte: string) => {
+    const g = parte ? parte.split(':') : [];
+    // O adresă IPv4 la coadă (::1.2.3.4) ocupă ultimele două grupuri.
+    const ultim = g[g.length - 1];
+    if (ultim?.includes('.')) {
+      const o = ultim.split('.').map(Number);
+      g.splice(g.length - 1, 1, ((o[0] << 8) | o[1]).toString(16), ((o[2] << 8) | o[3]).toString(16));
+    }
+    return g;
+  };
+  const [cap, coada] = a.split('::');
+  const inceput = grupuri(cap);
+  const sfarsit = coada === undefined ? [] : grupuri(coada);
+  const zerouri = coada === undefined ? 0 : Math.max(0, 8 - inceput.length - sfarsit.length);
+  const toate = [...inceput, ...Array(zerouri).fill('0'), ...sfarsit];
+  if (toate.length !== 8 || toate.some((x) => !/^[0-9a-f]{1,4}$/.test(x))) return a;
+  return `${toate.slice(0, 4).map((x) => parseInt(x, 16).toString(16)).join(':')}::/64`;
+}
+
+export interface OptiuniProtectie {
+  /** Câte chei (adresă+login, login, adrese cunoscute) se țin minte în fiecare tabel. */
+  maxIntrari: number;
+}
+
+/**
+ * Trei bariere, toate în memorie (serverul e un singur proces):
+ *  1. pe adresă și login: după 5 eșecuri, o pauză care se dublează la fiecare eșec (până la 15 min);
+ *  2. pe login, de la orice adresă: după 20 de eșecuri în 15 minute, cel mult o încercare la 10 s.
+ *     Ghicitul din multe adrese devine lent, dar nimeni nu poate bloca adminul mult timp: o adresă
+ *     de pe care contul a intrat cu succes în ultimele 30 de zile nu e încetinită;
+ *  3. tabelele au o mărime maximă: când se umplu, pleacă întâi intrările expirate, apoi cele mai vechi.
+ *     Un val de loginuri inventate nu mai poate șterge blocările existente (înainte se goleau toate).
+ */
+export class ProtectieLogin {
+  static readonly PRAG_ADRESA = 5;
+  static readonly PRAG_LOGIN = 20;
+  static readonly FEREASTRA_LOGIN = 15 * 60_000;
+  static readonly PAUZA_LOGIN = 10_000;
+  static readonly PAUZA_MAXIMA = 15 * 60_000;
+  static readonly ZILE_ADRESA_CUNOSCUTA = 30;
+
+  /** Cheie `${grup adresă}|${login}` → eșecuri, blocat până la, ultimul eșec. */
+  private peAdresa = new Map<string, { nr: number; pana: number; ultima: number }>();
+  /** Login → momentele ultimelor eșecuri (cel mult PRAG_LOGIN), următoarea încercare permisă. */
+  private peLogin = new Map<string, { momente: number[]; urmatoarea: number; exista: boolean }>();
+  /** Cheie `${grup adresă}|${login}` → până când adresa e cunoscută pentru acel cont. */
+  private cunoscute = new Map<string, number>();
+
+  constructor(private opt: OptiuniProtectie = { maxIntrari: 10_000 }) {}
+
+  /** Aruncă 429 dacă încercarea trebuie refuzată; altfel o lasă să treacă. */
+  verifica(login: string, adresa: string, acum = Date.now()): void {
+    const l = login.toLowerCase();
+    const grup = grupAdresa(adresa);
+    const e = this.peAdresa.get(`${grup}|${l}`);
+    if (e && e.pana > acum) {
+      throw new EroareUtilizator(`Prea multe încercări; reîncercați în ${Math.ceil((e.pana - acum) / 1000)} s`, 429);
+    }
+    const pl = this.peLogin.get(l);
+    if (!pl || !this.incetinit(pl, acum) || (this.cunoscute.get(`${grup}|${l}`) ?? 0) > acum) return;
+    if (acum < pl.urmatoarea) {
+      throw new EroareUtilizator(`Prea multe încercări pentru acest cont; reîncercați în ${Math.ceil((pl.urmatoarea - acum) / 1000)} s`, 429);
+    }
+    pl.urmatoarea = acum + ProtectieLogin.PAUZA_LOGIN;
+  }
+
+  esec(login: string, adresa: string, exista: boolean, acum = Date.now()): void {
+    const l = login.toLowerCase();
+    const cheie = `${grupAdresa(adresa)}|${l}`;
+    const e = this.peAdresa.get(cheie) ?? { nr: 0, pana: 0, ultima: 0 };
+    e.nr += 1;
+    e.ultima = acum;
+    if (e.nr >= ProtectieLogin.PRAG_ADRESA) e.pana = acum + Math.min(30_000 * 2 ** (e.nr - ProtectieLogin.PRAG_ADRESA), ProtectieLogin.PAUZA_MAXIMA);
+    // Șters și pus la loc: ordinea din Map rămâne „cel mai vechi eșec primul”.
+    this.peAdresa.delete(cheie);
+    if (this.peAdresa.size >= this.opt.maxIntrari) this.elibereazaAdrese(acum);
+    this.peAdresa.set(cheie, e);
+
+    const pl = this.peLogin.get(l) ?? { momente: [], urmatoarea: 0, exista };
+    pl.momente.push(acum);
+    if (pl.momente.length > ProtectieLogin.PRAG_LOGIN) pl.momente.shift();
+    pl.exista = exista;
+    this.peLogin.delete(l);
+    if (this.peLogin.size >= this.opt.maxIntrari) this.elibereazaLoginuri(acum);
+    this.peLogin.set(l, pl);
+  }
+
+  reusit(login: string, adresa: string, acum = Date.now()): void {
+    const l = login.toLowerCase();
+    const cheie = `${grupAdresa(adresa)}|${l}`;
+    this.peAdresa.delete(cheie);
+    this.cunoscute.delete(cheie);
+    if (this.cunoscute.size >= this.opt.maxIntrari) {
+      for (const [k, pana] of this.cunoscute) if (pana <= acum) this.cunoscute.delete(k);
+      for (const k of this.cunoscute.keys()) {
+        if (this.cunoscute.size < this.opt.maxIntrari) break;
+        this.cunoscute.delete(k);
+      }
+    }
+    this.cunoscute.set(cheie, acum + ProtectieLogin.ZILE_ADRESA_CUNOSCUTA * 86_400_000);
+  }
+
+  /** Câte chei ține minte (pentru teste). */
+  marime() {
+    return { peAdresa: this.peAdresa.size, peLogin: this.peLogin.size, cunoscute: this.cunoscute.size };
+  }
+
+  private incetinit(pl: { momente: number[] }, acum: number) {
+    return pl.momente.length >= ProtectieLogin.PRAG_LOGIN && acum - pl.momente[0] < ProtectieLogin.FEREASTRA_LOGIN;
+  }
+
+  private elibereazaAdrese(acum: number) {
+    for (const [k, v] of this.peAdresa) {
+      if (v.pana <= acum && acum - v.ultima > ProtectieLogin.FEREASTRA_LOGIN) this.peAdresa.delete(k);
+    }
+    // Tot plin: pleacă cele mai vechi (o zecime, ca să nu se repete curățarea la fiecare eșec).
+    const tinta = Math.floor(this.opt.maxIntrari * 0.9);
+    for (const k of this.peAdresa.keys()) {
+      if (this.peAdresa.size <= tinta) break;
+      this.peAdresa.delete(k);
+    }
+  }
+
+  private elibereazaLoginuri(acum: number) {
+    for (const [k, v] of this.peLogin) if (!this.incetinit(v, acum) && acum - v.momente[v.momente.length - 1] > ProtectieLogin.FEREASTRA_LOGIN) this.peLogin.delete(k);
+    // Conturile reale rămân: pleacă întâi loginurile inexistente, cele mai vechi primele.
+    const tinta = Math.floor(this.opt.maxIntrari * 0.9);
+    for (const [k, v] of this.peLogin) {
+      if (this.peLogin.size <= tinta) break;
+      if (!v.exista) this.peLogin.delete(k);
+    }
+    for (const k of this.peLogin.keys()) {
+      if (this.peLogin.size <= tinta) break;
+      this.peLogin.delete(k);
+    }
   }
 }
 
-function noteazaEsec(cheie: string) {
-  const e = esecuri.get(cheie) ?? { nr: 0, pana: 0 };
-  e.nr += 1;
-  if (e.nr >= 5) e.pana = Date.now() + Math.min(30_000 * 2 ** (e.nr - 5), 15 * 60_000);
-  esecuri.set(cheie, e);
-  if (esecuri.size > 10_000) esecuri.clear();
+/**
+ * Cel mult `paralele` calcule scrypt odată și `inAsteptare` la coadă; peste atât, 429 imediat.
+ * scrypt rulează pe firele libuv (4 implicit), aceleași de care au nevoie DNS-ul (plățile prin
+ * POSLink) și citirea fișierelor: un val de loginuri nu trebuie să le ocupe pe toate.
+ */
+export class LimitatorHash {
+  private active = 0;
+  private coada: (() => void)[] = [];
+
+  constructor(
+    private paralele = 2,
+    private inAsteptare = 20,
+  ) {}
+
+  async ruleaza<T>(f: () => Promise<T>): Promise<T> {
+    if (this.active < this.paralele) this.active++;
+    else {
+      if (this.coada.length >= this.inAsteptare) {
+        throw new EroareUtilizator('Prea multe autentificări în același timp; reîncercați peste câteva secunde', 429);
+      }
+      // Locul se predă direct de la cel care termină, ca nimeni să nu treacă peste rând.
+      await new Promise<void>((rezolva) => this.coada.push(rezolva));
+    }
+    try {
+      return await f();
+    } finally {
+      const urmatorul = this.coada.shift();
+      if (urmatorul) urmatorul();
+      else this.active--;
+    }
+  }
 }
 
+const protectie = new ProtectieLogin();
+const limitatorHash = new LimitatorHash();
+const SARE_FALSA = 'sare-pentru-conturi-inexistente';
+
 export async function autentificare(db: Db, login: string, parola: string, adresa = '') {
-  const cheie = `${adresa}|${login.toLowerCase()}`;
-  verificaBlocare(cheie);
+  protectie.verifica(login, adresa);
   const u = (await db.query<any>('SELECT * FROM utilizatori WHERE login = $1 AND activ', [login]))[0];
   // Pentru un cont inexistent facem totuși un hash, ca durata răspunsului să nu dea de gol loginurile valide.
-  const corect = u?.parola_hash ? await parolaCorecta(parola, u.sare, u.parola_hash) : (await hashParola(parola, SARE_FALSA), false);
+  const corect = await limitatorHash.ruleaza(async () =>
+    u?.parola_hash ? parolaCorecta(parola, u.sare, u.parola_hash) : (await hashParola(parola, SARE_FALSA), false),
+  );
   if (!corect) {
-    noteazaEsec(cheie);
+    protectie.esec(login, adresa, !!u);
     throw new EroareUtilizator('Utilizator sau parolă greșită', 401);
   }
   if (u.rol !== 'admin') throw new EroareUtilizator('Doar administratorii au acces la panou', 403);
-  esecuri.delete(cheie);
+  protectie.reusit(login, adresa);
+  // Sesiunile expirate (inclusiv peste durata maximă) se șterg la fiecare autentificare.
+  await db.query(`DELETE FROM sesiuni WHERE expira_la < now() OR creata_la < now() - interval '${ZILE_SESIUNE_MAXIM} days'`);
   const token = tokenNou();
-  await db.query(`INSERT INTO sesiuni (token, utilizator_id, expira_la) VALUES ($1, $2, now() + interval '${ZILE_SESIUNE} days')`, [token, u.id]);
+  await db.query(`INSERT INTO sesiuni (token, utilizator_id, expira_la) VALUES ($1, $2, now() + interval '${ZILE_SESIUNE} days')`, [
+    amprentaToken(token),
+    u.id,
+  ]);
   return { token, utilizator: { id: u.id, nume: u.nume, rol: u.rol } as UtilizatorAutentificat };
 }
 
 export async function utilizatorDinToken(db: Db, token: string): Promise<UtilizatorAutentificat | null> {
+  const amprenta = amprentaToken(token);
   const r = await db.query<UtilizatorAutentificat>(
     `SELECT u.id, u.nume, u.rol FROM sesiuni s JOIN utilizatori u ON u.id = s.utilizator_id
-      WHERE s.token = $1 AND s.expira_la > now() AND u.activ`,
-    [token],
+      WHERE s.token = $1 AND s.expira_la > now() AND s.creata_la > now() - interval '${ZILE_SESIUNE_MAXIM} days' AND u.activ`,
+    [amprenta],
   );
   if (!r[0]) return null;
-  // Sesiune glisantă: cât timp panoul e folosit, nu expiră în mijlocul lucrului.
-  await db.query(`UPDATE sesiuni SET expira_la = now() + interval '${ZILE_SESIUNE} days' WHERE token = $1 AND expira_la < now() + interval '3 days'`, [token]);
+  // Sesiune glisantă: cât timp panoul e folosit, nu expiră în mijlocul lucrului (dar nu peste durata maximă).
+  await db.query(
+    `UPDATE sesiuni SET expira_la = LEAST(now() + interval '${ZILE_SESIUNE} days', creata_la + interval '${ZILE_SESIUNE_MAXIM} days')
+      WHERE token = $1 AND expira_la < now() + interval '3 days'`,
+    [amprenta],
+  );
   return r[0];
 }
 
 export async function iesire(db: Db, token: string) {
-  await db.query('DELETE FROM sesiuni WHERE token = $1', [token]);
+  await db.query('DELETE FROM sesiuni WHERE token = $1', [amprentaToken(token)]);
 }
 
 // ---- Bilete pentru fluxul de notificări (SSE) ----
@@ -119,7 +307,7 @@ export interface DispozitivAutentificat {
 export async function dispozitivDinToken(db: Db, token: string): Promise<DispozitivAutentificat | null> {
   const r = await db.query<DispozitivAutentificat>(
     'SELECT id, nume, locatie_id FROM dispozitive WHERE token = $1 AND activ',
-    [token],
+    [amprentaToken(token)],
   );
   return r[0] ?? null;
 }
@@ -135,7 +323,7 @@ export async function asociazaDispozitiv(db: Db, cod: string) {
   const r = await db.query<any>(
     `UPDATE dispozitive SET token = $2, cod_asociere = NULL WHERE cod_asociere = $1 AND activ
      RETURNING id, nume, locatie_id`,
-    [cod.trim().toUpperCase(), token],
+    [cod.trim().toUpperCase(), amprentaToken(token)],
   );
   if (!r[0]) throw new EroareUtilizator('Cod de asociere greșit sau deja folosit', 401);
   return { token, dispozitiv: r[0] as DispozitivAutentificat };
@@ -156,8 +344,21 @@ export function listaDispozitive(db: Db) {
   );
 }
 
-export async function activeazaDispozitiv(db: Db, id: number, activ: boolean) {
-  await db.query('UPDATE dispozitive SET activ = $2 WHERE id = $1', [id, activ]);
+/**
+ * Dezactivarea șterge tokenul tabletei: e o revocare reală, nu doar o bifă. Reactivarea nu readuce
+ * tokenul vechi (care poate fi fost copiat de pe o tabletă pierdută), ci dă un cod nou de asociere.
+ * Vânzările netrimise de pe tabletă rămân în ea și pleacă după re-asociere.
+ */
+export async function activeazaDispozitiv(db: Db, id: number, activ: boolean): Promise<{ cod_asociere: string | null }> {
+  const r = await db.query<{ cod_asociere: string | null }>(
+    'UPDATE dispozitive SET activ = $2, token = NULL, cod_asociere = $3 WHERE id = $1 AND activ <> $2 RETURNING cod_asociere',
+    [id, activ, activ ? codAsociere() : null],
+  );
+  if (r[0]) return r[0];
+  // Era deja în starea cerută: nu se schimbă nimic (o tabletă activă nu-și pierde tokenul).
+  const existenta = await db.query<{ cod_asociere: string | null }>('SELECT cod_asociere FROM dispozitive WHERE id = $1', [id]);
+  if (!existenta[0]) throw new EroareNegasit('Tableta');
+  return existenta[0];
 }
 
 /**
@@ -198,6 +399,8 @@ export function listaUtilizatori(db: Db) {
  *   celelalte sesiuni sunt închise, dar a lui rămâne.
  */
 export async function salveazaUtilizator(db: Db, d: DateUtilizator, id?: number, sesiuneCurenta?: string) {
+  // Administratorii lucrează în panou, nu pe tablete: nu au PIN, deci nu ajung în catalogul tabletelor.
+  if (d.rol === 'admin') d = { ...d, pin: null };
   if (d.pin != null && !/^\d{4,6}$/.test(d.pin)) throw new EroareUtilizator('PIN-ul are 4–6 cifre');
   if (d.parola != null && d.parola.length < 8) throw new EroareUtilizator('Parola are cel puțin 8 caractere');
   if (d.parola != null && d.parola.length > 200) throw new EroareUtilizator('Parola e prea lungă');
@@ -211,13 +414,16 @@ export async function salveazaUtilizator(db: Db, d: DateUtilizator, id?: number,
   if (id) {
     await db.query(
       `UPDATE utilizatori SET nume = $2, rol = $3, login = $4, locatie_id = $5, activ = $6,
-              parola_hash = COALESCE($7, parola_hash), pin_hash = COALESCE($8, pin_hash)
+              parola_hash = COALESCE($7, parola_hash),
+              pin_hash = CASE WHEN $3 = 'admin' THEN NULL ELSE COALESCE($8, pin_hash) END
         WHERE id = $1`,
       [id, d.nume, d.rol, d.login || null, d.locatie_id ?? null, d.activ ?? true, parolaHash, pinHash],
     );
     // Parola schimbată, cont dezactivat sau retrogradat: sesiunile vechi nu mai sunt valabile.
     if (d.activ === false || d.rol !== 'admin') await db.query('DELETE FROM sesiuni WHERE utilizator_id = $1', [id]);
-    else if (parolaHash) await db.query('DELETE FROM sesiuni WHERE utilizator_id = $1 AND token IS DISTINCT FROM $2', [id, sesiuneCurenta ?? null]);
+    else if (parolaHash) {
+      await db.query('DELETE FROM sesiuni WHERE utilizator_id = $1 AND token IS DISTINCT FROM $2', [id, sesiuneCurenta ? amprentaToken(sesiuneCurenta) : null]);
+    }
     return { id };
   }
   const r = await db.query<{ id: number }>(

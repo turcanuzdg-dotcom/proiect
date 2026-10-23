@@ -1,10 +1,20 @@
 // Un înlocuitor minim pentru Fastify: rutele reale (server/src/rute) se înregistrează aici și
 // răspund la cererile tabletei și ale panoului direct în browser, fără rețea.
 import type { FastifyInstance } from 'fastify';
-import { ZodError } from 'zod';
-import { EroareUtilizator } from '../../../server/src/erori';
+import { raspunsLaEroare } from '../../../server/src/erori';
 
 type Handler = (req: CerereSim, reply: RaspunsSim) => unknown;
+
+/** Etapele din Fastify folosite de rute: verificarea accesului (onRequest), apoi rutele, apoi jurnalul (onResponse). */
+type Etapa = 'onRequest' | 'preHandler' | 'onResponse';
+type Hooks = Record<Etapa, Handler[]>;
+
+const jurnalSim = {
+  error: (...a: unknown[]) => console.error(...a),
+  warn: (...a: unknown[]) => console.warn(...a),
+  info: () => {},
+  debug: () => {},
+};
 
 export interface CerereSim {
   method: string;
@@ -14,6 +24,8 @@ export interface CerereSim {
   query: Record<string, string>;
   body: unknown;
   ip: string;
+  routeOptions: { url: string };
+  log: typeof jurnalSim;
   [k: string]: unknown;
 }
 
@@ -36,12 +48,16 @@ export class RaspunsSim {
   header() {
     return this;
   }
+  headers() {
+    return this;
+  }
 }
 
 interface Ruta {
   metoda: string;
+  cale: string;
   segmente: string[];
-  hooks: Handler[];
+  hooks: Hooks;
   handler: Handler;
 }
 
@@ -50,38 +66,41 @@ export interface RezultatCerere {
   corp: string;
 }
 
-/** La fel ca setErrorHandler din server/src/app.ts. */
+/** La fel ca setErrorHandler din server/src/app.ts (aceeași funcție). */
 function raspunsEroare(err: unknown): { status: number; corp: unknown } {
-  if (err instanceof ZodError) {
-    return { status: 400, corp: { eroare: err.issues.map((i) => `${i.path.join('.') || 'cerere'}: ${i.message}`).join('; ') } };
-  }
-  if (err instanceof EroareUtilizator) return { status: err.status, corp: { eroare: err.message } };
-  const e = err as { code?: string; statusCode?: number; message?: string };
-  if (e.code === '23505') return { status: 409, corp: { eroare: 'Există deja o înregistrare cu acest nume' } };
-  if (e.code === '23503') return { status: 409, corp: { eroare: 'Înregistrarea e folosită în alte documente sau trimite la ceva inexistent' } };
-  if (e.statusCode && e.statusCode < 500) return { status: e.statusCode, corp: { eroare: e.message } };
+  const r = raspunsLaEroare(err);
+  if (r) return { status: r.status, corp: { eroare: r.eroare } };
   console.error(err);
   return { status: 500, corp: { eroare: 'Eroare internă a serverului' } };
 }
+
+const copie = (h: Hooks): Hooks => ({ onRequest: [...h.onRequest], preHandler: [...h.preHandler], onResponse: [...h.onResponse] });
 
 export class RuterSim {
   private rute: Ruta[] = [];
   private inregistrari: Promise<unknown>[] = [];
 
   /** Instanța „Fastify” pe care o primesc rutePOS și ruteAdmin. */
-  instanta(hooks: Handler[] = []): FastifyInstance {
-    const adauga = (metoda: string) => (cale: string, handler: Handler) => {
-      this.rute.push({ metoda, segmente: cale.split('/').filter(Boolean), hooks, handler });
-    };
+  instanta(hooks: Hooks = { onRequest: [], preHandler: [], onResponse: [] }): FastifyInstance {
+    // Ca în Fastify: (cale, handler) sau (cale, opțiuni, handler); opțiunile (bodyLimit, logLevel) nu contează aici.
+    const adauga =
+      (metoda: string) =>
+      (cale: string, a: Handler | object, b?: Handler) => {
+        const handler = (typeof a === 'function' ? a : b) as Handler;
+        this.rute.push({ metoda, cale, segmente: cale.split('/').filter(Boolean), hooks, handler });
+      };
     const inst = {
       get: adauga('GET'),
       post: adauga('POST'),
       put: adauga('PUT'),
       delete: adauga('DELETE'),
-      // Ca în Fastify, un hook adăugat într-un plugin se aplică doar rutelor din el.
-      addHook: (_nume: 'preHandler', fn: Handler) => void hooks.push(fn),
+      // Ca în Fastify, un hook adăugat într-un plugin se aplică doar rutelor din el (și din copiii lui).
+      addHook: (etapa: Etapa, fn: Handler) => {
+        if (!(etapa in hooks)) throw new Error(`Simularea nu cunoaște hook-ul ${etapa}`);
+        hooks[etapa].push(fn);
+      },
       register: (plugin: (copil: FastifyInstance) => unknown) => {
-        const p = Promise.resolve(plugin(this.instanta([...hooks])));
+        const p = Promise.resolve(plugin(this.instanta(copie(hooks))));
         this.inregistrari.push(p);
         return p;
       },
@@ -111,26 +130,50 @@ export class RuterSim {
     const url = new URL(adresa, 'http://simulare.local');
     const gasit = this.gaseste(metoda, url.pathname);
     if (!gasit) return { status: 404, corp: JSON.stringify({ eroare: `Ruta ${metoda} ${url.pathname} nu există` }) };
+    const { ruta } = gasit;
     const req: CerereSim = {
       method: metoda,
       url: url.pathname + url.search,
       headers: antete,
       params: gasit.params,
       query: Object.fromEntries(url.searchParams),
-      body: corp ? JSON.parse(corp) : undefined,
+      body: undefined,
       ip: '127.0.0.1',
+      routeOptions: { url: ruta.cale },
+      log: jurnalSim,
     };
     const reply = new RaspunsSim();
-    try {
-      for (const h of gasit.ruta.hooks) {
+    const rezultat = await this.executa(ruta, req, reply, corp);
+    // Ca onResponse din Fastify: după răspuns; o eroare aici nu schimbă răspunsul.
+    for (const h of ruta.hooks.onResponse) {
+      try {
         await h(req, reply);
-        if (reply.sent) return { status: reply.statusCode, corp: JSON.stringify(reply.corp ?? null) };
+      } catch (e) {
+        console.error(e);
       }
-      const rez = await gasit.ruta.handler(req, reply);
+    }
+    return rezultat;
+  }
+
+  private async executa(ruta: Ruta, req: CerereSim, reply: RaspunsSim, corp: string | null): Promise<RezultatCerere> {
+    const raspuns = () => ({ status: reply.statusCode, corp: JSON.stringify(reply.corp ?? null) });
+    try {
+      for (const h of ruta.hooks.onRequest) {
+        await h(req, reply);
+        if (reply.sent) return raspuns();
+      }
+      // Corpul se citește abia după onRequest, ca în Fastify.
+      req.body = corp ? JSON.parse(corp) : undefined;
+      for (const h of ruta.hooks.preHandler) {
+        await h(req, reply);
+        if (reply.sent) return raspuns();
+      }
+      const rez = await ruta.handler(req, reply);
       const corpRaspuns = reply.sent ? reply.corp : rez;
       return { status: reply.statusCode, corp: corpRaspuns === undefined ? '' : JSON.stringify(corpRaspuns) };
     } catch (e) {
       const r = raspunsEroare(e);
+      reply.statusCode = r.status;
       return { status: r.status, corp: JSON.stringify(r.corp) };
     }
   }

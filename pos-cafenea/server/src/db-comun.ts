@@ -34,6 +34,24 @@ export function dinPglite(lite: PGlite): Db {
   return db;
 }
 
+/**
+ * Verificarea de sănătate: baza răspunde la `SELECT 1` în cel mult `ms`. Un pool blocat (toate
+ * conexiunile ocupate, PostgreSQL oprit) nu blochează și verificarea: după timpul limită răspunsul e „nu”.
+ */
+export async function bazaRaspunde(db: Db, ms = 2_000): Promise<boolean> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const limita = new Promise<false>((rezolva) => {
+    timer = setTimeout(() => rezolva(false), ms);
+  });
+  try {
+    return await Promise.race([db.query('SELECT 1').then(() => true), limita]);
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** INSERT cu mai multe rânduri într-o singură interogare. */
 export async function insereaza(
   db: Db,

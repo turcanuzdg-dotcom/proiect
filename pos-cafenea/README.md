@@ -39,19 +39,100 @@ npm ci && npm run build
 
 # pe server: doar dependențele de producție, exact versiunile din package-lock.json
 npm ci --omit=dev --ignore-scripts
-DATABASE_URL=postgres://utilizator:parola@gazda/cafenea \
-ADMIN_LOGIN=admin ADMIN_PAROLA='o parolă lungă' \
-PORT=3000 npm start
+```
+
+Serviciul systemd (`NODE_ENV=production` stă în unitate, nu în fișierul cu variabile: dacă fișierul
+lipsește sau are o greșeală, serverul refuză să pornească în loc să pornească pe o bază goală):
+
+```ini
+# /etc/systemd/system/cafenea.service
+[Service]
+Environment=NODE_ENV=production
+EnvironmentFile=/etc/cafenea/server.env
+WorkingDirectory=/srv/cafenea/pos-cafenea
+ExecStart=/usr/bin/npm start
+User=cafenea
+Restart=always
+RestartSec=2
+# O plată cu cardul poate aștepta terminalul până la 5 minute; oprirea o lasă să se termine.
+TimeoutStopSec=330
+```
+
+```bash
+# /etc/cafenea/server.env (drepturi 600, proprietar root)
+DATABASE_URL=postgres://cafenea_app:parola@127.0.0.1/cafenea
+DATABASE_URL_MIGRARI=postgres://cafenea_migrari:alta-parola@127.0.0.1/cafenea   # opțional, vezi mai jos
+ADMIN_LOGIN=admin
+ADMIN_PAROLA='o parolă lungă, doar la prima pornire'
+PORT=3000
 ```
 
 - `npm ci`, nu `npm install`: instalează exact versiunile verificate din `package-lock.json` și nu
   le schimbă. Serverul rulează TypeScript direct, prin `tsx`, care e dependență de producție.
 - Serverul servește și interfața construită (`web/dist`), deci e un singur proces.
-- Trebuie pus în spatele unui **HTTPS** (de ex. Caddy sau nginx): fără HTTPS tableta nu poate instala
-  aplicația și nu poate porni offline.
-- La prima pornire se creează contul de administrator din `ADMIN_LOGIN` / `ADMIN_PAROLA`; cu
-  `DATABASE_URL` setat, serverul refuză să pornească fără `ADMIN_PAROLA` dacă nu există niciun admin.
+- Cu `NODE_ENV=production`: fără `DATABASE_URL` serverul nu pornește (nu folosește baza locală
+  PGlite); o bază fără administrator cere `ADMIN_PAROLA` de cel puțin 12 caractere. După prima pornire,
+  scoateți `ADMIN_PAROLA` din fișier. Parolele de administrator puse din panou au tot cel puțin 12 caractere.
+- Cu `NODE_ENV=production` serverul ascultă doar pe `127.0.0.1` (altă adresă: `HOST`). În fața lui stă
+  **Caddy**, pe aceeași mașină, cu HTTPS (fără HTTPS tableta nu poate instala aplicația și nu poate porni
+  offline). `X-Forwarded-For` e crezut doar de la proxy-ul local (`TRUST_PROXY`, implicit `loopback`);
+  adresa clientului contează pentru pauzele de la login și pentru jurnalul de audit.
+
+  ```
+  pos.exemplu.md {
+    reverse_proxy 127.0.0.1:3000
+    header Strict-Transport-Security "max-age=31536000"
+  }
+  ```
+
+- Firewall: `ufw default deny incoming && ufw limit 22/tcp && ufw allow 80,443/tcp && ufw enable`.
+- Serverul pune singur antetele de securitate (Content-Security-Policy strict pe pagini, `nosniff`,
+  `X-Frame-Options`, `Referrer-Policy`, `Cache-Control: no-store` pe API). HSTS îl pune Caddy. CSP-ul
+  lasă tableta să vorbească doar cu puntea de echipamente de pe `http://127.0.0.1:8099`.
+- `/api/sanatate` verifică și baza de date (503 dacă nu răspunde în 2 s): de folosit pentru o
+  verificare externă la fiecare minut (de ex. UptimeRobot sau healthchecks.io).
 - Migrațiile bazei de date (`server/migrari/*.sql`) se aplică automat la pornire.
+- `npm run seed` (date demo) refuză să ruleze cu `NODE_ENV=production` sau cu `DATABASE_URL`, ca
+  vânzările fictive să nu ajungă în registrele reale (pentru o bază de probă: `-- --accept-baza-reala`).
+
+### Rol separat pentru schemă (opțional)
+
+Cu `DATABASE_URL_MIGRARI`, migrațiile se aplică printr-o conexiune scurtă cu rolul care deține
+tabelele, iar serverul lucrează cu un rol care are doar drepturi pe date. Cine află parola serverului
+nu poate șterge tabele și nici opri declanșatorii care țin registrele de stoc și de bani nemodificabile.
+Pregătirea, o singură dată, ca administrator PostgreSQL:
+
+```sql
+CREATE ROLE cafenea_migrari LOGIN PASSWORD '...';
+CREATE ROLE cafenea_app LOGIN PASSWORD '...';
+CREATE DATABASE cafenea OWNER cafenea_migrari;
+\c cafenea
+REVOKE ALL ON SCHEMA public FROM PUBLIC;
+GRANT USAGE ON SCHEMA public TO cafenea_app;
+ALTER DEFAULT PRIVILEGES FOR ROLE cafenea_migrari IN SCHEMA public
+  GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO cafenea_app;
+ALTER DEFAULT PRIVILEGES FOR ROLE cafenea_migrari IN SCHEMA public
+  GRANT USAGE, SELECT ON SEQUENCES TO cafenea_app;
+```
+
+Pentru o bază existentă, creată deja de un singur rol: `ALTER DATABASE` / `REASSIGN OWNED BY` către
+`cafenea_migrari` și `GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public` (plus
+`USAGE, SELECT ON ALL SEQUENCES`) către `cafenea_app`.
+
+### Ce păstrează serverul pentru securitate
+
+- Tokenurile panoului și ale tabletelor stau în bază doar ca amprentă SHA-256: o copie a bazei nu dă
+  acces. O sesiune de panou ține cel mult 30 de zile. O tabletă dezactivată își pierde tokenul;
+  reactivarea dă un cod nou de asociere.
+- Loginul: pauze după 5 greșeli de pe aceeași adresă (IPv6 pe /64), cel mult o încercare la 10 s pe
+  un cont după 20 de greșeli din orice adrese (adresele de pe care contul a intrat deja nu sunt
+  încetinite) și cel mult 2 verificări de parolă în paralel.
+- **Jurnalul de audit** (Setări → Jurnal): fiecare modificare din panou (cu valoarea de dinainte, unde
+  se suprascrie ceva: prețuri, rețete, toleranțe, terminale, roluri), autentificările și operațiunile
+  tabletelor din afara cozii (terminal, inventariere, asociere). Nu conține parole, PIN-uri sau coduri.
+- Registrele `miscari_stoc`, `miscari_bani` și `jurnal_audit` nu se pot modifica, șterge sau goli
+  nici direct în bază (declanșatori). Jurnalul crește cu fiecare modificare; păstrarea lui pe termen
+  lung se decide la copiile de siguranță.
 
 ### Terminalul fiscal (POSLink / Intelectsoft)
 

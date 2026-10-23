@@ -7,7 +7,7 @@ import { CapPagina, FiltruLocatie, Rand, Stare, Taburi } from '../componente';
 import { useAdmin, useDate } from '../context';
 import type { Locatie } from '../tipuri';
 
-type Tab = 'locatii' | 'utilizatori' | 'tablete' | 'fiscal' | 'tolerante' | 'erori';
+type Tab = 'locatii' | 'utilizatori' | 'tablete' | 'fiscal' | 'tolerante' | 'erori' | 'jurnal';
 const TABURI: { cheie: Tab; titlu: string }[] = [
   { cheie: 'locatii', titlu: 'Locații' },
   { cheie: 'utilizatori', titlu: 'Utilizatori' },
@@ -15,6 +15,7 @@ const TABURI: { cheie: Tab; titlu: string }[] = [
   { cheie: 'fiscal', titlu: 'Terminal fiscal' },
   { cheie: 'tolerante', titlu: 'Toleranțe la închidere' },
   { cheie: 'erori', titlu: 'Erori de sincronizare' },
+  { cheie: 'jurnal', titlu: 'Jurnal' },
 ];
 
 export function PaginaSetari({ sub, navigheaza }: PropsPagina) {
@@ -29,6 +30,7 @@ export function PaginaSetari({ sub, navigheaza }: PropsPagina) {
       {tab === 'fiscal' && <TabFiscal />}
       {tab === 'tolerante' && <TabTolerante />}
       {tab === 'erori' && <TabErori />}
+      {tab === 'jurnal' && <TabJurnal />}
     </>
   );
 }
@@ -204,6 +206,9 @@ function TabUtilizatori() {
   );
 }
 
+/** Ca pe server (rute/admin.ts): contul de administrator vede toți banii rețelei. */
+const PAROLA_ADMIN_MINIM = 12;
+
 function FormularUtilizator(props: { utilizator: Utilizator | null; onInchide: () => void; onSalvat: () => void }) {
   const { arata } = useAdmin();
   const u = props.utilizator;
@@ -222,8 +227,10 @@ function FormularUtilizator(props: { utilizator: Utilizator | null; onInchide: (
     if (pin && !/^\d{4,6}$/.test(pin)) return setEroare('PIN-ul are 4–6 cifre');
     if (rol === 'barista' && !u && !pin) return setEroare('Barista are nevoie de un PIN ca să intre pe tabletă');
     if (rol === 'admin' && !login.trim()) return setEroare('Administratorul are nevoie de un nume de utilizator');
-    if (rol === 'admin' && !u?.are_parola && parola.length < 8) return setEroare('Administratorul are nevoie de o parolă de cel puțin 8 caractere');
-    if (parola && parola.length < 8) return setEroare('Parola are cel puțin 8 caractere');
+    if (rol === 'admin' && !u?.are_parola && parola.length < PAROLA_ADMIN_MINIM) {
+      return setEroare(`Administratorul are nevoie de o parolă de cel puțin ${PAROLA_ADMIN_MINIM} caractere`);
+    }
+    if (rol === 'admin' && parola && parola.length < PAROLA_ADMIN_MINIM) return setEroare(`Parola unui administrator are cel puțin ${PAROLA_ADMIN_MINIM} caractere`);
     try {
       const corp = {
         nume: nume.trim(),
@@ -276,6 +283,7 @@ function FormularUtilizator(props: { utilizator: Utilizator | null; onInchide: (
             <label className="camp">
               <span>PIN pentru tabletă {u?.are_pin ? '(gol = rămâne cel vechi)' : ''}</span>
               <input inputMode="numeric" autoComplete="off" maxLength={6} value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, ''))} placeholder="4–6 cifre" />
+              <span className="slab mic">Nu folosiți PIN-ul cardului bancar: PIN-ul tabletei nu e o protecție puternică.</span>
             </label>
             <FiltruLocatie valoare={locatie} onChange={setLocatie} doarPuncte eticheta="Cafeneaua (gol = poate lucra în toate)" />
           </>
@@ -287,7 +295,7 @@ function FormularUtilizator(props: { utilizator: Utilizator | null; onInchide: (
             </label>
             <label className="camp">
               <span>Parola {u?.are_parola ? '(gol = rămâne cea veche)' : ''}</span>
-              <input type="password" value={parola} onChange={(e) => setParola(e.target.value)} autoComplete="new-password" placeholder="cel puțin 8 caractere" />
+              <input type="password" value={parola} onChange={(e) => setParola(e.target.value)} autoComplete="new-password" placeholder={`cel puțin ${PAROLA_ADMIN_MINIM} caractere`} />
             </label>
           </div>
         )}
@@ -412,9 +420,15 @@ function TabTablete() {
     }
   };
   const comuta = async (d: Dispozitiv) => {
+    if (d.activ && !window.confirm(`Dezactivați „${d.nume}”? Tableta nu mai poate vinde sau sincroniza; pentru a o folosi din nou va trebui asociată cu un cod nou.`)) return;
     try {
-      await api.put(`/api/dispozitive/${d.id}/activ`, { activ: !d.activ });
-      arata(d.activ ? 'Tableta a fost dezactivată' : 'Tableta a fost reactivată');
+      const x = await api.put<{ cod_asociere: string | null }>(`/api/dispozitive/${d.id}/activ`, { activ: !d.activ });
+      if (d.activ) arata('Tableta a fost dezactivată; tokenul ei nu mai funcționează');
+      else {
+        // Reactivarea nu readuce tokenul vechi: tableta se asociază din nou, cu un cod nou.
+        arata('Tableta a fost reactivată; asociați-o cu codul nou');
+        if (x.cod_asociere) setCod({ nume: d.nume, cod: x.cod_asociere });
+      }
       r.reincarca();
     } catch (err) {
       arata(mesajEroare(err), 'pericol');
@@ -447,7 +461,9 @@ function TabTablete() {
     <>
       <Rand>
         <p className="slab mic" style={{ maxWidth: 640 }}>
-          Fiecare tabletă de la tejghea se asociază o singură dată cu o cafenea, printr-un cod. O tabletă pierdută se dezactivează de aici.
+          Fiecare tabletă de la tejghea se asociază o singură dată cu o cafenea, printr-un cod. O tabletă pierdută se dezactivează de aici:
+          accesul ei se oprește imediat, iar dacă o reactivați, primiți un cod nou de asociere (accesul vechi nu mai revine).
+          Vânzările netrimise de pe tabletă rămân în ea și pleacă după re-asociere.
         </p>
         <button type="button" className="buton" style={{ marginLeft: 'auto' }} onClick={() => setNou(true)}>
           + Tabletă nouă
@@ -772,5 +788,171 @@ function RezumatEveniment({ e }: { e: EroareSync }) {
         ))}
       </tbody>
     </table>
+  );
+}
+
+// ---------------- Jurnal de audit ----------------
+
+interface IntrareJurnal {
+  id: number;
+  la: string;
+  utilizator: string | null;
+  dispozitiv: string | null;
+  locatie: string | null;
+  adresa: string | null;
+  actiune: string;
+  cale: string | null;
+  stare_http: number | null;
+  date: { login?: string; corp?: unknown; inainte?: unknown } | null;
+}
+
+/** Numele pe înțeles ale acțiunilor; cele necunoscute apar ca atare (metoda și ruta). */
+const ACTIUNI: Record<string, string> = {
+  'login.reusit': 'Autentificare în panou',
+  'login.esuat': 'Autentificare eșuată',
+  'POST /api/auth/logout': 'Ieșire din panou',
+  'POST /api/locatii': 'Locație creată',
+  'PUT /api/locatii/:id': 'Locație modificată',
+  'POST /api/utilizatori': 'Utilizator creat',
+  'PUT /api/utilizatori/:id': 'Utilizator modificat',
+  'POST /api/dispozitive': 'Tabletă creată',
+  'POST /api/dispozitive/:id/reasociere': 'Cod nou pentru tabletă',
+  'PUT /api/dispozitive/:id/activ': 'Tabletă activată / dezactivată',
+  'PUT /api/dispozitive/:id/terminal': 'Terminal legat de tabletă',
+  'PUT /api/setari/fiscal': 'Setări fiscale',
+  'PUT /api/setari/tolerante': 'Toleranțe la închidere',
+  'POST /api/articole': 'Articol creat',
+  'PUT /api/articole/:id': 'Articol modificat',
+  'POST /api/categorii': 'Categorie creată',
+  'PUT /api/categorii/:id': 'Categorie modificată',
+  'POST /api/produse': 'Produs creat',
+  'PUT /api/produse/:id': 'Produs sau rețetă modificată',
+  'POST /api/modificatori': 'Modificator creat',
+  'PUT /api/modificatori/:id': 'Modificator modificat',
+  'POST /api/receptii': 'Recepție de marfă',
+  'POST /api/transferuri': 'Transfer între locații',
+  'POST /api/inventarieri': 'Inventariere începută',
+  'PUT /api/inventarieri/:id/linii': 'Numărare la inventar',
+  'POST /api/inventarieri/:id/finalizeaza': 'Inventariere finalizată',
+  'POST /api/ture/:id/verifica': 'Tură verificată',
+  'POST /api/bani/miscari': 'Operațiune de casă',
+  'POST /api/sync/erori/:id/reaplica': 'Eveniment de pe tabletă reaplicat',
+  'POST /api/sync/erori/:id/rezolvat': 'Eveniment de pe tabletă marcat rezolvat (fără aplicare)',
+  'POST /api/pos/asociere': 'Tabletă asociată',
+  'POST /api/pos/terminal/plata': 'Plată cu cardul (terminal)',
+  'POST /api/pos/terminal/retur': 'Retur pe card (terminal)',
+  'POST /api/pos/terminal/bon': 'Bon fiscal',
+  'POST /api/pos/terminal/raport-z': 'Raport Z',
+  'POST /api/pos/inventarieri': 'Inventariere începută pe tabletă',
+  'PUT /api/pos/inventarieri/:id/linii': 'Numărare la inventar pe tabletă',
+  'POST /api/pos/inventarieri/:id/finalizeaza': 'Inventariere finalizată pe tabletă',
+};
+
+function titluActiune(e: IntrareJurnal): string {
+  if (e.actiune === 'PUT /api/dispozitive/:id/activ') {
+    const activ = (e.date?.corp as { activ?: boolean } | undefined)?.activ;
+    if (activ !== undefined) return activ ? 'Tabletă reactivată (cod nou)' : 'Tabletă dezactivată';
+  }
+  return ACTIUNI[e.actiune] ?? e.actiune;
+}
+
+function cine(e: IntrareJurnal): string {
+  if (e.utilizator) return e.utilizator;
+  if (e.dispozitiv) return `${e.dispozitiv}${e.locatie ? ` (${e.locatie})` : ''}`;
+  if (e.date?.login) return `„${e.date.login}”`;
+  return '—';
+}
+
+function TabJurnal() {
+  const [cauta, setCauta] = useState('');
+  const [filtru, setFiltru] = useState('');
+  const [detaliu, setDetaliu] = useState<IntrareJurnal | null>(null);
+  // Căutarea pleacă la server după o scurtă pauză în tastare.
+  useEffect(() => {
+    const t = setTimeout(() => setFiltru(cauta.trim()), 300);
+    return () => clearTimeout(t);
+  }, [cauta]);
+  const r = useDate(() => api.get<IntrareJurnal[]>('/api/jurnal', { cauta: filtru || undefined }), [filtru]);
+
+  return (
+    <>
+      <p className="slab mic" style={{ maxWidth: 720 }}>
+        Cine a schimbat ce, de unde și când: modificările din panou, autentificările și operațiunile tabletelor făcute în afara cozii de
+        vânzări (terminal, inventariere, asociere). Jurnalul nu se poate modifica sau șterge și nu conține parole, PIN-uri sau coduri.
+        Se arată ultimele 500 de intrări.
+      </p>
+      <input type="search" placeholder="Caută (utilizator, tabletă, acțiune, adresă, valoare…)" value={cauta} onChange={(e) => setCauta(e.target.value)} />
+      <Stare {...r} gol={(d) => d.length === 0} mesajGol={filtru ? 'Nicio intrare nu se potrivește căutării.' : 'Jurnalul e gol.'}>
+        {(lista) => (
+          <div className="tabel-container">
+            <table className="tabel">
+              <thead>
+                <tr>
+                  <th>Când</th>
+                  <th>Cine</th>
+                  <th>Acțiunea</th>
+                  <th>Adresa</th>
+                  <th>Rezultat</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {lista.map((e) => (
+                  <tr key={e.id}>
+                    <td>{formatDataOra(e.la)}</td>
+                    <td>{cine(e)}</td>
+                    <td>
+                      {titluActiune(e)}
+                      {e.cale && ACTIUNI[e.actiune] && <div className="slab mic">{e.cale}</div>}
+                    </td>
+                    <td className="slab mic">{e.adresa ?? '—'}</td>
+                    <td>
+                      {e.stare_http == null ? '—' : e.stare_http < 400 ? <span className="insigna succes">reușit</span> : <span className="insigna pericol">refuzat ({e.stare_http})</span>}
+                    </td>
+                    <td className="num">
+                      {e.date && (e.date.corp !== undefined || e.date.inainte !== undefined) && (
+                        <button type="button" className="buton-link" onClick={() => setDetaliu(e)}>
+                          Detalii
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Stare>
+      {detaliu && (
+        <Modal
+          titlu={`${titluActiune(detaliu)} · ${formatDataOra(detaliu.la)}`}
+          onInchide={() => setDetaliu(null)}
+          lat
+          subsol={
+            <button type="button" className="buton" onClick={() => setDetaliu(null)}>
+              Închide
+            </button>
+          }
+        >
+          <div className="randuri-form">
+            <div className="slab mic">
+              {cine(detaliu)} · {detaliu.adresa ?? 'adresă necunoscută'} · {detaliu.cale}
+            </div>
+            {detaliu.date?.inainte !== undefined && (
+              <div>
+                <strong>Înainte</strong>
+                <pre className="payload">{JSON.stringify(detaliu.date.inainte, null, 2)}</pre>
+              </div>
+            )}
+            {detaliu.date?.corp !== undefined && (
+              <div>
+                <strong>Trimis</strong>
+                <pre className="payload">{JSON.stringify(detaliu.date.corp, null, 2)}</pre>
+              </div>
+            )}
+          </div>
+        </Modal>
+      )}
+    </>
   );
 }

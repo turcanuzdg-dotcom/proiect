@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { evComanda, evTuraDeschisa, moment, pregateste } from './ajutor';
+import { evComanda, evTuraDeschisa, moment, PAROLA_ADMIN, pregateste } from './ajutor';
 
 let t: Awaited<ReturnType<typeof pregateste>>;
 beforeAll(async () => {
@@ -28,17 +28,17 @@ describe('acces', () => {
     expect(r.statusCode).toBe(429);
     expect(r.json().eroare).toMatch(/Prea multe încercări/);
     // Alt client nu e afectat.
-    const ok = await t.app.inject({ method: 'POST', url: '/api/auth/login', payload: { login: 'admin', parola: 'parola-test' }, remoteAddress: '10.9.9.10' });
+    const ok = await t.app.inject({ method: 'POST', url: '/api/auth/login', payload: { login: 'admin', parola: PAROLA_ADMIN }, remoteAddress: '10.9.9.10' });
     expect(ok.statusCode).toBe(200);
   });
 
   it('schimbarea parolei închide celelalte sesiuni, dar o păstrează pe a celui care o schimbă', async () => {
-    const alta = (await t.app.inject({ method: 'POST', url: '/api/auth/login', payload: { login: 'admin', parola: 'parola-test' } })).json().token;
+    const alta = (await t.app.inject({ method: 'POST', url: '/api/auth/login', payload: { login: 'admin', parola: PAROLA_ADMIN } })).json().token;
     const eu = await t.admin.get('/api/auth/eu');
-    await t.admin.put(`/api/utilizatori/${eu.id}`, { nume: eu.nume, rol: 'admin', login: 'admin', parola: 'parola-test-2', pin: null, locatie_id: null, activ: true });
+    await t.admin.put(`/api/utilizatori/${eu.id}`, { nume: eu.nume, rol: 'admin', login: 'admin', parola: 'parola-test-admin-2', pin: null, locatie_id: null, activ: true });
     expect((await t.app.inject({ method: 'GET', url: '/api/locatii', headers: { authorization: `Bearer ${alta}` } })).statusCode).toBe(401);
     expect((await t.app.inject({ method: 'GET', url: '/api/locatii', headers: { authorization: `Bearer ${t.tokenAdmin}` } })).statusCode).toBe(200);
-    await t.admin.put(`/api/utilizatori/${eu.id}`, { nume: eu.nume, rol: 'admin', login: 'admin', parola: 'parola-test', pin: null, locatie_id: null, activ: true });
+    await t.admin.put(`/api/utilizatori/${eu.id}`, { nume: eu.nume, rol: 'admin', login: 'admin', parola: PAROLA_ADMIN, pin: null, locatie_id: null, activ: true });
   });
 
   it('un barista nu poate deveni administrator fără parolă', async () => {

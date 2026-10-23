@@ -9,7 +9,7 @@ import { salveazaUtilizator } from '../src/servicii/acces';
  * Implicit testele rulează pe PGlite în memorie. Cu TEST_DATABASE_URL=postgres://.../postgres
  * fiecare fișier de teste primește o bază nouă pe serverul PostgreSQL indicat.
  */
-async function bazaDeTest() {
+export async function bazaDeTest() {
   const url = process.env.TEST_DATABASE_URL;
   if (!url) return deschideDb();
   const nume = `test_${randomUUID().replace(/-/g, '')}`;
@@ -23,13 +23,16 @@ async function bazaDeTest() {
   return deschideDb({ url: u.toString() });
 }
 
+/** Parola adminului de test: cel puțin 12 caractere, cât cere panoul pentru administratori. */
+export const PAROLA_ADMIN = 'parola-test-admin';
+
 export async function pregateste(opt: { zileIstoric?: number } = {}) {
   const db = await bazaDeTest();
-  await salveazaUtilizator(db, { nume: 'Admin', rol: 'admin', login: 'admin', parola: 'parola-test' });
+  await salveazaUtilizator(db, { nume: 'Admin', rol: 'admin', login: 'admin', parola: PAROLA_ADMIN });
   const demo = await populeazaDemo(db, { zileIstoric: opt.zileIstoric ?? 0 });
   const app = await construiesteApp({ db });
 
-  const login = await app.inject({ method: 'POST', url: '/api/auth/login', payload: { login: 'admin', parola: 'parola-test' } });
+  const login = await app.inject({ method: 'POST', url: '/api/auth/login', payload: { login: 'admin', parola: PAROLA_ADMIN } });
   const tokenAdmin = login.json().token as string;
   const asociere = await app.inject({ method: 'POST', url: '/api/pos/asociere', payload: { cod: demo.coduri_tablete.centru } });
   const tokenTableta = asociere.json().token as string;

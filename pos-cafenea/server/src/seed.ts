@@ -1,4 +1,4 @@
-// npm run seed [-- zile]  → rețea demonstrativă cu istoric (implicit 120 de zile).
+// npm run seed [-- zile]  → rețea demonstrativă cu istoric (implicit 120 de zile), doar în baza de dezvoltare.
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { deschideDb } from './db';
@@ -6,7 +6,18 @@ import { populeazaDemo } from './demo';
 import { salveazaUtilizator } from './servicii/acces';
 
 const radacina = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
-const zile = Number(process.argv[2] ?? 120);
+const argumente = process.argv.slice(2);
+const zile = Number(argumente.find((a) => /^\d+$/.test(a)) ?? 120);
+
+// Demo-ul scrie vânzări, bani și stoc fictive în registre (care nu se mai pot șterge), bariste cu
+// PIN-uri publicate în README și parola „schimba-ma”: niciodată într-o bază reală din greșeală.
+if ((process.env.NODE_ENV === 'production' || process.env.DATABASE_URL) && !argumente.includes('--accept-baza-reala')) {
+  console.error(
+    'Demo-ul se încarcă doar în baza locală de dezvoltare (fără DATABASE_URL și fără NODE_ENV=production). ' +
+      'Pentru o bază PostgreSQL de probă: npm run seed -- --accept-baza-reala',
+  );
+  process.exit(1);
+}
 
 const db = await deschideDb({
   url: process.env.DATABASE_URL,

@@ -27,6 +27,8 @@ export class Sincronizator {
   private pauza = 1_000;
   private timer: ReturnType<typeof setTimeout> | undefined;
   private oprit = false;
+  /** Câte evenimente pleacă într-o cerere; scade dacă serverul refuză lotul ca prea mare (413). */
+  private lot = LOT;
 
   constructor(
     private token: string,
@@ -77,18 +79,30 @@ export class Sincronizator {
     if (this.ruleaza || this.oprit) return;
     this.ruleaza = true;
     try {
-      let lot = await primeleDinCoada(LOT);
+      let lot = await primeleDinCoada(this.lot);
       if (!lot.length) {
         // Coada e goală: un sync gol verifică legătura, tokenul și versiunea catalogului.
         const r = await cerereJson<RaspunsSync>('/api/pos/sync', { token: this.token, body: { evenimente: [] }, timeout: 8_000 });
         if (r.catalog_versiune !== this.versiuneCatalog()) this.laCatalogSchimbat();
       }
       while (lot.length) {
-        const r = await cerereJson<RaspunsSync>('/api/pos/sync', {
-          token: this.token,
-          body: { evenimente: lot.map((x) => x.ev) },
-          timeout: 30_000,
-        });
+        let r: RaspunsSync;
+        try {
+          r = await cerereJson<RaspunsSync>('/api/pos/sync', {
+            token: this.token,
+            body: { evenimente: lot.map((x) => x.ev) },
+            timeout: 30_000,
+          });
+        } catch (e) {
+          // Lot prea mare pentru limita serverului: se trimite pe bucăți mai mici, ca coada să nu se
+          // blocheze (un singur eveniment e oricum mult sub limită).
+          if (e instanceof EroareHttp && e.status === 413 && lot.length > 1) {
+            this.lot = Math.max(1, Math.floor(lot.length / 2));
+            lot = lot.slice(0, this.lot);
+            continue;
+          }
+          throw e;
+        }
         const confirmate = new Set([...r.acceptate, ...r.cu_eroare.map((e) => e.id)]);
         await scoateDinCoada(lot.filter((x) => confirmate.has(x.ev.id)).map((x) => x.secv));
         this.seteaza({
@@ -98,9 +112,10 @@ export class Sincronizator {
         });
         if (r.catalog_versiune !== this.versiuneCatalog()) this.laCatalogSchimbat();
         if (confirmate.size === 0) break;
-        lot = await primeleDinCoada(LOT);
+        lot = await primeleDinCoada(this.lot);
       }
       this.pauza = PAUZA_NORMALA;
+      this.lot = LOT;
       this.seteaza({ online: true, dezasociata: false, ultimaSincronizare: this.stare.ultimaSincronizare ?? new Date().toISOString() });
     } catch (e) {
       const dezasociata = e instanceof EroareHttp && e.status === 401;

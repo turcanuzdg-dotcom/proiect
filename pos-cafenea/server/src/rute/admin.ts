@@ -1,8 +1,10 @@
-import type { FastifyInstance, preHandlerAsyncHookHandler } from 'fastify';
+import type { FastifyInstance, onRequestAsyncHookHandler } from 'fastify';
 import { z } from 'zod';
 import type { Db } from '../db';
+import { EroareUtilizator } from '../erori';
 import { magistrala } from '../magistrala';
 import * as acces from '../servicii/acces';
+import { auditeaza, hookAudit, listaJurnal, stareAnterioara } from '../servicii/audit';
 import { adaugaMiscareBani, listaMiscariBani, rezumatBani } from '../servicii/bani';
 import * as catalog from '../servicii/catalog';
 import { creeazaReceptie, creeazaTransfer, detaliuReceptie, listaReceptii, listaTransferuri } from '../servicii/gestiune';
@@ -64,15 +66,38 @@ const schemaUtilizator = z.object({
 });
 const schemaLocatie = z.object({ nume, tip: z.enum(['depozit', 'punct']), activ: z.boolean().optional() });
 
+/** Parola unui administrator pusă din panou: cel puțin 12 caractere (contul vede toți banii rețelei). */
+export const LUNGIME_MINIMA_PAROLA_ADMIN = 12;
+function verificaParolaAdmin(d: z.infer<typeof schemaUtilizator>) {
+  if (d.rol === 'admin' && d.parola && d.parola.length < LUNGIME_MINIMA_PAROLA_ADMIN) {
+    throw new EroareUtilizator(`Parola unui administrator are cel puțin ${LUNGIME_MINIMA_PAROLA_ADMIN} caractere`);
+  }
+}
+
 /** API-ul panoului de administrare. Autentificare: sesiunea adminului. */
-export async function ruteAdmin(app: FastifyInstance, db: Db, doarAdmin: preHandlerAsyncHookHandler) {
+export async function ruteAdmin(app: FastifyInstance, db: Db, doarAdmin: onRequestAsyncHookHandler) {
+  // Orice modificare făcută din panou ajunge în jurnalul de audit (după răspuns).
+  app.addHook('onResponse', hookAudit(db));
+
   app.post('/api/auth/login', async (req) => {
     const { login, parola } = z.object({ login: z.string().min(1).max(60), parola: z.string().min(1).max(200) }).parse(req.body);
-    return acces.autentificare(db, login, parola, req.ip);
+    try {
+      const r = await acces.autentificare(db, login, parola, req.ip);
+      await auditeaza(db, { utilizator_id: r.utilizator.id, adresa: req.ip, actiune: 'login.reusit', cale: '/api/auth/login', stare_http: 200, date: { login } }, req.log);
+      return r;
+    } catch (e) {
+      // Încercările refuzate fără verificarea parolei (429: pauză după eșecuri) nu se scriu: un val de
+      // cereri n-ar face decât să umple jurnalul. Cele verificate sunt limitate de scrypt.
+      if (e instanceof EroareUtilizator && e.status !== 429) {
+        await auditeaza(db, { adresa: req.ip, actiune: 'login.esuat', cale: '/api/auth/login', stare_http: e.status, date: { login } }, req.log);
+      }
+      throw e;
+    }
   });
 
   app.register(async (a) => {
-    a.addHook('preHandler', doarAdmin);
+    // În onRequest, înainte de citirea corpului: o cerere fără sesiune nu mai costă parsarea JSON-ului.
+    a.addHook('onRequest', doarAdmin);
     const anunta = (tip: Parameters<typeof magistrala.trimite>[0]['tip'], locatie_id?: number | null) => magistrala.trimite({ tip, locatie_id });
 
     a.get('/api/auth/eu', async (req) => req.utilizator);
@@ -84,16 +109,26 @@ export async function ruteAdmin(app: FastifyInstance, db: Db, doarAdmin: preHand
     // ---- Locații, utilizatori, tablete, setări ----
     a.get('/api/locatii', async () => acces.listaLocatii(db));
     a.post('/api/locatii', async (req) => acces.salveazaLocatie(db, schemaLocatie.parse(req.body)));
-    a.put('/api/locatii/:id', async (req) => acces.salveazaLocatie(db, schemaLocatie.parse(req.body), idNum.parse(req.params).id));
+    a.put('/api/locatii/:id', async (req) => {
+      const { id } = idNum.parse(req.params);
+      req.auditInainte = await stareAnterioara(db, 'locatie', id);
+      return acces.salveazaLocatie(db, schemaLocatie.parse(req.body), id);
+    });
 
     a.get('/api/utilizatori', async () => acces.listaUtilizatori(db));
     a.post('/api/utilizatori', async (req) => {
-      const r = await acces.salveazaUtilizator(db, schemaUtilizator.parse(req.body));
+      const d = schemaUtilizator.parse(req.body);
+      verificaParolaAdmin(d);
+      const r = await acces.salveazaUtilizator(db, d);
       anunta('catalog');
       return r;
     });
     a.put('/api/utilizatori/:id', async (req) => {
-      const r = await acces.salveazaUtilizator(db, schemaUtilizator.parse(req.body), idNum.parse(req.params).id, req.headers.authorization!.slice(7));
+      const d = schemaUtilizator.parse(req.body);
+      verificaParolaAdmin(d);
+      const { id } = idNum.parse(req.params);
+      req.auditInainte = await stareAnterioara(db, 'utilizator', id);
+      const r = await acces.salveazaUtilizator(db, d, id, req.headers.authorization!.slice(7));
       anunta('catalog');
       return r;
     });
@@ -105,12 +140,18 @@ export async function ruteAdmin(app: FastifyInstance, db: Db, doarAdmin: preHand
     });
     a.post('/api/dispozitive/:id/reasociere', async (req) => acces.reasociazaDispozitiv(db, idNum.parse(req.params).id));
     a.put('/api/dispozitive/:id/activ', async (req) => {
-      await acces.activeazaDispozitiv(db, idNum.parse(req.params).id, z.object({ activ: z.boolean() }).parse(req.body).activ);
-      return { ok: true };
+      const { id } = idNum.parse(req.params);
+      const { activ } = z.object({ activ: z.boolean() }).parse(req.body);
+      req.auditInainte = await stareAnterioara(db, 'dispozitiv', id);
+      // Reactivarea întoarce un cod nou de asociere: tokenul vechi nu mai revine.
+      const { cod_asociere } = await acces.activeazaDispozitiv(db, id, activ);
+      return { ok: true, cod_asociere };
     });
     a.put('/api/dispozitive/:id/terminal', async (req) => {
       const { terminal_device_id } = z.object({ terminal_device_id: z.string().trim().max(100).nullable() }).parse(req.body);
-      await terminal.seteazaTerminal(db, idNum.parse(req.params).id, terminal_device_id);
+      const { id } = idNum.parse(req.params);
+      req.auditInainte = await stareAnterioara(db, 'dispozitiv', id);
+      await terminal.seteazaTerminal(db, id, terminal_device_id);
       return { ok: true };
     });
     a.get('/api/dispozitive/:id/terminal/stare', async (req) => terminal.stareTerminal(db, idNum.parse(req.params).id));
@@ -118,6 +159,7 @@ export async function ruteAdmin(app: FastifyInstance, db: Db, doarAdmin: preHand
     a.get('/api/terminal/config', async () => ({ configurat: terminal.poslinkConfigurat(), fiscal: await terminal.citesteFiscal(db) }));
     a.put('/api/setari/fiscal', async (req) => {
       const f = z.object({ cota_tva_implicita: z.string().regex(/^[A-Z_]$/), antet: z.string().max(60) }).parse(req.body);
+      req.auditInainte = await stareAnterioara(db, 'setare', 'fiscal');
       await scrieSetare(db, 'fiscal', f);
       return f;
     });
@@ -125,6 +167,7 @@ export async function ruteAdmin(app: FastifyInstance, db: Db, doarAdmin: preHand
     a.get('/api/setari/tolerante', async () => citesteTolerante(db));
     a.put('/api/setari/tolerante', async (req) => {
       const t = z.object({ numerar: z.number().min(0), card: z.number().min(0), doze: z.number().min(0) }).parse(req.body);
+      req.auditInainte = await stareAnterioara(db, 'setare', 'tolerante');
       await scrieSetare(db, 'tolerante', t);
       return t;
     });
@@ -132,7 +175,12 @@ export async function ruteAdmin(app: FastifyInstance, db: Db, doarAdmin: preHand
     // ---- Rețetar ----
     a.get('/api/articole', async () => catalog.listaArticole(db));
     a.post('/api/articole', async (req) => catalog.salveazaArticol(db, schemaArticol.parse(req.body)));
-    a.put('/api/articole/:id', async (req) => catalog.salveazaArticol(db, schemaArticol.parse(req.body), idNum.parse(req.params).id));
+    a.put('/api/articole/:id', async (req) => {
+      const { id } = idNum.parse(req.params);
+      const d = schemaArticol.parse(req.body);
+      req.auditInainte = await stareAnterioara(db, 'articol', id);
+      return catalog.salveazaArticol(db, d, id);
+    });
 
     a.get('/api/categorii', async () => catalog.listaCategorii(db));
     a.post('/api/categorii', async (req) => {
@@ -141,7 +189,10 @@ export async function ruteAdmin(app: FastifyInstance, db: Db, doarAdmin: preHand
       return r;
     });
     a.put('/api/categorii/:id', async (req) => {
-      const r = await catalog.salveazaCategorie(db, z.object({ nume, ordine: z.number().int().optional() }).parse(req.body), idNum.parse(req.params).id);
+      const { id } = idNum.parse(req.params);
+      const d = z.object({ nume, ordine: z.number().int().optional() }).parse(req.body);
+      req.auditInainte = await stareAnterioara(db, 'categorie', id);
+      const r = await catalog.salveazaCategorie(db, d, id);
       anunta('catalog');
       return r;
     });
@@ -153,7 +204,10 @@ export async function ruteAdmin(app: FastifyInstance, db: Db, doarAdmin: preHand
       return r;
     });
     a.put('/api/produse/:id', async (req) => {
-      const r = await catalog.salveazaProdus(db, schemaProdus.parse(req.body), idNum.parse(req.params).id);
+      const { id } = idNum.parse(req.params);
+      const d = schemaProdus.parse(req.body);
+      req.auditInainte = await stareAnterioara(db, 'produs', id);
+      const r = await catalog.salveazaProdus(db, d, id);
       anunta('catalog');
       return r;
     });
@@ -165,7 +219,10 @@ export async function ruteAdmin(app: FastifyInstance, db: Db, doarAdmin: preHand
       return r;
     });
     a.put('/api/modificatori/:id', async (req) => {
-      const r = await catalog.salveazaModificator(db, schemaModificator.parse(req.body), idNum.parse(req.params).id);
+      const { id } = idNum.parse(req.params);
+      const d = schemaModificator.parse(req.body);
+      req.auditInainte = await stareAnterioara(db, 'modificator', id);
+      const r = await catalog.salveazaModificator(db, d, id);
       anunta('catalog');
       return r;
     });
@@ -250,6 +307,7 @@ export async function ruteAdmin(app: FastifyInstance, db: Db, doarAdmin: preHand
     a.post('/api/ture/:id/verifica', async (req) => {
       const { id } = idUuid.parse(req.params);
       const { nota } = z.object({ nota: z.string().max(1000).nullish() }).parse(req.body ?? {});
+      req.auditInainte = await stareAnterioara(db, 'tura', id);
       await verificaTura(db, id, req.utilizator!.id, nota ?? null);
       anunta('tura');
       return { ok: true };
@@ -308,6 +366,12 @@ export async function ruteAdmin(app: FastifyInstance, db: Db, doarAdmin: preHand
     a.post('/api/sync/erori/:id/rezolvat', async (req) => {
       await marcheazaRezolvat(db, idUuid.parse(req.params).id);
       return { ok: true };
+    });
+
+    // ---- Jurnalul de audit (doar citire) ----
+    a.get('/api/jurnal', async (req) => {
+      const q = z.object({ cauta: z.string().max(100).optional(), limita: z.coerce.number().int().positive().max(500).optional() }).parse(req.query);
+      return listaJurnal(db, q);
     });
   });
 }

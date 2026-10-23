@@ -1,9 +1,11 @@
-import type { FastifyInstance, preHandlerAsyncHookHandler } from 'fastify';
+import type { FastifyInstance, onRequestAsyncHookHandler } from 'fastify';
 import { z } from 'zod';
 import type { Db } from '../db';
 import { EroareNegasit } from '../erori';
 import { magistrala } from '../magistrala';
+import { LIMITA_CORP_SYNC } from '../limite';
 import { asociazaDispozitiv, utilizatorPermisTabletei } from '../servicii/acces';
+import { hookAudit } from '../servicii/audit';
 import { catalogPOS } from '../servicii/catalog';
 import { creeazaInventariere, finalizeazaInventariere, raportInventariere, salveazaNumaratori } from '../servicii/inventar';
 import { proceseazaSync } from '../servicii/sync';
@@ -11,18 +13,26 @@ import * as terminal from '../servicii/terminal';
 
 const idParam = z.object({ id: z.coerce.number().int().positive() });
 const linii = z.object({
-  linii: z.array(z.object({ articol_id: z.number().int().positive(), faptic: z.number().finite().min(0).nullable() })).max(2000),
+  // Plafonul ține valoarea în coloana numeric(14, 3) (100 de tone sau 100 000 de litri într-un depozit ajung).
+  linii: z.array(z.object({ articol_id: z.number().int().positive(), faptic: z.number().finite().min(0).max(100_000_000).nullable() })).max(2000),
 });
 
 /** API-ul tabletei de la tejghea. Autentificare: tokenul tabletei, primit la asociere. */
-export async function rutePOS(app: FastifyInstance, db: Db, doarDispozitiv: preHandlerAsyncHookHandler) {
+export async function rutePOS(app: FastifyInstance, db: Db, doarDispozitiv: onRequestAsyncHookHandler) {
+  // Operațiunile tabletei în afara cozii de sincronizare (terminal, inventariere, asociere) ajung în
+  // jurnalul de audit; evenimentele din coadă se păstrează oricum în evenimente_sync.
+  app.addHook('onResponse', hookAudit(db));
+
   app.post('/api/pos/asociere', async (req) => {
     const { cod } = z.object({ cod: z.string().min(4).max(20) }).parse(req.body);
-    return asociazaDispozitiv(db, cod);
+    const r = await asociazaDispozitiv(db, cod);
+    req.dispozitiv = r.dispozitiv; // pentru jurnal: ce tabletă a fost asociată, de pe ce adresă
+    return r;
   });
 
   app.register(async (p) => {
-    p.addHook('preHandler', doarDispozitiv);
+    // În onRequest, înainte de citirea corpului: o cerere fără token nu mai costă parsarea JSON-ului.
+    p.addHook('onRequest', doarDispozitiv);
 
     p.get('/api/pos/catalog', async (req) => ({
       ...(await catalogPOS(db, req.dispozitiv!.locatie_id)),
@@ -64,7 +74,9 @@ export async function rutePOS(app: FastifyInstance, db: Db, doarDispozitiv: preH
       return terminal.raportZ(db, req.dispozitiv!.id, si_ziua_bancara ?? true);
     });
 
-    p.post('/api/pos/sync', async (req) => {
+    // Coada vine în loturi de câte 100 de evenimente: are o limită proprie, mai mare decât restul API-ului.
+    // Fiind apelată la fiecare 5 s de fiecare tabletă, se scrie în jurnal doar peste „warn”.
+    p.post('/api/pos/sync', { bodyLimit: LIMITA_CORP_SYNC, logLevel: 'warn' }, async (req) => {
       const { evenimente } = z.object({ evenimente: z.array(z.unknown()).max(500) }).parse(req.body);
       return proceseazaSync(db, { locatie_id: req.dispozitiv!.locatie_id, dispozitiv_id: req.dispozitiv!.id }, evenimente);
     });

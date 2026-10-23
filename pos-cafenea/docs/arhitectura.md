@@ -69,9 +69,18 @@ flowchart LR
   al perioadei vechi scade, iar restituirea apare în registrul de bani la data ei. Raportul de pierderi
   arată anulările la data anulării.
 - **Securitate pe măsura unei cafenele, nu a unei bănci.** Tokenul de sesiune circulă doar în antet
-  (fluxul de notificări folosește bilete de un minut), loginul are pauze după încercări greșite,
-  schimbarea parolei închide celelalte sesiuni, tableta poate declara doar bariste din locația ei, iar
-  puntea de echipamente cere un secret și verifică originea paginii.
+  (fluxul de notificări folosește bilete de un minut) și stă în bază doar ca amprentă SHA-256, la fel
+  ca tokenul tabletelor; o sesiune ține cel mult 30 de zile. Loginul are pauze după încercări greșite
+  (pe adresă și pe cont), schimbarea parolei închide celelalte sesiuni, dezactivarea unei tablete îi
+  anulează tokenul, tableta poate declara doar bariste din locația ei, iar puntea de echipamente cere un
+  secret și verifică originea paginii. În producție serverul ascultă doar local, în spatele Caddy (HTTPS),
+  și trimite un Content-Security-Policy strict.
+- **Registrele se apără și în bază.** `miscari_stoc`, `miscari_bani` și `jurnal_audit` au declanșatori
+  care refuză UPDATE, DELETE și TRUNCATE: regula „nimic nu se suprascrie” nu mai depinde doar de cod.
+  Opțional, serverul lucrează cu un rol PostgreSQL fără drepturi pe schemă (migrațiile trec prin altul).
+- **Jurnal de audit.** Orice modificare din panou, autentificările și operațiunile tabletei din afara
+  cozii se scriu cu cine, de unde, când și (la suprascrieri) valoarea de dinainte: o toleranță ridicată
+  sau o rețetă schimbată se pot urmări. Vânzările de pe tabletă sunt deja păstrate în `evenimente_sync`.
 
 ## Limitări cunoscute (de rezolvat în etapele următoare)
 

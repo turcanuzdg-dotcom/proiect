@@ -138,6 +138,26 @@ describe('sincronizarea', () => {
     expect(s.respinse).toBe(1);
   });
 
+  it('un lot refuzat ca prea mare (413) pleacă pe bucăți, fără să blocheze coada', async () => {
+    const evs = Array.from({ length: 30 }, () => ev());
+    for (const e of evs) await stocare.inregistreaza(e);
+    const primite: number[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: string, init: RequestInit) => {
+        const lot = JSON.parse(String(init.body)).evenimente as EvenimentPOS[];
+        primite.push(lot.length);
+        // Serverul primește cel mult 8 evenimente într-o cerere.
+        if (lot.length > 8) return new Response(JSON.stringify({ eroare: 'Cererea este prea mare' }), { status: 413 });
+        return new Response(JSON.stringify(accepta(lot)), { status: 200 });
+      }),
+    );
+    const s = await sincronizeaza((st) => st.online && st.inAsteptare === 0);
+    expect(s.online).toBe(true);
+    expect(primite.slice(0, 3)).toEqual([30, 15, 7]);
+    expect(await stocare.numarInCoada()).toBe(0);
+  });
+
   it('un token respins (tableta dezactivată) oprește trimiterea fără să piardă nimic', async () => {
     await stocare.inregistreaza(ev());
     serverFals([401]);

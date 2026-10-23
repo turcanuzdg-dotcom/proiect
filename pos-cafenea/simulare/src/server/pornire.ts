@@ -3,7 +3,7 @@
 // doar terminalul PAX și rețeaua sunt înlocuite.
 import { PGlite, types } from '@electric-sql/pglite';
 import urlWasm from 'pglite-dist/pglite.wasm?url';
-import { dinPglite, type Db } from '../../../server/src/db-comun';
+import { bazaRaspunde, dinPglite, type Db } from '../../../server/src/db-comun';
 import { magistrala, type Notificare } from '../../../server/src/magistrala';
 import { ruteAdmin } from '../../../server/src/rute/admin';
 import { rutePOS } from '../../../server/src/rute/pos';
@@ -76,6 +76,23 @@ const bazaModul = import.meta.url;
 
 const ziLocala = (d: Date) => new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Chisinau' }).format(d);
 
+// Migrațiile serverului, incluse în pagină: o arhivă de date generată cu o versiune mai veche a
+// schemei primește la pornire ce îi lipsește, exact ca serverul (server/src/db.ts).
+const MIGRARI = import.meta.glob<string>('../../../server/migrari/*.sql', { query: '?raw', import: 'default', eager: true });
+
+async function aplicaMigrari(db: Db) {
+  await db.exec('CREATE TABLE IF NOT EXISTS schema_migrari (nume text PRIMARY KEY, aplicata_la timestamptz NOT NULL DEFAULT now())');
+  const aplicate = new Set((await db.query<{ nume: string }>('SELECT nume FROM schema_migrari')).map((r) => r.nume));
+  for (const [cale, sql] of Object.entries(MIGRARI).sort(([a], [b]) => a.localeCompare(b))) {
+    const nume = cale.split('/').pop()!;
+    if (aplicate.has(nume)) continue;
+    await db.tx(async (t) => {
+      await t.exec(sql);
+      await t.query('INSERT INTO schema_migrari (nume) VALUES ($1)', [nume]);
+    });
+  }
+}
+
 /** Mută tot istoricul cu un număr întreg de zile, ca ultima zi din arhivă să devină ieri. */
 async function aduceIstoriculLaZi(db: Db) {
   const { generat_pentru } = await citesteSetare(db, CHEIE_SIMULARE, { generat_pentru: '' });
@@ -95,6 +112,9 @@ async function aduceIstoriculLaZi(db: Db) {
   await db.tx(async (t) => {
     // Zilele se adună în ora Chișinăului, ca orele din istoric să rămână aceleași și peste schimbarea orei.
     await t.exec(`SET LOCAL TimeZone = 'Europe/Chisinau'`);
+    // Registrele (mișcări de stoc și bani, jurnalul de audit) nu se modifică: declanșatorii lor le apără.
+    // Doar aici, la mutarea în bloc a datelor demo, ei se ocolesc pentru această tranzacție.
+    await t.exec(`SET LOCAL session_replication_role = replica`);
     for (const [tabel, cols] of peTabele) {
       await t.query(`UPDATE ${tabel} SET ${cols.map((c) => `${c} = ${c} + $1::interval`).join(', ')}`, [`${zile} days`]);
     }
@@ -139,6 +159,7 @@ export async function pornesteServer(laProgres: (p: Progres) => void): Promise<S
     parsers: { [types.NUMERIC]: parseFloat, [types.INT8]: Number },
   });
   const db = dinPglite(lite);
+  await aplicaMigrari(db);
 
   laProgres({ faza: 'Pregătește rețeaua de cafenele', procent: 0.94 });
   await aduceIstoriculLaZi(db);
@@ -173,7 +194,10 @@ export async function pornesteServer(laProgres: (p: Progres) => void): Promise<S
 
   const ruter = new RuterSim();
   const app = ruter.instanta();
-  app.get('/api/sanatate', async () => ({ ok: true, ora: new Date().toISOString() }));
+  // Ca în server/src/app.ts: verificarea de sănătate atinge și baza.
+  app.get('/api/sanatate', async (_req: any, reply: any) =>
+    (await bazaRaspunde(db, 2_000)) ? { ok: true, ora: new Date().toISOString() } : reply.status(503).send({ ok: false, eroare: 'Baza de date nu răspunde' }),
+  );
   app.post('/api/flux/bilet', async (req: any, reply: any) => {
     const token = tokenDin(req);
     const u = token ? await acces.utilizatorDinToken(db, token) : null;
