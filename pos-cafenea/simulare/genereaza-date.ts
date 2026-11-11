@@ -1,5 +1,7 @@
 // Pregătește datele simulării: rețeaua demo cu istoric, salvată ca arhivă PGlite pe care browserul
 // o încarcă la pornire. Rulare: npx tsx simulare/genereaza-date.ts [zile]
+// Cu --test: datele pentru previzualizarea pe tabletă (Urban Coffee), fără istoric și fără terminal
+// simulat, ca tableta să lucreze în modul „Terminal separat”.
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { gzipSync } from 'node:zlib';
 import os from 'node:os';
@@ -13,16 +15,24 @@ import { scrieSetare } from '../server/src/servicii/setari';
 import { CHEIE_SIMULARE, TERMINAL_SIMULAT } from './src/constante';
 
 const aici = path.dirname(fileURLToPath(import.meta.url));
-const zile = Number(process.argv[2] ?? 120);
+const test = process.argv.includes('--test');
+const zile = test ? 0 : Number(process.argv.find((a) => /^\d+$/.test(a)) ?? 120);
 const director = await mkdtemp(path.join(os.tmpdir(), 'simulare-'));
 
 const db = await deschideDb({ director });
 await salveazaUtilizator(db, { nume: 'Administrator', rol: 'admin', login: 'admin', parola: 'schimba-ma' });
 const inceput = Date.now();
 await populeazaDemo(db, { zileIstoric: zile });
-// Tableta din Centru are terminalul PAX (simulat): plata cu cardul și bonurile trec prin el.
-await db.query(`UPDATE dispozitive SET terminal_device_id = $1 WHERE nume = 'Tabletă Centru'`, [TERMINAL_SIMULAT]);
-await scrieSetare(db, 'fiscal', { cota_tva_implicita: 'A', antet: 'Cafenea Centru · Vă mulțumim!' });
+if (test) {
+  await db.query(`UPDATE locatii SET nume = 'Urban Coffee' WHERE nume = 'Cafenea Centru'`);
+  await db.query(`UPDATE locatii SET nume = 'Urban Coffee 2' WHERE nume = 'Cafenea Botanica'`);
+  await db.query(`UPDATE dispozitive SET nume = 'Tabletă Urban Coffee' WHERE nume = 'Tabletă Centru'`);
+  await scrieSetare(db, 'fiscal', { cota_tva_implicita: 'A', antet: 'Urban Coffee · Vă mulțumim!' });
+} else {
+  // Tableta din Centru are terminalul PAX (simulat): plata cu cardul și bonurile trec prin el.
+  await db.query(`UPDATE dispozitive SET terminal_device_id = $1 WHERE nume = 'Tabletă Centru'`, [TERMINAL_SIMULAT]);
+  await scrieSetare(db, 'fiscal', { cota_tva_implicita: 'A', antet: 'Cafenea Centru · Vă mulțumim!' });
+}
 // Browserul mută tot istoricul cu atâtea zile câte au trecut de la această dată, ca „azi” să fie mereu azi.
 const azi = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Chisinau' }).format(new Date());
 await scrieSetare(db, CHEIE_SIMULARE, { generat_pentru: azi });
@@ -46,7 +56,7 @@ const pastrat = filtreazaTar(tar, (nume) => {
   return !m || (m[1] >= wal.prima && m[1] <= wal.ultima);
 });
 const arhiva = gzipSync(pastrat, { level: 9 });
-const tinta = path.join(aici, 'public', 'date-demo.tar.gz');
+const tinta = path.join(aici, 'public', test ? 'date-test.tar.gz' : 'date-demo.tar.gz');
 await writeFile(tinta, arhiva);
 await rm(director, { recursive: true, force: true });
 

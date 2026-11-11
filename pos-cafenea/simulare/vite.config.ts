@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { gzipSync } from 'node:zlib';
 import { resolve } from 'node:path';
 import { defineConfig, type Plugin } from 'vite';
@@ -62,6 +62,8 @@ function pagina(): Plugin {
     generateBundle(_opt, bundle) {
       const continut = readFileSync(resolve(__dirname, 'pagina.html'), 'utf8');
       this.emitFile({ type: 'asset', fileName: 'index.html', source: site ? documentComplet(continut, site) : continut });
+      const test = readFileSync(resolve(__dirname, 'pagina-test.html'), 'utf8');
+      this.emitFile({ type: 'asset', fileName: 'test.html', source: site ? documentComplet(test, site + 'test.html') : test });
       if (site) {
         this.emitFile({ type: 'asset', fileName: 'previzualizare.jpg', source: readFileSync(resolve(__dirname, 'previzualizare.jpg')) });
         // Fără Jekyll: GitHub Pages ar ascunde fișierele care încep cu „_”.
@@ -73,6 +75,9 @@ function pagina(): Plugin {
       const date = (bundle[fs] as { source: Uint8Array }).source;
       delete bundle[fs];
       this.emitFile({ type: 'asset', fileName: 'assets/pglite-fs.txt', source: gzipSync(date, { level: 9 }).toString('base64') });
+      // Datele de pornire ale previzualizării pe tabletă (npx tsx simulare/genereaza-date.ts --test).
+      const dateTest = resolve(__dirname, 'public/date-test.tar.gz');
+      if (existsSync(dateTest)) this.emitFile({ type: 'asset', fileName: 'assets/date-test.txt', source: readFileSync(dateTest).toString('base64') });
       this.emitFile({ type: 'asset', fileName: 'assets/date-demo.txt', source: readFileSync(resolve(__dirname, 'public/date-demo.tar.gz')).toString('base64') });
     },
   };
@@ -102,6 +107,7 @@ export default defineConfig({
         coaja: resolve(__dirname, 'src/coaja/main.tsx'),
         pos: resolve(__dirname, 'src/aplicatii/pos.tsx'),
         admin: resolve(__dirname, 'src/aplicatii/admin.tsx'),
+        test: resolve(__dirname, 'src/test/main.tsx'),
       },
       output: {
         entryFileNames: 'assets/[name].js',

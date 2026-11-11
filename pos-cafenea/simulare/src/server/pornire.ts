@@ -27,8 +27,19 @@ export interface ServerSim {
   tokenAdmin: string;
   centru: TabletaSim;
   botanica: TabletaSim;
+  /** true când baza tocmai a fost creată din arhivă (la previzualizare: prima deschidere pe dispozitiv). */
+  proaspat: boolean;
   /** Fluxul de notificări (SSE) pentru un bilet; întoarce funcția de oprire sau null dacă biletul nu e valid. */
   flux(bilet: string, laMesaj: (date: string) => void): (() => void) | null;
+}
+
+export interface OptiuniServer {
+  /** Arhiva cu datele de pornire, lângă scriptul paginii (implicit rețeaua demo cu istoric). */
+  arhiva?: string;
+  /** Baza se păstrează în browser (IndexedDB) sub acest nume: ce se vinde rămâne și după închidere. */
+  persistenta?: string;
+  /** Terminalul PAX simulat; fără el tableta lucrează cu terminalul separat (fără legătură). */
+  terminalSimulat?: boolean;
 }
 
 export interface Progres {
@@ -128,9 +139,37 @@ async function asociaza(db: Db, nume: string): Promise<TabletaSim> {
   return acces.asociazaDispozitiv(db, cod_asociere);
 }
 
-export async function pornesteServer(laProgres: (p: Progres) => void): Promise<ServerSim> {
-  // Cele trei fișiere mari se descarcă în paralel; progresul e suma lor.
-  const surse = [urlWasm, new URL('pglite-fs.txt', bazaModul).href, new URL('date-demo.txt', bazaModul).href];
+const citesteLocal = (cheie: string) => {
+  try {
+    return localStorage.getItem(cheie);
+  } catch {
+    return null;
+  }
+};
+const scrieLocal = (cheie: string, valoare: string | null) => {
+  try {
+    if (valoare === null) localStorage.removeItem(cheie);
+    else localStorage.setItem(cheie, valoare);
+  } catch {
+    /* stocare blocată: previzualizarea pornește de la zero data viitoare */
+  }
+};
+
+/** Șterge baza păstrată a previzualizării, ca data viitoare să pornească de la zero. */
+export async function stergeDatePastrate(persistenta: string) {
+  scrieLocal(`${persistenta}:tablete`, null);
+  await new Promise<void>((gata) => {
+    const r = indexedDB.deleteDatabase(`/pglite/${persistenta}`);
+    r.onsuccess = r.onerror = r.onblocked = () => gata();
+  });
+}
+
+export async function pornesteServer(laProgres: (p: Progres) => void, opt: OptiuniServer = {}): Promise<ServerSim> {
+  const cheieTablete = opt.persistenta ? `${opt.persistenta}:tablete` : null;
+  const tabletePastrate = cheieTablete ? (JSON.parse(citesteLocal(cheieTablete) ?? 'null') as { centru: TabletaSim; botanica: TabletaSim } | null) : null;
+  const proaspat = !tabletePastrate;
+  // Cele trei fișiere mari se descarcă în paralel; progresul e suma lor. Arhiva lipsește când baza e deja în browser.
+  const surse = [urlWasm, new URL('pglite-fs.txt', bazaModul).href, ...(proaspat ? [new URL(opt.arhiva ?? 'date-demo.txt', bazaModul).href] : [])];
   const primiti = surse.map(() => 0);
   const totaluri = surse.map(() => 0);
   const raporteaza = () => {
@@ -138,7 +177,7 @@ export async function pornesteServer(laProgres: (p: Progres) => void): Promise<S
     const p = total ? primiti.reduce((s, x) => s + x, 0) / total : 0;
     laProgres({ faza: `Se descarcă programul și datele (${(primiti.reduce((s, x) => s + x, 0) / 1e6).toFixed(1)} MB)`, procent: Math.min(0.85, p * 0.85) });
   };
-  const [wasm, fsText, arhivaText] = await Promise.all(
+  const [wasm, fsText, arhivaText = new Uint8Array()] = await Promise.all(
     surse.map((u, i) =>
       descarca(u, (n, t) => {
         primiti[i] = n;
@@ -150,29 +189,33 @@ export async function pornesteServer(laProgres: (p: Progres) => void): Promise<S
 
   laProgres({ faza: 'Pornește baza de date (PostgreSQL în browser)', procent: 0.88 });
   const fs = await dezarhiveaza(dinBase64(fsText));
-  const arhiva = dinBase64(arhivaText);
   const wasmModule = await WebAssembly.compile(wasm);
+  if (proaspat && opt.persistenta) await stergeDatePastrate(opt.persistenta);
   const lite = await PGlite.create({
     wasmModule,
     fsBundle: new Blob([fs]),
-    loadDataDir: new Blob([arhiva], { type: 'application/x-gzip' }),
+    ...(opt.persistenta ? { dataDir: `idb://${opt.persistenta}` } : {}),
+    ...(proaspat ? { loadDataDir: new Blob([dinBase64(arhivaText)], { type: 'application/x-gzip' }) } : {}),
     parsers: { [types.NUMERIC]: parseFloat, [types.INT8]: Number },
   });
   const db = dinPglite(lite);
   await aplicaMigrari(db);
 
   laProgres({ faza: 'Pregătește rețeaua de cafenele', procent: 0.94 });
-  await aduceIstoriculLaZi(db);
+  // Istoricul demo se aduce la zi doar la încărcarea arhivei; datele păstrate ale previzualizării sunt reale.
+  if (proaspat) await aduceIstoriculLaZi(db);
   // Parola panoului rămâne „schimba-ma”; hash-ul se reface cu înlocuitorul de scrypt din browser.
   for (const u of await db.query<{ id: number; sare: string }>(`SELECT id, sare FROM utilizatori WHERE login = 'admin'`)) {
     await db.query('UPDATE utilizatori SET parola_hash = $2 WHERE id = $1', [u.id, await acces.hashParola('schimba-ma', u.sare)]);
   }
   const { token: tokenAdmin } = await acces.autentificare(db, 'admin', 'schimba-ma');
-  const centru = await asociaza(db, 'Tabletă Centru');
-  const botanica = await asociaza(db, 'Tabletă Botanica');
+  const [{ nume: numeTableta }] = await db.query<{ nume: string }>(`SELECT nume FROM dispozitive WHERE nume LIKE 'Tabletă%' AND nume <> 'Tabletă Botanica' ORDER BY id LIMIT 1`);
+  const centru = tabletePastrate?.centru ?? (await asociaza(db, numeTableta));
+  const botanica = tabletePastrate?.botanica ?? (await asociaza(db, 'Tabletă Botanica'));
+  if (cheieTablete && proaspat) scrieLocal(cheieTablete, JSON.stringify({ centru, botanica }));
 
   const terminal = new TerminalSimulat();
-  folosesteClientPOSLink(new ClientPOSLink({ url: 'https://poslink.simulare/POSLink', cheie: 'simulare' }, terminal.fetch));
+  if (opt.terminalSimulat !== false) folosesteClientPOSLink(new ClientPOSLink({ url: 'https://poslink.simulare/POSLink', cheie: 'simulare' }, terminal.fetch));
 
   // Aceleași reguli de acces ca în server/src/app.ts.
   const tokenDin = (req: CerereSim) => {
@@ -234,5 +277,5 @@ export async function pornesteServer(laProgres: (p: Progres) => void): Promise<S
   };
 
   laProgres({ faza: 'Gata', procent: 1 });
-  return { db, ruter, terminal, tokenAdmin, centru, botanica, flux };
+  return { db, ruter, terminal, tokenAdmin, centru, botanica, proaspat, flux };
 }
