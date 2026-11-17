@@ -51,11 +51,11 @@ if ! grep -qE '^ADMIN_PAROLA=.+' "$ENV" && [[ ! -L /opt/cafenea/curent ]]; then
     read -rsp "Încă o dată: " p2 </dev/tty; echo
     [[ $p1 == "$p2" ]] || { echo "Nu sunt la fel, reluați."; continue; }
     (( ${#p1} >= 12 )) || { echo "Prea scurtă (minimum 12 caractere)."; continue; }
-    [[ $p1 != *"'"* ]] || { echo "Fără apostrof ('), vă rog."; continue; }
+    [[ $p1 != *[\'\\]* ]] || { echo "Fără apostrof (') sau bară inversă (\\), vă rog."; continue; }
     break
   done
   tmp=$(mktemp)
-  awk -v p="$p1" '/^ADMIN_PAROLA=/{print "ADMIN_PAROLA=\x27" p "\x27"; next} {print}' "$ENV" > "$tmp"
+  P=$p1 awk '/^ADMIN_PAROLA=/{print "ADMIN_PAROLA=\x27" ENVIRON["P"] "\x27"; next} {print}' "$ENV" > "$tmp"
   install -m 600 -o root -g root "$tmp" "$ENV"
   rm -f "$tmp"
   unset p1 p2
